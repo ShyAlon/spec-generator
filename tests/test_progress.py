@@ -14,10 +14,11 @@ from spec_generator.telemetry import UsageLog
 PAYLOADS = {
     "needs": {"session_id": "s", "needs": [
         {"need_id": "N-1", "stakeholder": "founder", "statement": "needs specs",
-         "intent_fields": ["problem_statement"]}]},
+         "kind": "functional", "intent_fields": ["problem_statement"], "intent_need_ids": ["SN-1"]}]},
     "requirements": {"session_id": "s", "requirements": [
         {"requirement_id": "R-1", "title": "Spec file", "statement": "system shall emit a spec",
-         "priority": "must", "acceptance": [{"criterion_id": "AC-1", "statement": "spec exists"}],
+         "priority": "must", "kind": "functional",
+         "acceptance": [{"criterion_id": "AC-1", "statement": "spec exists"}],
          "need_ids": ["N-1"], "intent_fields": ["problem_statement"]}]},
     "architecture": {"session_id": "s", "stack": {"language": "ts"},
                      "components": [{"name": "api", "responsibility": "serve"}],
@@ -30,7 +31,10 @@ PAYLOADS = {
 }
 
 INTENT = {"session_id": "s", "problem_statement": "p", "target_users": ["u"],
-          "core_value_proposition": "v", "in_scope": ["a"], "out_of_scope": ["b"],
+          "core_value_proposition": "v",
+          "stakeholder_needs": [{"need_id": "SN-1", "statement": "founders need specs",
+                                 "kind": "functional", "source_turns": [0]}],
+          "in_scope": ["a"], "out_of_scope": ["b"],
           "external_integrations": [], "constraints": [], "open_questions": [], "source_turns": {}}
 
 
