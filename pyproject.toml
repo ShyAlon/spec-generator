@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spec-generator"
+description = "IntentModel in, V-model artifact bundle out: needs, requirements, architecture, item-level specs, test hierarchy, AGENTS.md, build plan, traceability."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Shy Alon" }]
+dynamic = ["version"]
+dependencies = [
+  "vmodel-contracts @ git+https://github.com/ShyAlon/vmodel-contracts.git@v0.1.0",
+  "langgraph>=0.2",
+  "langchain-core>=0.3",
+  "langchain-openai>=0.2",
+  "pydantic>=2.6,<3",
+]
+
+[project.optional-dependencies]
+anthropic = ["langchain-anthropic>=0.2"]
+dev = ["pytest>=8"]
+
+[tool.hatch.version]
+path = "src/spec_generator/__init__.py"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spec_generator"]
