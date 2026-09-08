@@ -49,3 +49,20 @@ def test_missing_intent_file_is_friendly(tmp_path, capsys):
     assert ei.value.code == 1
     err = capsys.readouterr().err
     assert "not found" in err and "interview" in err
+
+
+def test_old_contract_intent_fails_loudly(tmp_path, capsys):
+    import json as j
+    import sys
+
+    from spec_generator.cli import main
+    from spec_generator.errors import run_cli
+
+    intent = {"contract_version": "0.1.0", "session_id": "old-1", "problem_statement": "p"}
+    f = tmp_path / "old_intent.json"
+    f.write_text(j.dumps(intent))
+    sys.argv = ["prog", str(f)]
+    with pytest.raises(SystemExit):
+        run_cli(main)
+    err = capsys.readouterr().err
+    assert "0.1.0" in err and "re-run the interview" in err
