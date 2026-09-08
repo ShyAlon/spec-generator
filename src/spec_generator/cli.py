@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from vmodel_contracts import (
@@ -15,6 +16,8 @@ from vmodel_contracts import (
 
 from .errors import UserFacingError, run_cli
 from .graph import build_graph
+from .progress import ProgressBus, stderr_printer
+from .repair import coerce_for_model
 from .render import render_agents_md, render_needs, render_requirements, render_spec_file
 from .telemetry import UsageLog, jsonl_sink
 
@@ -51,17 +54,28 @@ def main() -> None:
     (outdir / "specs").mkdir(exist_ok=True)
 
     log = UsageLog(sid, sink=jsonl_sink(outdir / "usage.jsonl"))
-    graph = build_graph(log)
+    bus = ProgressBus()
+    bus.subscribe(stderr_printer())
+
+    # Disk checkpoints: a crash mid-generation resumes from the last completed
+    # stage on rerun (same command) - no stage is paid for twice.
+    import sqlite3
+
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
+    graph = build_graph(log, checkpointer=SqliteSaver(conn), progress=bus)
+    print(f"Generating bundle for session {sid} (crash? rerun the same command - it resumes)\n", file=sys.stderr)
     result = graph.invoke({"intent_model": intent}, {"configurable": {"thread_id": sid}})
 
     b = result["bundle"]
     try:
-        needs = StakeholderNeedsSet.model_validate(b["_needs"])
-        reqs = RequirementSet.model_validate(b["_requirements"])
-        arch = ArchitectureOverview.model_validate(b["_architecture"])
-        items = [ItemSpec.model_validate(i) for i in b["items"]]
-        manifest = SpecManifest.model_validate(b["_manifest"])
-        punch = [PunchListItem.model_validate(p) for p in b["punch_list"]]
+        needs = StakeholderNeedsSet.model_validate(coerce_for_model(b["_needs"], StakeholderNeedsSet))
+        reqs = RequirementSet.model_validate(coerce_for_model(b["_requirements"], RequirementSet))
+        arch = ArchitectureOverview.model_validate(coerce_for_model(b["_architecture"], ArchitectureOverview))
+        items = [ItemSpec.model_validate(coerce_for_model(i, ItemSpec)) for i in b["items"]]
+        manifest = SpecManifest.model_validate(coerce_for_model(b["_manifest"], SpecManifest))
+        punch = [PunchListItem.model_validate(coerce_for_model(p, PunchListItem)) for p in b["punch_list"]]
     except Exception as e:
         raise UserFacingError(
             "a generated artifact fails the vmodel-contracts schema at render time.",
