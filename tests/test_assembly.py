@@ -1,6 +1,6 @@
 """Assembly invariants: the deterministic tail catches what generation misses."""
 from vmodel_contracts import (
-    AcceptanceCriterion, AcceptanceTest, ItemSpec, Priority, Requirement,
+    AcceptanceCriterion, AcceptanceTest, ItemSpec, Priority, Requirement, RequirementKind,
     RequirementSet, SpecItemKind, StakeholderNeed, StakeholderNeedsSet, VModelLevel,
 )
 from spec_generator.assembly import build_traceability, order_milestones, validate_traceability
@@ -8,14 +8,14 @@ from spec_generator.assembly import build_traceability, order_milestones, valida
 
 def _needs():
     return StakeholderNeedsSet(session_id="s", needs=[
-        StakeholderNeed(need_id="N-1", stakeholder="end user", statement="Book a lesson", intent_fields=["in_scope"]),
+        StakeholderNeed(need_id="N-1", stakeholder="end user", statement="Book a lesson", kind=RequirementKind.FUNCTIONAL, intent_fields=["in_scope"], intent_need_ids=["SN-1"]),
     ])
 
 
 def _reqs():
     return RequirementSet(session_id="s", requirements=[
         Requirement(requirement_id="R-1", title="Booking", statement="Users book lessons",
-                    priority=Priority.MUST, need_ids=["N-1"], intent_fields=["in_scope"],
+                    priority=Priority.MUST, kind=RequirementKind.FUNCTIONAL, need_ids=["N-1"], intent_fields=["in_scope"],
                     acceptance=[AcceptanceCriterion(criterion_id="AC-1", statement="POST /bookings returns 201",
                                                     executable_hint="http POST /bookings -> 201")]),
     ])
