@@ -44,3 +44,16 @@ python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
 
 Consumes only an `IntentModel` payload; emits only a `SpecBundle` (+ tests +
 manifest). No imports from sibling modules.
+
+## Local runs with Ollama (offline, $0)
+
+```bash
+ollama pull qwen2.5-coder:14b
+for s in NEEDS REQUIREMENTS ARCHITECTURE ITEMS TESTS REVIEW; do
+  export SPEC_GENERATOR_MODEL_$s=ollama:qwen2.5-coder:14b
+done
+python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
+```
+
+Authoring stages keep a strong model for anything founder-facing - generic
+requirements are the free competitors' product. Ollama is for the dev loop.
