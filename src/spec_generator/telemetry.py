@@ -38,7 +38,10 @@ class UsageLog:
         self.sink = sink
 
     def record(self, stage: str, provider: str, model: str, usage: dict) -> StageTokenUsage:
-        pin, pout = PRICES_USD_PER_MTOK.get(model, (0.0, 0.0))
+        if provider == "ollama":
+            pin, pout = 0.0, 0.0  # local compute: $0 marginal, logged for the record
+        else:
+            pin, pout = PRICES_USD_PER_MTOK.get(model, (0.0, 0.0))
         rec = StageTokenUsage(
             session_id=self.session_id, stage=stage, provider=provider, model=model,
             prompt_tokens=int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0),
