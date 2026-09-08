@@ -17,7 +17,7 @@ from vmodel_contracts import (
 from .errors import UserFacingError, run_cli
 from .graph import build_graph
 from .progress import ProgressBus, stderr_printer
-from .repair import coerce_for_model
+from .repair import coerce_for_model, normalize_enums
 from .render import render_agents_md, render_needs, render_requirements, render_spec_file
 from .telemetry import UsageLog, jsonl_sink
 
@@ -48,6 +48,17 @@ def main() -> None:
             "wrong file passed in.",
             "pass the intent_model.json written by the interview-engine CLI.",
         )
+    from vmodel_contracts import ContractVersionMismatch, check_compatible
+
+    try:
+        check_compatible(intent)
+    except ContractVersionMismatch as e:
+        raise UserFacingError(
+            f"this intent model was produced against vmodel-contracts {e.have}, but this spec-generator reads {e.want.split('.')[0]}.{e.want.split('.')[1]}.x.",
+            "the interview ran before a contract upgrade.",
+            "re-run the interview (minutes on a local model) to regenerate the intent model - "
+            "or install the matching older vmodel-contracts to consume this file.",
+        ) from e
     sid = intent["session_id"]
     outdir = args.out
     outdir.mkdir(parents=True, exist_ok=True)
@@ -70,8 +81,8 @@ def main() -> None:
 
     b = result["bundle"]
     try:
-        needs = StakeholderNeedsSet.model_validate(coerce_for_model(b["_needs"], StakeholderNeedsSet))
-        reqs = RequirementSet.model_validate(coerce_for_model(b["_requirements"], RequirementSet))
+        needs = StakeholderNeedsSet.model_validate(normalize_enums(coerce_for_model(b["_needs"], StakeholderNeedsSet), StakeholderNeedsSet))
+        reqs = RequirementSet.model_validate(normalize_enums(coerce_for_model(b["_requirements"], RequirementSet), RequirementSet))
         arch = ArchitectureOverview.model_validate(coerce_for_model(b["_architecture"], ArchitectureOverview))
         items = [ItemSpec.model_validate(coerce_for_model(i, ItemSpec)) for i in b["items"]]
         manifest = SpecManifest.model_validate(coerce_for_model(b["_manifest"], SpecManifest))
