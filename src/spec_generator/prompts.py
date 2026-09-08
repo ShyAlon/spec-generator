@@ -17,8 +17,17 @@ Authoring rules (these are what separate this from a free PRD generator):
 - Output STRICT JSON matching the requested schema. No prose around it."""
 
 STAGE_PROMPTS = {
-    "needs": "From this intent model, write the stakeholder needs set (N-1..).",
-    "requirements": "From these needs + intent, write system requirements (R-1..) with acceptance criteria (AC-1..).",
+    "needs": "From this intent model, write the stakeholder needs set (N-1..). "
+             "The intent model already carries interview-level needs (SN-ids, founder language, "
+             "classified functional/non_functional): carry them forward - every SN-id maps to at "
+             "least one N-id (intent_need_ids), with kind preserved and the stakeholder named. "
+             "Add needs the founder implied but did not state (mark their intent_need_ids []).",
+    "requirements": "From these needs + intent, write system requirements (R-1..) with acceptance "
+                    "criteria (AC-1..). Every requirement carries kind: 'functional' (a behavior) or "
+                    "'non_functional' (a quality/constraint on behavior - security, performance, "
+                    "privacy, auditability, cost). Non-functional needs must NOT silently vanish: "
+                    "each becomes its own verifiable requirement (e.g. 'User data shall be encrypted "
+                    "at rest' with a checkable criterion), never absorbed into prose.",
     "architecture": "Given requirements and the target archetype, propose the architecture: stack, components, ADRs, non-functionals.",
     "items": "Write item-level specs (SPEC-...) covering every requirement listed. One JSON array.",
     "tests": "Derive the test hierarchy (T-1..): acceptance tests for every AC, plus unit/module/system tests per item spec.",
