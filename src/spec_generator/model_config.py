@@ -1,8 +1,10 @@
 """Per-stage model routing for generation (model-agnostic layer, ADR-0003).
+Providers: deepseek (default), openai, anthropic, ollama (local, $0, offline -
+for development and tests; judge demo quality on the real provider).
 
 Authoring stages (needs, requirements, review) keep a strong model - generic
-requirements are what free competitors produce. Mechanical rephrasing can drop
-a tier. Assembly stages don't appear here: they are deterministic, no model.
+requirements are what free competitors produce. Assembly stages don't appear
+here: they are deterministic, no model.
 """
 from __future__ import annotations
 
@@ -27,8 +29,12 @@ _STAGE_DEFAULTS: dict[str, StageModel] = {
     "review":       StageModel("deepseek", "deepseek-chat"),
 }
 
-_BASE_URLS = {"deepseek": "https://api.deepseek.com", "openai": None}
-_API_KEY_ENV = {"deepseek": "DEEPSEEK_API_KEY", "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+_BASE_URLS = {
+    "deepseek": "https://api.deepseek.com",
+    "openai": None,
+    "ollama": os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+}
+_API_KEY_ENV = {"deepseek": "DEEPSEEK_API_KEY", "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "ollama": None}
 
 
 def for_stage(stage: str) -> StageModel:
@@ -44,12 +50,13 @@ def for_stage(stage: str) -> StageModel:
 
 def build_chat_model(stage: str):
     cfg = for_stage(stage)
-    if cfg.provider in ("deepseek", "openai"):
+    if cfg.provider in ("deepseek", "openai", "ollama"):
         from langchain_openai import ChatOpenAI
 
+        env = _API_KEY_ENV[cfg.provider]
         return ChatOpenAI(model=cfg.model, temperature=cfg.temperature, max_tokens=cfg.max_tokens,
                           base_url=_BASE_URLS[cfg.provider],
-                          api_key=os.environ.get(_API_KEY_ENV[cfg.provider], ""))
+                          api_key=(os.environ.get(env, "") if env else "") or "ollama")
     if cfg.provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
