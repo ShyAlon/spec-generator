@@ -47,10 +47,15 @@ manifest). No imports from sibling modules.
 
 ## Local runs with Ollama (offline, $0)
 
+Model size: `qwen2.5-coder:7b` is the default recommendation and runs fine on
+a 16GB machine. `qwen2.5-coder:14b` is better but wants 32GB+ RAM. Set
+`OLLAMA_NUM_PARALLEL=1` so Ollama never loads two models at once (the chat
+model plus `nomic-embed-text` would otherwise compete for RAM).
+
 ```bash
-ollama pull qwen2.5-coder:14b
+ollama pull qwen2.5-coder:7b
 for s in NEEDS REQUIREMENTS ARCHITECTURE ITEMS TESTS REVIEW; do
-  export SPEC_GENERATOR_MODEL_$s=ollama:qwen2.5-coder:14b
+  export SPEC_GENERATOR_MODEL_$s=ollama:qwen2.5-coder:7b
 done
 python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
 ```
