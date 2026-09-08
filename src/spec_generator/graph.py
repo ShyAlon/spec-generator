@@ -11,6 +11,8 @@ import json
 from typing import TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
+
+from .progress import ProgressBus, track
 from langgraph.graph import END, StateGraph
 
 from vmodel_contracts import (
@@ -65,7 +67,15 @@ def _json(text: str, stage: str = "unknown"):
         raise translate_json_error(e, stage) from e
 
 
-def build_graph(log: UsageLog, checkpointer=None):
+def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None):
+
+    def _wrap(stage: str, label: str, detail: str | None = None):
+        def deco(fn):
+            def inner(state: GenState) -> dict:
+                with track(progress, stage, label, detail):
+                    return fn(state)
+            return inner
+        return deco
 
     def node_needs(state: GenState) -> dict:
         intent = IntentModel.model_validate(state["intent_model"])
@@ -162,14 +172,14 @@ def build_graph(log: UsageLog, checkpointer=None):
         return {"bundle": out, "violations": violations}
 
     g = StateGraph(GenState)
-    g.add_node("needs", node_needs)
-    g.add_node("requirements", node_requirements)
-    g.add_node("architecture", node_architecture)
-    g.add_node("items", node_items)
-    g.add_node("tests", node_tests)
-    g.add_node("review", node_review)
-    g.add_node("apply_fixes", node_apply_fixes)
-    g.add_node("assemble", node_assemble)
+    g.add_node("needs", _wrap("needs", "Extracting stakeholder needs", "stage 1/6")(node_needs))
+    g.add_node("requirements", _wrap("requirements", "Deriving requirements", "stage 2/6")(node_requirements))
+    g.add_node("architecture", _wrap("architecture", "Drafting architecture overview", "stage 3/6")(node_architecture))
+    g.add_node("items", _wrap("items", "Writing module specs", "stage 4/6")(node_items))
+    g.add_node("tests", _wrap("tests", "Deriving test specifications", "stage 5/6")(node_tests))
+    g.add_node("review", _wrap("review", "Cross-checking consistency", "stage 6/6")(node_review))
+    g.add_node("apply_fixes", _wrap("apply_fixes", "Applying review fixes")(node_apply_fixes))
+    g.add_node("assemble", _wrap("assemble", "Assembling + validating bundle", "deterministic")(node_assemble))
     g.set_entry_point("needs")
     g.add_edge("needs", "requirements")
     g.add_edge("requirements", "architecture")
