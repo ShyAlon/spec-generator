@@ -40,6 +40,12 @@ export DEEPSEEK_API_KEY=...
 python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
 ```
 
+Live per-stage progress lines (`-> Drafting architecture overview (stage 3/6)...`)
+come from structured `ProgressEvent`s (progress.py) - the same stream the UI
+will consume later (ADR-0010). Checkpoints persist to `bundle/checkpoints.sqlite`:
+a crash mid-generation is recovered by rerunning the same command - completed
+stages are never re-paid (ADR-0011).
+
 ## Boundary rule
 
 Consumes only an `IntentModel` payload; emits only a `SpecBundle` (+ tests +
