@@ -139,6 +139,61 @@ def _make_persist(intent: dict, outdir: Path):
     return _persist
 
 
+STAGE_ORDER = ("needs", "srs", "architecture", "items", "tests", "review", "assemble")
+
+# What a --from rewind invalidates: the named stage's own output and every
+# downstream product (LangGraph state has no key delete; overwrite with
+# empties - review_round resets so the review loop runs fresh).
+_CLEAR_DOWNSTREAM = {
+    "srs": {"srs": None, "architecture": None, "items": None, "tests": None,
+            "review_round": 0, "review_fixes": [], "bundle": None, "violations": [],
+            "guard_flags": []},
+    "architecture": {"architecture": None, "items": None, "tests": None,
+                     "review_round": 0, "review_fixes": [], "bundle": None, "violations": []},
+    "items": {"items": None, "tests": None, "review_round": 0, "review_fixes": [],
+              "bundle": None, "violations": []},
+    "tests": {"tests": None, "review_round": 0, "review_fixes": [], "bundle": None,
+              "violations": []},
+    "review": {"review_round": 0, "review_fixes": [], "bundle": None, "violations": []},
+    "assemble": {"bundle": None, "violations": []},
+}
+
+
+def _predecessor(stage: str, review_mode: bool) -> str:
+    """The node the checkpoint is rewritten AS (update_state as_node=...), so
+    resume continues at the stage the founder asked to re-run. Review-mode
+    graphs route through the gate nodes."""
+    return {"srs": "needs",
+            "architecture": "gate_srs" if review_mode else "srs",
+            "items": "gate_architecture" if review_mode else "architecture",
+            "tests": "items",
+            "review": "tests",
+            "assemble": "review"}[stage]
+
+
+def _invalidate_from(graph, cfg: dict, stage: str, review_mode: bool) -> None:
+    """--from <stage>: rewind a checkpoint so the named stage and everything
+    after it re-runs under the CURRENT code, state before it preserved (his
+    2026-09-09 need: the completed run held pre-fix items with invented
+    requirement ids; rerunning only resumed INTO the old state)."""
+    if stage not in STAGE_ORDER:
+        raise UserFacingError(
+            f"--from: unknown stage {stage!r}.",
+            f"valid stages: {', '.join(STAGE_ORDER)}.",
+            "use --from items to regenerate specs/tests/review/assembly from the checkpointed SRS.",
+        )
+    if not graph.get_state(cfg).values:
+        raise UserFacingError(
+            f"--from {stage}: no checkpoint found for this session in the output directory.",
+            "--from rewinds an existing run; there is nothing to rewind.",
+            "run without --from first.",
+        )
+    if stage == "needs":
+        return  # a fresh run already starts at needs and overwrites everything
+    graph.update_state(cfg, dict(_CLEAR_DOWNSTREAM[stage]),
+                       as_node=_predecessor(stage, review_mode))
+
+
 def _run_with_gates(graph, cfg: dict, intent: dict, outdir, resume: bool = False) -> dict:
     """ADR-0019 review gates (opt-in via --review): after the SRS and after the
     architecture, the founder accepts, edits (JSON, contract-validated), sends
@@ -218,6 +273,10 @@ def main() -> None:
     ap.add_argument("-o", "--out", type=Path, default=Path("bundle"))
     ap.add_argument("--review", action="store_true",
                     help="opt-in founder review gates after the SRS and architecture stages (ADR-0019)")
+    ap.add_argument("--from", dest="from_stage", metavar="STAGE", default=None,
+                    help="rewind the checkpoint: re-run STAGE and everything after it under the "
+                         "current code, earlier stages preserved (stages: needs, srs, architecture, "
+                         "items, tests, review, assemble)")
     args = ap.parse_args()
 
     if not args.intent_model.exists():
@@ -283,6 +342,14 @@ def main() -> None:
         written = _backfill_persist(_make_persist(intent, outdir), prior)
         if written:
             print(f"Artifacts for already-completed stages written to the bundle dir ({', '.join(written)}).",
+                  file=sys.stderr)
+    if args.from_stage:
+        _invalidate_from(graph, cfg, args.from_stage, args.review)
+        resume = args.from_stage != "needs"
+        if resume:
+            kept = [s for s in STAGE_ORDER[:STAGE_ORDER.index(args.from_stage)] if prior.get(s)]
+            print(f"Re-running from stage '{args.from_stage}' under the current code - "
+                  f"preserved: {', '.join(kept) or '(nothing)'}; downstream state invalidated.",
                   file=sys.stderr)
     if args.review:
         result = _run_with_gates(graph, cfg, intent, outdir, resume=resume)

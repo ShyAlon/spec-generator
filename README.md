@@ -108,6 +108,15 @@ shall ...`). The generation process itself is untouched - same one model call
 per stage, same prompt, same completion; streaming only makes the items
 visible as they arrive.
 
+Rewinding a finished run: `--from <stage>` invalidates checkpoint state from
+the named stage onward and re-runs under the CURRENT code, earlier stages
+preserved - e.g. after a pipeline fix, regenerate specs/tests/review/assembly
+from the checkpointed SRS without repaying stages 1-3:
+
+```bash
+python -m spec_generator.cli out/<session>/intent_model.json -o bundle/ --from items
+```
+
 Determinism (ADR-0022): the model owns prose; code owns everything
 enumerable. All stages default to temperature 0 with a fixed seed
 (`SPEC_GENERATOR_SEED`, default 42) so a failure replays exactly. The SRS and
