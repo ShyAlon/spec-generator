@@ -1,5 +1,12 @@
 __pycache__/
+*.pyc
 *.egg-info/
 .pytest_cache/
 .venv/
+out/
 bundle/
+probe_*.json
+gate_*.md
+gate_*.json
+usage.jsonl
+checkpoints.sqlite*
