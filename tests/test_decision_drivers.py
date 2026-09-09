@@ -90,3 +90,24 @@ def test_gate_render_marks_legacy_driverless_decisions():
     md = render_architecture(legacy)
     assert "Driver: (not recorded - pre-0.8.0 artifact)" in md
     assert "Rejected: z - old flat form" in md
+
+
+def test_legacy_arch_fill_makes_pre_080_checkpoints_assemblable():
+    """A checkpoint written by pre-0.8.0 code holds decisions without
+    driver/options_considered; assembly fills the honest legacy form so a
+    resume past the architecture stage cannot crash (ADR-0021)."""
+    from spec_generator.graph import _legacy_arch_fill
+    checkpointed = {"session_id": "s", "stack": {"language": "ts"},
+                    "components": [{"name": "api", "responsibility": "serve"}],
+                    "decisions": [{"decision_id": "ADR-1", "title": "t", "decision": "x", "rationale": "y"}]}
+    arch = ArchitectureOverview.model_validate(_legacy_arch_fill(checkpointed))
+    assert arch.decisions[0].driver is None
+    assert arch.decisions[0].options_considered == []
+    assert "(not recorded - pre-0.8.0 artifact)" in render_architecture(arch)
+
+
+def test_legacy_arch_fill_never_overwrites_real_drivers():
+    from spec_generator.graph import _legacy_arch_fill
+    filled = _legacy_arch_fill(ARCH)
+    assert filled["decisions"][0]["driver"] == "ecosystem_maturity"
+    assert filled["decisions"][0]["options_considered"][0]["option"] == "Angular"

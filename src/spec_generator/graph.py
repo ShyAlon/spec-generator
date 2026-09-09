@@ -264,6 +264,23 @@ def _tech_constraint_block(intent_model: dict) -> str:
     return "\n\n" + "\n".join(lines)
 
 
+def _legacy_arch_fill(payload: dict) -> dict:
+    """Pre-0.8.0 checkpoints hold decisions without the ADR-0021 fields;
+    synthesize the honest legacy form (same rule as vmodel_contracts.migrate)
+    so resuming an old session past the architecture stage cannot crash
+    assembly. New production never takes this path: the stage validator
+    requires a real driver before state is written."""
+    out = dict(payload)
+    decisions = []
+    for d in out.get("decisions") or []:
+        dd = dict(d)
+        dd.setdefault("driver", None)
+        dd.setdefault("options_considered", [])
+        decisions.append(dd)
+    out["decisions"] = decisions
+    return out
+
+
 def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict) -> None:
     """ADR-0021: no arbitrary decisions. The contract requires the FIELDS
     present (driver nullable only for legacy migration); the stage requires a
@@ -489,7 +506,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         srs = SRSDocument.model_validate(srs_document_data(state["intent_model"], state["srs"]))
         # the flat view feeds the existing traceability math unchanged
         reqs = RequirementSet(session_id=sid, requirements=srs.requirements())
-        arch = ArchitectureOverview.model_validate(state["architecture"])
+        arch = ArchitectureOverview.model_validate(_legacy_arch_fill(state["architecture"]))
         items = [ItemSpec.model_validate(i) for i in state["items"]]
         tests = [AcceptanceTest.model_validate(t) for t in state["tests"]]
         violations = validate_traceability(needs, reqs, items, tests) + state.get("guard_flags", [])
