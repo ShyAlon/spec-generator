@@ -64,6 +64,18 @@ export OLLAMA_NUM_PARALLEL=1   # never load two models at once on 16GB
 python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
 ```
 
+## Founder review gates (`--review`, ADR-0019)
+
+Opt-in (`--review` on the CLI): the run PAUSES after the SRS and after the
+architecture, renders the artifact (`gate_srs.md` / `gate_architecture.md` in
+the output dir), and asks: **[a]ccept** continues; **[e]dit** opens the
+stage's JSON in `$EDITOR` and re-validates it against the contract on save
+(invalid edits reopen the editor - a hand edit can never corrupt downstream
+state); **[f]eedback** takes one line and re-runs the stage with it applied;
+**[r]eject** abandons the run (checkpointed - rerun the same command to
+resume). A crash mid-gate just re-asks on rerun. Default runs (no flag) are
+ungated, exactly as before.
+
 Console output: each stage still gets one start/done line, and while a stage
 runs, every item lands its own line as its JSON closes (`     - N-3 the system
 shall ...`). The generation process itself is untouched - same one model call

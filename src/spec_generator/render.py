@@ -105,3 +105,28 @@ def render_srs(srs: SRSDocument) -> str:
           "_Solution-agnostic by design: observable outcomes only. Executable checks "
           "(endpoints, selectors, probes) live in the test specifications._"]
     return "\n".join(L)
+
+
+def render_architecture(arch: ArchitectureOverview) -> str:
+    """Human-readable architecture for the founder review gate (ADR-0019) and
+    the bundle's architecture.md."""
+    lines = ["# Architecture overview\n"]
+    if arch.stack:
+        lines.append("## Stack")
+        lines += [f"- **{k}**: {v}" for k, v in arch.stack.items()]
+    if arch.components:
+        lines.append("\n## Components")
+        for c in arch.components:
+            refs = f" (realizes {', '.join(c.requirement_ids)})" if c.requirement_ids else ""
+            lines.append(f"- **{c.name}**{refs}: {c.responsibility}")
+    if arch.decisions:
+        lines.append("\n## Decisions (ADRs)")
+        for d in arch.decisions:
+            lines.append(f"- **{d.decision_id} {d.title}** - {d.decision}")
+            lines.append(f"  Why: {d.rationale}")
+            if d.rejected:
+                lines.append(f"  Rejected: {'; '.join(d.rejected)}")
+    if arch.non_functionals:
+        lines.append("\n## Non-functional positions")
+        lines += [f"- **{k}**: {v}" for k, v in arch.non_functionals.items()]
+    return "\n".join(lines) + "\n"

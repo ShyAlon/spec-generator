@@ -50,6 +50,7 @@ class GenState(TypedDict, total=False):
     review_fixes: list[str]
     bundle: dict
     violations: list[str]
+    gate_feedback: dict[str, str]  # stage -> founder feedback from a review gate (ADR-0019)
 
 
 def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None) -> str:
@@ -85,7 +86,50 @@ def _json(text: str, stage: str = "unknown"):
         raise translate_json_error(e, stage) from e
 
 
-def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None):
+def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
+    """Full SRSDocument data from the LLM-authored body: structure (definitions,
+    constraints, assumptions, open questions) is carried DETERMINISTICALLY from
+    the intent model - the LLM never re-copies it. Used at assembly AND at the
+    review gate (validating hand edits)."""
+    intent = IntentModel.model_validate(intent_model)
+    data = dict(srs_body)
+    data["definitions"] = intent.glossary
+    data["constraints"] = intent.constraints
+    data["assumptions"] = [a.model_dump(mode="json") for a in intent.assumption_items]
+    data["open_questions"] = intent.open_questions
+    return data
+
+
+def _tech_constraint_block(intent_model: dict) -> str:
+    """The founder's ecosystem preferences confine the architecture stage
+    (ADR-0019). required binds; preferred guides; ADRs name their driver."""
+    prefs = intent_model.get("tech_preferences") or []
+    if not prefs:
+        return ""
+    lines = ["FOUNDER TECHNOLOGY CONSTRAINTS - confine your stack, library, and "
+             "infrastructure choices to these (SRS stays solution-agnostic; here "
+             "naming technology IS the job):"]
+    for p in prefs:
+        if p.get("strength") == "required":
+            lines.append(f"- REQUIRED {p.get('area')}: {p.get('preference')} (founder-mandated; do not deviate)")
+    for p in prefs:
+        if p.get("strength") != "required":
+            lines.append(f"- preferred {p.get('area')}: {p.get('preference')} (affinity - follow it, or argue otherwise in an ADR)")
+    lines.append("Every ADR names the constraint that drove it; where the founder is "
+                 "agnostic, state that the choice is yours and why.")
+    return "\n\n" + "\n".join(lines)
+
+
+def _gate_feedback(state: GenState, stage: str) -> str | None:
+    return (state.get("gate_feedback") or {}).get(stage)
+
+
+def _clear_feedback(state: GenState, stage: str) -> dict:
+    return {k: v for k, v in (state.get("gate_feedback") or {}).items() if k != stage}
+
+
+def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
+                review: bool = False):
 
     def _wrap(stage: str, label: str, detail=None):
         """detail: a string, or a callable(state) -> str. A callable resolves at
@@ -129,9 +173,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         carried DETERMINISTICALLY from the intent model in assembly - the LLM
         authors purpose, scope_summary, and the sectioned requirements only.
         Mechanical guards (text_qa) flag solution language and invented detail."""
-        raw = _invoke("srs",
-                      STAGE_PROMPTS["srs"] + "\n\nNEEDS:\n" + json.dumps(state["needs"])
-                      + "\n\nINTENT:\n" + json.dumps(state["intent_model"]), log, progress)
+        payload = (STAGE_PROMPTS["srs"] + "\n\nNEEDS:\n" + json.dumps(state["needs"])
+                   + "\n\nINTENT:\n" + json.dumps(state["intent_model"]))
+        fb = _gate_feedback(state, "srs")
+        if fb:
+            payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
+                        + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["srs"]))
+        raw = _invoke("srs", payload, log, progress)
         data = _json(raw, "srs")
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
@@ -155,14 +203,20 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     kept.append(ac)
                 if kept or not req.get("acceptance"):
                     req["acceptance"] = kept
-        return {"srs": data, "guard_flags": state.get("guard_flags", []) + flags}
+        return {"srs": data, "guard_flags": state.get("guard_flags", []) + flags,
+                "gate_feedback": _clear_feedback(state, "srs")}
 
     def node_architecture(state: GenState) -> dict:
-        raw = _invoke("architecture",
-                      STAGE_PROMPTS["architecture"] + "\n\nSRS:\n" + json.dumps(state["srs"]), log, progress)
+        payload = (STAGE_PROMPTS["architecture"] + "\n\nSRS:\n" + json.dumps(state["srs"])
+                   + _tech_constraint_block(state["intent_model"]))
+        fb = _gate_feedback(state, "architecture")
+        if fb:
+            payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
+                        + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["architecture"]))
+        raw = _invoke("architecture", payload, log, progress)
         data = _json(raw, "architecture")
         data.setdefault("session_id", state["intent_model"]["session_id"])
-        return {"architecture": data}
+        return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}
 
     def node_items(state: GenState) -> dict:
         # Item-level, parallel-friendly: short passes per slice beat one mega-pass (cost + regen granularity).
@@ -211,14 +265,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         sid = state["intent_model"]["session_id"]
         intent = IntentModel.model_validate(state["intent_model"])
         needs = StakeholderNeedsSet.model_validate(state["needs"])
-        srs_data = dict(state["srs"])
         # structure is carried from the intent model deterministically - never
         # trust the LLM to re-copy glossary/assumptions/open questions.
-        srs_data["definitions"] = intent.glossary
-        srs_data["constraints"] = intent.constraints
-        srs_data["assumptions"] = [a.model_dump(mode="json") for a in intent.assumption_items]
-        srs_data["open_questions"] = intent.open_questions
-        srs = SRSDocument.model_validate(srs_data)
+        srs = SRSDocument.model_validate(srs_document_data(state["intent_model"], state["srs"]))
         # the flat view feeds the existing traceability math unchanged
         reqs = RequirementSet(session_id=sid, requirements=srs.requirements())
         arch = ArchitectureOverview.model_validate(state["architecture"])
@@ -270,8 +319,32 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     g.add_node("assemble", _wrap("assemble", "Assembling + validating bundle", "deterministic")(node_assemble))
     g.set_entry_point("needs")
     g.add_edge("needs", "srs")
-    g.add_edge("srs", "architecture")
-    g.add_edge("architecture", "items")
+    if review:
+        from langgraph.types import interrupt
+
+        def _make_gate(stage_key: str, artifact_key: str):
+            def node_gate(state: GenState) -> dict:
+                verdict = interrupt({"gate": stage_key, "artifact": state.get(artifact_key)})
+                if verdict.get("action") == "regenerate":
+                    return {"gate_feedback": {stage_key: verdict["feedback"]}}
+                return {}  # accept (edits landed via update_state before resume)
+            return node_gate
+
+        # NOT wrapped in track(): interrupt() raises through the progress
+        # contextmanager and would print a spurious FAILED line per pause.
+        g.add_node("gate_srs", _make_gate("srs", "srs"))
+        g.add_node("gate_architecture", _make_gate("architecture", "architecture"))
+        g.add_edge("srs", "gate_srs")
+        g.add_conditional_edges("gate_srs",
+                                lambda st: "srs" if _gate_feedback(st, "srs") else "architecture",
+                                {"srs": "srs", "architecture": "architecture"})
+        g.add_edge("architecture", "gate_architecture")
+        g.add_conditional_edges("gate_architecture",
+                                lambda st: "architecture" if _gate_feedback(st, "architecture") else "items",
+                                {"architecture": "architecture", "items": "items"})
+    else:
+        g.add_edge("srs", "architecture")
+        g.add_edge("architecture", "items")
     g.add_edge("items", "tests")
     g.add_edge("tests", "review")
     g.add_conditional_edges("review", route_review, {"apply_fixes": "apply_fixes", "assemble": "assemble"})

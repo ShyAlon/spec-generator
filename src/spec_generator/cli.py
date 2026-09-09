@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -22,10 +23,105 @@ from .render import render_agents_md, render_needs, render_srs, render_spec_file
 from .telemetry import UsageLog, jsonl_sink
 
 
+def _validate_gate_edit(gate: str, edited: dict, intent: dict) -> None:
+    """A hand edit must satisfy the same contract the assembly enforces - a
+    gate can never push contract-breaking state downstream."""
+    from vmodel_contracts import ArchitectureOverview, SRSDocument
+
+    from .graph import srs_document_data
+
+    try:
+        if gate == "srs":
+            data = srs_document_data(intent, edited)
+            data.setdefault("session_id", intent["session_id"])
+            data.setdefault("intent_model_ref", intent["session_id"])
+            SRSDocument.model_validate(data)
+        else:
+            edited.setdefault("session_id", intent["session_id"])
+            ArchitectureOverview.model_validate(edited)
+    except Exception as e:
+        raise UserFacingError(
+            f"the edited {gate} JSON does not pass the contract schema.",
+            f"validation detail: {type(e).__name__}: {str(e)[:400]}",
+            "fix the JSON in the editor - the original is unchanged until a valid edit lands.",
+        ) from e
+
+
+def _render_gate(gate: str, artifact: dict, intent: dict) -> str:
+    from vmodel_contracts import ArchitectureOverview, SRSDocument
+
+    from .graph import srs_document_data
+    from .render import render_architecture, render_srs
+
+    if gate == "srs":
+        data = srs_document_data(intent, artifact)
+        data.setdefault("session_id", intent["session_id"])
+        data.setdefault("intent_model_ref", intent["session_id"])
+        return render_srs(SRSDocument.model_validate(data))
+    return render_architecture(ArchitectureOverview.model_validate({**artifact, "session_id": intent["session_id"]}))
+
+
+def _run_with_gates(graph, cfg: dict, intent: dict, outdir) -> dict:
+    """ADR-0019 review gates (opt-in via --review): after the SRS and after the
+    architecture, the founder accepts, edits (JSON, contract-validated), sends
+    feedback (stage re-runs with it), or rejects. Crash mid-gate: rerun the
+    same command - the checkpoint re-renders and re-asks."""
+    import subprocess
+
+    from langgraph.types import Command
+
+    result = graph.invoke({"intent_model": intent}, cfg)
+    while True:
+        st = graph.get_state(cfg)
+        if not st.next:
+            return result
+        payload = next((t.interrupts[0].value for t in st.tasks if t.interrupts), None)
+        if payload is None:
+            result = graph.invoke(None, cfg)
+            continue
+        gate, artifact = payload["gate"], payload["artifact"]
+        title = "SRS (requirements + acceptance criteria)" if gate == "srs" else "architecture overview"
+        md = _render_gate(gate, artifact, intent)
+        (outdir / f"gate_{gate}.md").write_text(md)
+        (outdir / f"gate_{gate}.json").write_text(json.dumps(artifact, indent=2))
+        print(f"\n===== REVIEW GATE: the {title} =====\n", file=sys.stderr)
+        print(md, file=sys.stderr)
+        print(f"(full artifact: {outdir}/gate_{gate}.md | editable JSON: {outdir}/gate_{gate}.json)", file=sys.stderr)
+        while True:
+            action = input("[a]ccept / [e]dit / [f]eedback / [r]eject? ").strip().lower()
+            if action in ("a", "e", "f", "r"):
+                break
+        if action == "r":
+            print(f"Rejected at the {gate} gate. The run is checkpointed - rerun the same command to resume.", file=sys.stderr)
+            raise SystemExit(1)
+        if action == "f":
+            fb = input("Feedback (one line, founder language): ").strip()
+            if fb:
+                result = graph.invoke(Command(resume={"action": "regenerate", "feedback": fb}), cfg)
+            continue
+        if action == "e":
+            editor = os.environ.get("EDITOR", "vi")
+            while True:
+                subprocess.run([editor, str(outdir / f"gate_{gate}.json")])
+                try:
+                    edited = json.loads((outdir / f"gate_{gate}.json").read_text())
+                    _validate_gate_edit(gate, edited, intent)
+                    break
+                except json.JSONDecodeError as e:
+                    print(f"Invalid JSON ({e}) - reopening the editor.", file=sys.stderr)
+                except UserFacingError as e:
+                    print(e.render() + "\nReopening the editor.", file=sys.stderr)
+            graph.update_state(cfg, {gate: edited})
+            print("Edit accepted and validated.", file=sys.stderr)
+        result = graph.invoke(Command(resume={"action": "accept"}), cfg)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("intent_model", type=Path)
     ap.add_argument("-o", "--out", type=Path, default=Path("bundle"))
+    ap.add_argument("--review", action="store_true",
+                    help="opt-in founder review gates after the SRS and architecture stages (ADR-0019)")
     args = ap.parse_args()
 
     if not args.intent_model.exists():
@@ -76,9 +172,13 @@ def main() -> None:
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
-    graph = build_graph(log, checkpointer=SqliteSaver(conn), progress=bus)
+    graph = build_graph(log, checkpointer=SqliteSaver(conn), progress=bus, review=args.review)
     print(f"Generating bundle for session {sid} (crash? rerun the same command - it resumes)\n", file=sys.stderr)
-    result = graph.invoke({"intent_model": intent}, {"configurable": {"thread_id": sid}})
+    cfg = {"configurable": {"thread_id": sid}}
+    if args.review:
+        result = _run_with_gates(graph, cfg, intent, outdir)
+    else:
+        result = graph.invoke({"intent_model": intent}, cfg)
 
     b = result["bundle"]
     try:
