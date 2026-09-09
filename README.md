@@ -34,6 +34,12 @@ bundle/
   usage.jsonl          # per-stage token/cost records
 ```
 
+Written INCREMENTALLY as each stage completes (atomic tmp+rename): needs.*
+after stage 1, srs.* after stage 2 (re-written if review fixes apply),
+architecture.* after stage 3, items.json + specs/ after stage 4, tests.json
+after stage 5. A late failure leaves every completed stage's artifacts on
+disk; AGENTS.md / manifest.json / traceability.json land at assembly.
+
 ## Run
 
 ```bash
@@ -121,3 +127,4 @@ for s in NEEDS SRS REVIEW; do
   export SPEC_GENERATOR_MODEL_$s=deepseek:deepseek-chat
 done
 ```
+

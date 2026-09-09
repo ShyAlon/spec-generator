@@ -1,6 +1,17 @@
 """Intent model in, repo-ready bundle out.
 
 Usage: python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
+
+Bundle layout (written INCREMENTALLY as each stage completes, atomic
+tmp+rename - a late failure leaves all completed work on disk):
+  needs.json / needs.md            after stage 1/6
+  srs.json / srs.md                after stage 2/6 (re-written if review fixes apply)
+  architecture.json / architecture.md  after stage 3/6
+  items.json + specs/<SPEC-id>.md  after stage 4/6
+  tests.json                       after stage 5/6
+  AGENTS.md / traceability.json / manifest.json   at assembly (stage 6/6)
+  gate_srs.* / gate_architecture.* (--review)     at the gates
+  usage.jsonl / checkpoints.sqlite                run bookkeeping
 """
 from __future__ import annotations
 
@@ -16,10 +27,11 @@ from vmodel_contracts import (
 )
 
 from .errors import UserFacingError, run_cli
-from .graph import build_graph
+from .graph import build_graph, srs_document_data
 from .progress import ProgressBus, stderr_printer
 from .repair import coerce_for_model, normalize_enums
-from .render import render_agents_md, render_needs, render_srs, render_spec_file
+from .render import (render_agents_md, render_architecture, render_needs,
+                     render_srs, render_spec_file)
 from .telemetry import UsageLog, jsonl_sink
 
 
@@ -71,6 +83,47 @@ def _render_gate(gate: str, artifact: dict, intent: dict) -> str:
             "rerun the same command - the checkpoint resumes at the gate; if it repeats, the stage "
             "produced a contract-breaking draft its own validation missed - please report it as a bug.",
         ) from e
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """tmp + rename: a crash mid-write can never leave a torn artifact."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def _make_persist(intent: dict, outdir: Path):
+    """The incremental bundle writer (his ask 2026-09-09: 'persist them
+    intermittently so we'll have some of the data'). Fires after each stage;
+    the final assembly writes remain the canonical full bundle."""
+    sid = intent["session_id"]
+
+    def _persist(stage: str, data, state: dict) -> None:
+        if stage == "needs":
+            body = {**data, "session_id": sid}
+            _atomic_write(outdir / "needs.json", json.dumps(body, indent=2))
+            needs = StakeholderNeedsSet.model_validate(normalize_enums(coerce_for_model(body, StakeholderNeedsSet), StakeholderNeedsSet))
+            _atomic_write(outdir / "needs.md", render_needs(needs))
+        elif stage == "srs":
+            doc = srs_document_data(intent, {**data, "session_id": sid, "intent_model_ref": sid})
+            _atomic_write(outdir / "srs.json", json.dumps(doc, indent=2))
+            srs = SRSDocument.model_validate(coerce_for_model(doc, SRSDocument))
+            _atomic_write(outdir / "srs.md", render_srs(srs))
+        elif stage == "architecture":
+            body = {**data, "session_id": sid}
+            _atomic_write(outdir / "architecture.json", json.dumps(body, indent=2))
+            arch = ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
+            _atomic_write(outdir / "architecture.md", render_architecture(arch))
+        elif stage == "items":
+            _atomic_write(outdir / "items.json", json.dumps(data, indent=2))
+            for i in data:
+                item = ItemSpec.model_validate(coerce_for_model(i, ItemSpec))
+                _atomic_write(outdir / "specs" / f"{item.spec_id}.md", render_spec_file(item))
+        elif stage == "tests":
+            _atomic_write(outdir / "tests.json", json.dumps(data, indent=2))
+
+    return _persist
 
 
 def _run_with_gates(graph, cfg: dict, intent: dict, outdir, resume: bool = False) -> dict:
@@ -202,7 +255,8 @@ def main() -> None:
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
-    graph = build_graph(log, checkpointer=SqliteSaver(conn), progress=bus, review=args.review)
+    graph = build_graph(log, checkpointer=SqliteSaver(conn), progress=bus, review=args.review,
+                        persist=_make_persist(intent, outdir))
     print(f"Generating bundle for session {sid} (crash? rerun the same command - it resumes)\n", file=sys.stderr)
     cfg = {"configurable": {"thread_id": sid}}
     resume = bool(graph.get_state(cfg).values)
@@ -232,7 +286,8 @@ def main() -> None:
     (outdir / "needs.md").write_text(render_needs(needs))
     srs = SRSDocument.model_validate(coerce_for_model(b["_srs"], SRSDocument))
     (outdir / "srs.md").write_text(render_srs(srs))
-    (outdir / "architecture.md").write_text(arch.model_dump_json(indent=2))
+    (outdir / "architecture.md").write_text(render_architecture(arch))
+    (outdir / "architecture.json").write_text(arch.model_dump_json(indent=2))
     for i in items:
         (outdir / "specs" / f"{i.spec_id}.md").write_text(render_spec_file(i))
     (outdir / "AGENTS.md").write_text(render_agents_md(arch, items, manifest, punch))

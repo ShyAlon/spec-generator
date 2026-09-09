@@ -236,12 +236,6 @@ def _strip_pipeline_owned(data):
     return data
 
 
-def _srs_validator(intent_model: dict):
-    def check(d):
-        sid = intent_model["session_id"]
-        body = {**_strip_pipeline_owned(d), "session_id": sid, "intent_model_ref": sid}
-        SRSDocument.model_validate(srs_document_data(intent_model, body))
-    return check
 
 
 def _tech_constraint_block(intent_model: dict) -> str:
@@ -262,6 +256,27 @@ def _tech_constraint_block(intent_model: dict) -> str:
     lines.append("Every ADR names the constraint that drove it; where the founder is "
                  "agnostic, state that the choice is yours and why.")
     return "\n\n" + "\n".join(lines)
+
+
+def _srs_fill_call(state: GenState, extra: str = ""):
+    """The ADR-0020 SRS fill call, shared by node_srs and node_apply_fixes:
+    same skeleton, same prompt, same merge validator - the apply-fixes path
+    re-fires the FILL stage with the review fixes, never the retired
+    full-document shape (the 2026-09-09 live failure: grammar said fills,
+    validator said document)."""
+    slots = build_srs_skeleton(state["needs"])
+    payload = (STAGE_PROMPTS["srs"] + "\n\nREQUIREMENT SLOTS (fill prose for each, keyed by requirement_id):\n"
+               + json.dumps(slots) + "\n\nNEEDS:\n" + json.dumps(state["needs"])
+               + "\n\nINTENT:\n" + json.dumps(state["intent_model"]) + extra)
+
+    def _validate(d):
+        merged = merge_srs_fills(slots, d)
+        sid = state["intent_model"]["session_id"]
+        body = {**merged, "session_id": sid, "intent_model_ref": sid}
+        SRSDocument.model_validate(srs_document_data(state["intent_model"], body))
+        return merged
+
+    return payload, _validate
 
 
 def _legacy_arch_fill(payload: dict) -> dict:
@@ -312,7 +327,12 @@ def _clear_feedback(state: GenState, stage: str) -> dict:
 
 
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
-                review: bool = False):
+                review: bool = False, persist=None):
+    """persist(stage, data, state): optional side-effect hook fired after each
+    authoring stage completes - the CLI uses it to write the bundle
+    incrementally, so a late failure leaves all completed work on disk.
+    Pure side effect: resume semantics are unchanged (a re-run stage
+    re-persists)."""
 
     def _wrap(stage: str, label: str, detail=None):
         """detail: a string, or a callable(state) -> str. A callable resolves at
@@ -349,6 +369,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                           validate=_check(lambda d: StakeholderNeedsSet.model_validate(
                               {**_strip_pipeline_owned(d), "session_id": intent.session_id})))
         data.setdefault("session_id", intent.session_id)
+        if persist:
+            persist("needs", data, state)
         return {"needs": data}
 
     def node_srs(state: GenState) -> dict:
@@ -360,7 +382,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # ADR-0020: code owns the skeleton (R-ids, kinds, trace links, section
         # assignment); the model fills prose per slot. Structure carried from
         # the intent model stays deterministic (ADR-0015) via srs_document_data.
-        slots = build_srs_skeleton(state["needs"])
+        slots = build_srs_skeleton(state["needs"])  # the toolbox needs them; the fill call rebuilds identically
         if tools_enabled():
             from .tools import SrsToolbox, run_tool_loop
             from .prompts import TOOL_PROMPTS
@@ -372,21 +394,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                                      needs=json.dumps(state["needs"]),
                                                      intent=json.dumps(state["intent_model"])),
                           log, progress)
-        payload = (STAGE_PROMPTS["srs"] + "\n\nREQUIREMENT SLOTS (fill prose for each, keyed by requirement_id):\n"
-                   + json.dumps(slots) + "\n\nNEEDS:\n" + json.dumps(state["needs"])
-                   + "\n\nINTENT:\n" + json.dumps(state["intent_model"]))
         fb = _gate_feedback(state, "srs")
+        extra = ""
         if fb:
-            payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
-                        + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["srs"]))
-
-        def _validate_srs(d):
-            merged = merge_srs_fills(slots, d)
-            sid = state["intent_model"]["session_id"]
-            body = {**merged, "session_id": sid, "intent_model_ref": sid}
-            SRSDocument.model_validate(srs_document_data(state["intent_model"], body))
-            return merged
-
+            extra = ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
+                     + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["srs"]))
+        payload, _validate_srs = _srs_fill_call(state, extra)
         data = _call_json("srs", payload, log, progress, validate=_validate_srs)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
@@ -410,6 +423,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     kept.append(ac)
                 if kept or not req.get("acceptance"):
                     req["acceptance"] = kept
+        if persist:
+            persist("srs", data, state)
         return {"srs": data, "guard_flags": state.get("guard_flags", []) + flags,
                 "gate_feedback": _clear_feedback(state, "srs")}
 
@@ -429,14 +444,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
         data = _call_json("architecture", payload, log, progress, validate=_validate_arch)
         data.setdefault("session_id", state["intent_model"]["session_id"])
+        if persist:
+            persist("architecture", data, state)
         return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}
 
     def node_items(state: GenState) -> dict:
         # Item-level, parallel-friendly: short passes per slice beat one mega-pass (cost + regen granularity).
-        return {"items": _call_json("items",
-                      STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(state["srs"])
-                      + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log, progress,
-                      validate=_check(lambda d: [ItemSpec.model_validate(_strip_pipeline_owned(i)) for i in d]))}
+        data = _call_json("items",
+                          STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(state["srs"])
+                          + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log, progress,
+                          validate=_check(lambda d: [ItemSpec.model_validate(_strip_pipeline_owned(i)) for i in d]))
+        if persist:
+            persist("items", data, state)
+        return {"items": data}
 
     def node_tests(state: GenState) -> dict:
         """Two V pairings in one pass: acceptance tests pair with SRS criteria,
@@ -470,6 +490,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                       + json.dumps(slots) + "\n\nSRS:\n" + json.dumps(state["srs"])
                       + "\n\nITEMS:\n" + json.dumps(state["items"]), log, progress,
                           validate=_validate_tests)
+        if persist:
+            persist("tests", data, state)
         return {"tests": data}
 
     def node_review(state: GenState) -> dict:
@@ -488,12 +510,18 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return "apply_fixes"
 
     def node_apply_fixes(state: GenState) -> dict:
-        data = _call_json("srs",
-                          "Apply these review fixes to the SRS and return the corrected SRS body as STRICT JSON:\n"
-                          + json.dumps(state["review_fixes"]) + "\n\nSRS:\n" + json.dumps(state["srs"]), log, progress,
-                          validate=_srs_validator(state["intent_model"]))
+        # ADR-0020 shape: re-fire the FILL stage with the review fixes - the
+        # skeleton slots/ids are unchanged, the model revises prose per slot.
+        payload, _validate = _srs_fill_call(
+            state,
+            "\n\nREVIEW FIXES - apply EVERY one to the affected fills:\n"
+            + json.dumps(state["review_fixes"])
+            + "\n\nPREVIOUS SRS (revise it; slots and ids are unchanged):\n" + json.dumps(state["srs"]))
+        data = _call_json("srs", payload, log, progress, validate=_validate)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
+        if persist:
+            persist("srs", data, state)
         return {"srs": data}
 
     def node_assemble(state: GenState) -> dict:
