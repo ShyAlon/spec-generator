@@ -49,6 +49,12 @@ def translate_llm_error(exc: Exception, stage: str, provider: str, model: str, b
             "network problem or provider outage.",
             "check connectivity / the provider status page, then retry.",
         )
+    if "format" in text and ("invalid" in text or "unsupported" in text or "unmarshal" in text) or "structured" in text and "not supported" in text:
+        return UserFacingError(
+            f"stage '{stage}' failed: this Ollama does not accept a JSON-schema format (structured outputs need Ollama >= 0.5).",
+            "the local Ollama server is older than 0.5.",
+            "upgrade Ollama (https://ollama.com/download) - or opt out of schema enforcement: export SPEC_GENERATOR_STRUCTURED=0.",
+        )
     if name == "AuthenticationError" or "401" in text or "invalid api key" in text:
         env = {"deepseek": "DEEPSEEK_API_KEY", "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}.get(provider, "API key")
         return UserFacingError(

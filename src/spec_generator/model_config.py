@@ -90,9 +90,27 @@ def stream_checked(chat_model, messages, stage: str):
         raise
 
 
+def _structured_enabled() -> bool:
+    """Constrained decoding (schema-enforced output) is the default for local
+    Ollama; SPEC_GENERATOR_STRUCTURED=0 opts out (older Ollama < 0.5, or a
+    quality regression the founder wants off)."""
+    return os.environ.get("SPEC_GENERATOR_STRUCTURED", "1") != "0"
+
+
 def build_chat_model(stage: str):
     cfg = for_stage(stage)
     _preflight(cfg, stage)
+    if cfg.provider == "ollama" and _structured_enabled():
+        from langchain_ollama import ChatOllama
+
+        from .schemas import for_stage as _schema_for_stage
+
+        # native /api/chat (the OpenAI-compat layer's json_schema support is
+        # unreliable); grammar enforces SHAPE only - extraction+retry stays.
+        return ChatOllama(model=cfg.model, temperature=cfg.temperature,
+                          num_predict=cfg.max_tokens,
+                          base_url=_BASE_URLS["ollama"].removesuffix("/v1"),
+                          format=_schema_for_stage(stage))
     if cfg.provider in ("deepseek", "openai", "ollama"):
         from langchain_openai import ChatOpenAI
 

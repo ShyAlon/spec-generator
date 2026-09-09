@@ -76,6 +76,17 @@ state); **[f]eedback** takes one line and re-runs the stage with it applied;
 resume). A crash mid-gate just re-asks on rerun. Default runs (no flag) are
 ungated, exactly as before.
 
+Structured output by default (local runs): every stage's call goes to Ollama's
+native schema-constrained generation (`format` = a JSON schema DERIVED from
+vmodel-contracts, so the contracts stay the single source of truth). The model
+literally cannot emit invalid JSON shape. Grammar enforces shape only - not
+content quality and not length - so tolerant extraction + one retry stays as
+the net, and the quality comparison is yours to eyeball once:
+`python scripts/probe_structured.py out/<session>/intent_model.json`
+(runs the needs stage with and without the schema on your Ollama, prints
+validity, wall time, and both outputs). Needs Ollama >= 0.5. Opt out:
+`export SPEC_GENERATOR_STRUCTURED=0`.
+
 Reliability: every stage tolerantly extracts JSON (fences, prose-wrapped) and
 auto-retries ONCE with the failure as feedback when the model returns invalid
 JSON - a transient flake recovers without you. Only a second consecutive
