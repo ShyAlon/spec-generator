@@ -1,0 +1,92 @@
+"""ADR-0021: the architecture stage refuses arbitrary decisions - real driver
+required, founder_constraint must cite an existing TechPreference, the grammar
+narrows driver to the closed enum, and the gate render labels it unverified."""
+import pytest
+
+from vmodel_contracts.architecture import ArchitectureOverview
+from spec_generator.graph import _check_decision_drivers
+from spec_generator.render import render_architecture
+from spec_generator.schemas import for_stage
+from spec_generator.skeleton import ModelStructureError, assign_architecture_ids
+
+ARCH = {"session_id": "s", "stack": {"framework": "React"},
+        "components": [{"name": "web", "responsibility": "UI", "requirement_ids": ["R-1"]}],
+        "decisions": [{"title": "Frontend framework", "decision": "React",
+                       "rationale": "Largest ecosystem for this archetype.",
+                       "driver": "ecosystem_maturity",
+                       "options_considered": [{"option": "Angular", "reason": "More ceremony for a solo build."}]}],
+        "non_functionals": {}}
+INTENT_NO_PREFS = {"session_id": "s", "tech_preferences": []}
+INTENT_WITH_PREFS = {"session_id": "s", "tech_preferences": [
+    {"area": "language", "preference": "python", "strength": "required", "source_turns": [1]}]}
+
+
+def _arch(payload):
+    merged = assign_architecture_ids(payload)
+    return ArchitectureOverview.model_validate({**merged, "session_id": "s"})
+
+
+def test_valid_decision_passes():
+    _check_decision_drivers(_arch(ARCH), INTENT_NO_PREFS)
+
+
+def test_missing_driver_key_fails_contract_validation():
+    # contract-required (his call): the KEY must be present...
+    bad = {"session_id": "s", "stack": {}, "components": [],
+           "decisions": [{"title": "t", "decision": "x", "rationale": "y",
+                          "options_considered": []}]}
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        _arch(bad)
+
+
+def test_null_driver_is_a_retryable_model_error():
+    # ...and a null VALUE (only legal in migrated legacy artifacts) is a
+    # stage-level retryable error for new production.
+    bad = {"session_id": "s", "stack": {}, "components": [],
+           "decisions": [{"title": "t", "decision": "x", "rationale": "y",
+                          "driver": None, "options_considered": []}]}
+    with pytest.raises(ModelStructureError, match="no driver"):
+        _check_decision_drivers(_arch(bad), INTENT_NO_PREFS)
+
+
+def test_founder_constraint_must_cite_an_existing_preference():
+    bad = {"session_id": "s", "stack": {}, "components": [],
+           "decisions": [{"title": "Language", "decision": "We use python",
+                          "rationale": "It is nice.", "driver": "founder_constraint",
+                          "options_considered": []}]}
+    # 'python' IS the founder's stated preference but the rationale does not
+    # cite it as the driver... the decision text names it, so this passes:
+    _check_decision_drivers(_arch(bad), INTENT_WITH_PREFS)
+    # a founder_constraint decision citing nothing the founder said fails:
+    bad2 = {"session_id": "s", "stack": {}, "components": [],
+            "decisions": [{"title": "Language", "decision": "We use ruby",
+                           "rationale": "It is nice.", "driver": "founder_constraint",
+                           "options_considered": []}]}
+    with pytest.raises(ModelStructureError, match="founder_constraint"):
+        _check_decision_drivers(_arch(bad2), INTENT_WITH_PREFS)
+
+
+def test_grammar_narrows_driver_to_the_closed_enum():
+    dec = for_stage("architecture")["properties"]["decisions"]["items"]
+    if "$ref" in dec:
+        dec = for_stage("architecture")["$defs"]["ArchitectureDecision"]
+    assert dec["properties"]["driver"] == {"enum": ["founder_constraint", "ecosystem_maturity",
+                                                    "community_adoption", "team_fit", "simplicity"]}
+    assert "driver" in dec["required"] and "options_considered" in dec["required"]
+
+
+def test_gate_render_shows_driver_options_and_the_unverified_label():
+    md = render_architecture(_arch(ARCH))
+    assert "Driver: ecosystem maturity (model judgment - unverified; challenge here)" in md
+    assert "Considered: Angular - rejected: More ceremony for a solo build." in md
+
+
+def test_gate_render_marks_legacy_driverless_decisions():
+    legacy = _arch({"session_id": "s", "stack": {}, "components": [],
+                    "decisions": [{"title": "t", "decision": "x", "rationale": "y",
+                                   "driver": None, "options_considered": [],
+                                   "rejected": ["z - old flat form"]}]})
+    md = render_architecture(legacy)
+    assert "Driver: (not recorded - pre-0.8.0 artifact)" in md
+    assert "Rejected: z - old flat form" in md

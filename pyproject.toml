@@ -11,7 +11,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "Shy Alon" }]
 dynamic = ["version"]
 dependencies = [
-  "vmodel-contracts @ git+https://github.com/ShyAlon/vmodel-contracts.git@v0.7.0",
+  "vmodel-contracts @ git+https://github.com/ShyAlon/vmodel-contracts.git@v0.8.0",
   "langgraph>=0.2",
   "langgraph-checkpoint-sqlite>=2",
   "langchain-core>=0.3",
@@ -32,3 +32,4 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spec_generator"]
+

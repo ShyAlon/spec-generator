@@ -264,6 +264,28 @@ def _tech_constraint_block(intent_model: dict) -> str:
     return "\n\n" + "\n".join(lines)
 
 
+def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict) -> None:
+    """ADR-0021: no arbitrary decisions. The contract requires the FIELDS
+    present (driver nullable only for legacy migration); the stage requires a
+    REAL driver on every new decision, and a founder_constraint driver must
+    cite a TechPreference that actually exists in the intent model - the
+    mechanical form of ADR-0019's 'ADRs name the constraint that drove it'.
+    Options have no floor (founder call 2026-09-09): under a mandate, empty
+    is honest."""
+    prefs = [p.get("preference", "") for p in (intent_model.get("tech_preferences") or [])]
+    for d in arch.decisions:
+        if d.driver is None:
+            raise ModelStructureError(
+                f"{d.decision_id} '{d.title}': no driver - classify why the chosen option won "
+                f"(founder_constraint | ecosystem_maturity | community_adoption | team_fit | simplicity).")
+        if d.driver.value == "founder_constraint" and prefs:
+            text = (d.title + " " + d.decision + " " + d.rationale).lower()
+            if not any(p.lower() in text for p in prefs if p):
+                raise ModelStructureError(
+                    f"{d.decision_id} '{d.title}': driver founder_constraint but the decision cites none "
+                    f"of the founder's stated preferences ({', '.join(prefs)}) - name the one that drove it.")
+
+
 def _gate_feedback(state: GenState, stage: str) -> str | None:
     return (state.get("gate_feedback") or {}).get(stage)
 
@@ -383,8 +405,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["architecture"]))
         def _validate_arch(d):
             merged = assign_architecture_ids(_strip_pipeline_owned(d))  # ADR-0020: code assigns ADR-n
-            ArchitectureOverview.model_validate(
+            arch = ArchitectureOverview.model_validate(
                 {**merged, "session_id": state["intent_model"]["session_id"]})
+            _check_decision_drivers(arch, state["intent_model"])  # ADR-0021
             return merged
 
         data = _call_json("architecture", payload, log, progress, validate=_validate_arch)

@@ -123,10 +123,21 @@ def render_architecture(arch: ArchitectureOverview) -> str:
         lines.append("\n## Decisions (ADRs)")
         for d in arch.decisions:
             lines.append(f"- **{d.decision_id} {d.title}** - {d.decision}")
+            # ADR-0021: drivers/reasons are local-model judgment until retrieval
+            # grounding lands (ADR-0019 Part 3) - labeled so the gate can veto.
+            if d.driver is not None:
+                lines.append(f"  Driver: {d.driver.value.replace('_', ' ')} "
+                             f"(model judgment - unverified; challenge here)")
+            else:
+                lines.append("  Driver: (not recorded - pre-0.8.0 artifact)")
             lines.append(f"  Why: {d.rationale}")
-            if d.rejected:
+            if d.options_considered:
+                considered = "; ".join(f"{o.option} - rejected: {o.reason}" for o in d.options_considered)
+                lines.append(f"  Considered: {considered}")
+            elif d.rejected:  # deprecated 0.7.x field, legacy artifacts only
                 lines.append(f"  Rejected: {'; '.join(d.rejected)}")
     if arch.non_functionals:
         lines.append("\n## Non-functional positions")
         lines += [f"- **{k}**: {v}" for k, v in arch.non_functionals.items()]
     return "\n".join(lines) + "\n"
+

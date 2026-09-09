@@ -149,6 +149,11 @@ def _raw_stage_schema(stage: str) -> dict:
         dec = sch["$defs"]["ArchitectureDecision"]
         dec["properties"].pop("decision_id", None)
         dec["required"] = [r for r in dec.get("required", []) if r != "decision_id"]
+        # ADR-0021: the contract keeps driver nullable ONLY for pre-0.8.0
+        # migrated artifacts; the model must always emit a real driver, so the
+        # grammar narrows it to the closed enum.
+        dec["properties"]["driver"] = {"enum": ["founder_constraint", "ecosystem_maturity",
+                                                "community_adoption", "team_fit", "simplicity"]}
         return sch
     if stage == "items":
         return _array_schema(ItemSpec)

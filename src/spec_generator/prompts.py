@@ -46,7 +46,13 @@ STAGE_PROMPTS = {
     "architecture": "Given the SRS and the target archetype, propose the architecture: stack, "
                     "components, ADRs, non-functionals. Components and decisions REFERENCE "
                     "requirement ids (R-n) - never restate requirement text. Do NOT number the "
-                    "decisions: ADR ids are assigned by the pipeline in order.",
+                    "decisions: ADR ids are assigned by the pipeline in order. "
+                    "Every decision MUST carry: driver - exactly one of founder_constraint (the "
+                    "founder mandated/confined it; cite the preference), ecosystem_maturity, "
+                    "community_adoption, team_fit, simplicity - and options_considered: the real "
+                    "leading alternatives you rejected, each with one sentence on why it lost "
+                    "(not strawmen; empty list only when a founder mandate genuinely leaves no "
+                    "alternative). No decision is arbitrary.",
     "items": "Write item-level specs (SPEC-...) covering every requirement in the SRS. Reference "
              "requirements by id through requirement_ids - never restate or regroup requirement text. "
              "One JSON array.",
