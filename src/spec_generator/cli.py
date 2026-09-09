@@ -56,8 +56,9 @@ def main() -> None:
         raise UserFacingError(
             f"this intent model was produced against vmodel-contracts {e.have}, but this spec-generator reads {e.want.split('.')[0]}.{e.want.split('.')[1]}.x.",
             "the interview ran before a contract upgrade.",
-            "re-run the interview (minutes on a local model) to regenerate the intent model - "
-            "or install the matching older vmodel-contracts to consume this file.",
+            "if the schema is otherwise compatible, re-stamp it: python -m vmodel_contracts.migrate "
+            f"{args.intent_model} (it validates against the current schema first and refuses on real drift); "
+            "otherwise re-run the interview (minutes on a local model) to regenerate the intent model.",
         ) from e
     sid = intent["session_id"]
     outdir = args.out
