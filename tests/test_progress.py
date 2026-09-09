@@ -108,3 +108,32 @@ def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
     assert fake_models["needs"].calls == 1, "needs stage must NOT be re-paid after resume"
     assert fake_models["srs"].calls == 1
     monkeypatch.undo()
+
+
+def test_stage_start_lines_carry_input_counts(fake_models):
+    """The opening line of each stage states its INPUT cardinality (known
+    before the call) - never an output count (not knowable in advance)."""
+    bus = ProgressBus()
+    events = []
+    bus.subscribe(events.append)
+    g = build_graph(UsageLog("s"), progress=bus)
+    g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": "s"}})
+    started = {e.stage: e for e in events if e.status == "started"}
+
+    n_sn = len(INTENT["stakeholder_needs"])
+    assert started["needs"].detail == f"stage 1/6, from {n_sn} interview needs (+ any implied)"
+
+    n_needs = len(PAYLOADS["needs"]["needs"])
+    assert started["srs"].detail == f"stage 2/6, from {n_needs} stakeholder needs"
+
+    n_reqs = len(PAYLOADS["srs"]["functional"]) + len(PAYLOADS["srs"]["non_functional"])
+    assert started["architecture"].detail == f"stage 3/6, from {n_reqs} requirements"
+    assert started["items"].detail == f"stage 4/6, covering {n_reqs} requirements"
+
+    n_ac = sum(len(r["acceptance"]) for sec in ("functional", "non_functional") for r in PAYLOADS["srs"][sec])
+    assert started["tests"].detail == f"stage 5/6, from {n_ac} acceptance criteria + {len(PAYLOADS['items'])} module specs"
+
+    # no detail may promise an output count
+    for e in started.values():
+        if e.detail:
+            assert "will produce" not in e.detail and "expecting" not in e.detail

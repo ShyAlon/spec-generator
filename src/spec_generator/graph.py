@@ -87,13 +87,34 @@ def _json(text: str, stage: str = "unknown"):
 
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None):
 
-    def _wrap(stage: str, label: str, detail: str | None = None):
+    def _wrap(stage: str, label: str, detail=None):
+        """detail: a string, or a callable(state) -> str. A callable resolves at
+        node start, so the opening line can carry the stage's INPUT cardinality
+        ('from 12 interview needs') - the count a founder watches items count
+        up against. Output counts are never claimed: they are not knowable
+        before the call."""
         def deco(fn):
             def inner(state: GenState) -> dict:
-                with track(progress, stage, label, detail):
+                d = detail(state) if callable(detail) else detail
+                with track(progress, stage, label, d):
                     return fn(state)
             return inner
         return deco
+
+    def _sn_count(state: GenState) -> int:
+        return len(state["intent_model"].get("stakeholder_needs") or [])
+
+    def _n_count(state: GenState) -> int:
+        return len(state["needs"].get("needs") or [])
+
+    def _req_count(state: GenState) -> int:
+        srs = state["srs"]
+        return len(srs.get("functional") or []) + len(srs.get("non_functional") or [])
+
+    def _ac_count(state: GenState) -> int:
+        srs = state["srs"]
+        return sum(len(r.get("acceptance") or [])
+                   for sec in ("functional", "non_functional") for r in (srs.get(sec) or []))
 
     def node_needs(state: GenState) -> dict:
         intent = IntentModel.model_validate(state["intent_model"])
@@ -233,12 +254,18 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return {"bundle": out, "violations": violations}
 
     g = StateGraph(GenState)
-    g.add_node("needs", _wrap("needs", "Formalizing stakeholder needs", "stage 1/6")(node_needs))
-    g.add_node("srs", _wrap("srs", "Authoring the SRS", "stage 2/6")(node_srs))
-    g.add_node("architecture", _wrap("architecture", "Drafting architecture overview", "stage 3/6")(node_architecture))
-    g.add_node("items", _wrap("items", "Writing module specs", "stage 4/6")(node_items))
-    g.add_node("tests", _wrap("tests", "Deriving test specifications", "stage 5/6")(node_tests))
-    g.add_node("review", _wrap("review", "Cross-checking consistency", "stage 6/6")(node_review))
+    g.add_node("needs", _wrap("needs", "Formalizing stakeholder needs",
+            lambda st: f"stage 1/6, from {_sn_count(st)} interview needs (+ any implied)")(node_needs))
+    g.add_node("srs", _wrap("srs", "Authoring the SRS",
+            lambda st: f"stage 2/6, from {_n_count(st)} stakeholder needs")(node_srs))
+    g.add_node("architecture", _wrap("architecture", "Drafting architecture overview",
+            lambda st: f"stage 3/6, from {_req_count(st)} requirements")(node_architecture))
+    g.add_node("items", _wrap("items", "Writing module specs",
+            lambda st: f"stage 4/6, covering {_req_count(st)} requirements")(node_items))
+    g.add_node("tests", _wrap("tests", "Deriving test specifications",
+            lambda st: f"stage 5/6, from {_ac_count(st)} acceptance criteria + {len(st['items'])} module specs")(node_tests))
+    g.add_node("review", _wrap("review", "Cross-checking consistency",
+            lambda st: f"stage 6/6, over {_req_count(st)} requirements, {len(st['items'])} specs, {len(st['tests'])} tests")(node_review))
     g.add_node("apply_fixes", _wrap("apply_fixes", "Applying review fixes")(node_apply_fixes))
     g.add_node("assemble", _wrap("assemble", "Assembling + validating bundle", "deterministic")(node_assemble))
     g.set_entry_point("needs")
