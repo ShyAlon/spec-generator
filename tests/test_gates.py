@@ -118,3 +118,64 @@ def test_gate_render_of_contract_invalid_artifact_is_friendly_not_a_traceback():
     rendered = ei.value.render()
     assert "does not pass the contract" in rendered
     assert "title" in rendered
+
+
+def test_cli_resume_does_not_repay_completed_stages(tmp_path, monkeypatch):
+    """The banner promises 'rerun the same command - it resumes'. With a
+    checkpoint present, the CLI must invoke(None) - needs/srs are NOT
+    re-paid - and the same gate re-asks."""
+    from test_progress import INTENT
+
+    from spec_generator.cli import _run_with_gates
+    from spec_generator.graph import build_graph
+    from spec_generator.progress import ProgressBus
+    from spec_generator.telemetry import UsageLog
+
+    g, box = _review_graph(monkeypatch)
+    cfg = {"configurable": {"thread_id": "resume1"}}
+    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    assert _interrupt_payload(g, cfg)["gate"] == "srs"
+    assert box["needs"].calls == 1 and box["srs"].calls == 1
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": "a")
+    # the CLI's resume decision (checkpoint found -> resume=True) must not
+    # re-pay completed stages; the gate re-asks from the same checkpoint
+    result = _run_with_gates(g, cfg, dict(INTENT), tmp_path, resume=True)
+    assert "bundle" in result
+    assert box["needs"].calls == 1, "needs must NOT be re-paid on resume"
+    assert box["srs"].calls == 1, "srs must NOT be re-paid on resume"
+    assert box["architecture"].calls == 1  # ran once after the accepted gate
+
+
+def test_gate_render_failure_on_stale_checkpoint_restarts_once(tmp_path, monkeypatch):
+    """A checkpoint written before stage-level contract validation can hold a
+    poisoned draft (his live run): the gate render fails friendly, the run
+    restarts ONCE so the stage regenerates under the fixed schema, and the
+    regenerated draft reaches the gate."""
+    from test_progress import INTENT
+
+    from spec_generator.cli import _run_with_gates
+    from spec_generator.errors import UserFacingError
+
+    g, box = _review_graph(monkeypatch)
+    cfg = {"configurable": {"thread_id": "stale1"}}
+    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    assert _interrupt_payload(g, cfg)["gate"] == "srs"
+
+    real_render = __import__("spec_generator.cli", fromlist=["_render_gate"])._render_gate
+    calls = {"n": 0}
+
+    def poisoned_once(gate, artifact, intent):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise UserFacingError("the srs draft does not pass the contract schema.", "validation detail: x", "rerun")
+        return real_render(gate, artifact, intent)
+
+    import spec_generator.cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_render_gate", poisoned_once)
+    answers = iter(["a", "a"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    result = _run_with_gates(g, cfg, dict(INTENT), tmp_path, resume=True)
+    assert "bundle" in result
+    assert calls["n"] >= 2  # failed once, rendered after restart
+    assert box["srs"].calls == 2  # srs regenerated once by the restart

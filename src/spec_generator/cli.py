@@ -73,7 +73,7 @@ def _render_gate(gate: str, artifact: dict, intent: dict) -> str:
         ) from e
 
 
-def _run_with_gates(graph, cfg: dict, intent: dict, outdir) -> dict:
+def _run_with_gates(graph, cfg: dict, intent: dict, outdir, resume: bool = False) -> dict:
     """ADR-0019 review gates (opt-in via --review): after the SRS and after the
     architecture, the founder accepts, edits (JSON, contract-validated), sends
     feedback (stage re-runs with it), or rejects. Crash mid-gate: rerun the
@@ -82,7 +82,8 @@ def _run_with_gates(graph, cfg: dict, intent: dict, outdir) -> dict:
 
     from langgraph.types import Command
 
-    result = graph.invoke({"intent_model": intent}, cfg)
+    result = graph.invoke(None, cfg) if resume else graph.invoke({"intent_model": intent}, cfg)
+    restarted = False
     while True:
         st = graph.get_state(cfg)
         if not st.next:
@@ -93,7 +94,20 @@ def _run_with_gates(graph, cfg: dict, intent: dict, outdir) -> dict:
             continue
         gate, artifact = payload["gate"], payload["artifact"]
         title = "SRS (requirements + acceptance criteria)" if gate == "srs" else "architecture overview"
-        md = _render_gate(gate, artifact, intent)
+        try:
+            md = _render_gate(gate, artifact, intent)
+        except UserFacingError as e:
+            # a checkpoint that predates stage-level contract validation can hold
+            # a poisoned draft; restarting regenerates it under the fixed schema
+            # (invoke-with-input on an interrupted thread restarts from entry).
+            if restarted:
+                raise
+            restarted = True
+            print(file=sys.stderr)
+            print(e.render(), file=sys.stderr)
+            print("The checkpointed draft predates stage validation - restarting the run so the stage regenerates it.", file=sys.stderr)
+            result = graph.invoke({"intent_model": intent}, cfg)
+            continue
         (outdir / f"gate_{gate}.md").write_text(md)
         (outdir / f"gate_{gate}.json").write_text(json.dumps(artifact, indent=2))
         print(f"\n===== REVIEW GATE: the {title} =====\n", file=sys.stderr)
@@ -187,10 +201,13 @@ def main() -> None:
     graph = build_graph(log, checkpointer=SqliteSaver(conn), progress=bus, review=args.review)
     print(f"Generating bundle for session {sid} (crash? rerun the same command - it resumes)\n", file=sys.stderr)
     cfg = {"configurable": {"thread_id": sid}}
+    resume = bool(graph.get_state(cfg).values)
+    if resume:
+        print("Checkpoint found - resuming; completed stages are NOT re-run.", file=sys.stderr)
     if args.review:
-        result = _run_with_gates(graph, cfg, intent, outdir)
+        result = _run_with_gates(graph, cfg, intent, outdir, resume=resume)
     else:
-        result = graph.invoke({"intent_model": intent}, cfg)
+        result = graph.invoke(None, cfg) if resume else graph.invoke({"intent_model": intent}, cfg)
 
     b = result["bundle"]
     try:
