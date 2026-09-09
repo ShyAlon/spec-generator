@@ -67,14 +67,27 @@ def call(messages, schema, cfg):
     return resp["message"]["content"], time.time() - t0
 
 
-def verdict(raw):
-    """Validity exactly the way production judges it: tolerant extraction,
-    then parse. Returns (label, parsed-or-None)."""
+def verdict(raw, stage):
+    """Two verdicts, the way production would meet this output: (1) tolerant
+    JSON extraction, (2) CONTRACT validation - the pipeline's real gate. Free
+    generation can pass (1) while drifting key names the contract rejects."""
     try:
-        return "VALID JSON", json.loads(_extract_json(raw))
+        data = json.loads(_extract_json(raw))
     except Exception as e:
         tail = raw.strip()[-160:].replace("\n", " ")
         return f"INVALID JSON ({type(e).__name__}); output tail: ...{tail}", None
+    from vmodel_contracts import AcceptanceTest, StakeholderNeedsSet
+    try:
+        if stage == "needs":
+            StakeholderNeedsSet.model_validate(data)
+        else:
+            for key in ("acceptance_tests", "unit_module_tests"):
+                for item in data[key]:
+                    AcceptanceTest.model_validate(item)
+        return "VALID JSON, contract ACCEPTS", data
+    except Exception as e:
+        first = str(e).splitlines()[0]
+        return f"VALID JSON, contract REJECTS ({first[:180]})", data
 
 
 def main():
@@ -108,7 +121,7 @@ def main():
             print(f"{mode}: CALL FAILED: {e}")
             results[mode] = None
             continue
-        label, data = verdict(raw)
+        label, data = verdict(raw, stage)
         results[mode] = data
         out_file = f"probe_{stage}_{mode}.json"
         with open(out_file, "w") as f:
@@ -117,16 +130,26 @@ def main():
         print(f"{mode}: full raw output saved to {out_file}")
 
     print(f"\nOllama {version} | stage '{stage}' | model {cfg.model}")
-    if all(results.values()):
-        free_items = results["free"].get("needs") or results["free"].get("acceptance_tests") or []
-        sch_items = results["schema"].get("needs") or results["schema"].get("acceptance_tests") or []
-        key = "statement" if "statement" in (free_items[0] if free_items else {}) else "definition"
-        print("\nFree-mode statements:")
-        for it in free_items:
-            print(f"  - {it.get(key, it)}")
-        print("\nSchema-mode statements:")
-        for it in sch_items:
-            print(f"  - {it.get(key, it)}")
+    if all(isinstance(v, dict) for v in results.values()):
+        def items_of(data):
+            # the contract key first; fall back to the first list-of-dicts
+            # (free mode sometimes drifts the top-level key, e.g.
+            # "stakeholder_needs" - that drift is itself a finding)
+            for key in ("needs", "acceptance_tests"):
+                if isinstance(data.get(key), list):
+                    return data[key], key
+            for key, v in data.items():
+                if isinstance(v, list) and v and isinstance(v[0], dict):
+                    return v, key + "  <- NOTE: not the contract key"
+            return [], "(none found)"
+
+        for mode in ("free", "schema"):
+            items, where = items_of(results[mode])
+            text_key = "statement" if any("statement" in it for it in items) else "definition"
+            id_key = "need_id" if any("need_id" in it for it in items) else "test_id"
+            print(f"\n{mode.capitalize()}-mode items (key: {where}):")
+            for it in items:
+                print(f"  - {it.get(id_key, '?')}: {it.get(text_key, it)}")
         print("\nCompare the statements above: schema mode is only worth it if the text "
               "quality holds. Report the timings + your quality read back.")
     print("\nProbe done. The probe_*.json files are yours; nothing else was written.")

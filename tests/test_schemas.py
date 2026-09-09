@@ -89,3 +89,17 @@ def test_schemas_are_reduced_to_ollamas_grammar_subset():
         text = str(sch)
         assert '"null"' not in text  # anyOf T-or-null collapsed
         assert "contract_version" not in text and "session_id" not in text
+
+
+def test_schema_field_names_match_contract_field_names():
+    """The derived schema must emit exactly the contract's field names (minus
+    pipeline-owned) - a rename or drop here makes contract validation reject
+    every real run. Locked for needs; the same derivation builds all stages."""
+    from vmodel_contracts import StakeholderNeedsSet
+
+    need = StakeholderNeedsSet.model_json_schema()["$defs"]["StakeholderNeed"]
+    contract_fields = set(need["properties"]) - {"session_id", "contract_version"}
+    contract_required = set(need["required"]) - {"session_id", "contract_version"}
+    item = for_stage("needs")["properties"]["needs"]["items"]
+    assert set(item["properties"]) == contract_fields
+    assert set(item["required"]) == contract_required
