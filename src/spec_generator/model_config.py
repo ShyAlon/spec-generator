@@ -22,7 +22,7 @@ class StageModel:
 
 _STAGE_DEFAULTS: dict[str, StageModel] = {
     "needs":        StageModel("deepseek", "deepseek-chat"),
-    "requirements": StageModel("deepseek", "deepseek-chat"),
+    "srs":          StageModel("deepseek", "deepseek-chat"),
     "architecture": StageModel("deepseek", "deepseek-chat"),
     "items":        StageModel("deepseek", "deepseek-chat"),
     "tests":        StageModel("deepseek", "deepseek-chat"),

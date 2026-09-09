@@ -10,6 +10,7 @@ from vmodel_contracts import (
     PunchListItem,
     RequirementSet,
     SpecManifest,
+    SRSDocument,
     StakeholderNeedsSet,
 )
 
@@ -68,15 +69,39 @@ def render_needs(needs: StakeholderNeedsSet) -> str:
     return "\n".join(L)
 
 
-def render_requirements(reqs: RequirementSet) -> str:
-    L = ["# System requirements", ""]
-    for r in reqs.requirements:
-        L.append(f"## {r.requirement_id} [{r.priority.value}] {r.title}")
-        L.append(r.statement)
-        L.append(f"_Needs: {', '.join(r.need_ids)}_")
-        L.append("")
+def render_srs(srs: SRSDocument) -> str:
+    """The standalone SRS: WHAT must be verifiably true, never HOW. A human
+    reads it to sign off; downstream artifacts reference R-ids from it."""
+
+    def _render_req(r):
+        L = [f"## {r.requirement_id} [{r.priority.value}] {r.title}", r.statement,
+             f"_Needs: {', '.join(r.need_ids)}_", ""]
         for ac in r.acceptance:
-            hint = f" (check: {ac.executable_hint})" if ac.executable_hint else ""
-            L.append(f"- **{ac.criterion_id}** {ac.statement}{hint}")
+            L.append(f"- **{ac.criterion_id}** {ac.statement}")
         L.append("")
+        return L
+
+    L = [f"# Software Requirements Specification - {srs.session_id}", "",
+         "## 1. Purpose", srs.purpose, "",
+         "## 2. Scope", srs.scope_summary, ""]
+    if srs.definitions:
+        L += ["## 3. Definitions", *[f"- **{t}** - {m}" for t, m in srs.definitions.items()], ""]
+    L.append("## 4. Functional requirements")
+    L.append("")
+    for r in srs.functional:
+        L += _render_req(r)
+    L.append("## 5. Non-functional requirements")
+    L.append("")
+    for r in srs.non_functional:
+        L += _render_req(r)
+    if srs.constraints:
+        L += ["## 6. Constraints (design-space limits)", *[f"- {c}" for c in srs.constraints], ""]
+    if srs.assumptions:
+        L += ["## 7. Assumptions (validated later, not built)",
+              *[f"- {a.statement}" for a in srs.assumptions], ""]
+    if srs.open_questions:
+        L += ["## 8. Open questions (never silently resolved)", *[f"- {q}" for q in srs.open_questions], ""]
+    L += ["---",
+          "_Solution-agnostic by design: observable outcomes only. Executable checks "
+          "(endpoints, selectors, probes) live in the test specifications._"]
     return "\n".join(L)

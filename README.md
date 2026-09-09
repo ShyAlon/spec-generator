@@ -25,7 +25,7 @@ resumable. Batch-API eligible stages are marked in `model_config.py`.
 bundle/
   AGENTS.md            # build order, decided architecture, guardrails
   manifest.json        # machine-readable index - read this first
-  needs.md  requirements.md  architecture.md
+  needs.md  srs.md  architecture.md   # srs.md: the standalone, solution-agnostic SRS
   specs/SPEC-*.md      # item-level specs
   tests.json           # AcceptanceTest set for verification-loop
   traceability.json    # requirement -> specs -> tests

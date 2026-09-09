@@ -15,11 +15,13 @@ PAYLOADS = {
     "needs": {"session_id": "s", "needs": [
         {"need_id": "N-1", "stakeholder": "founder", "statement": "needs specs",
          "kind": "functional", "intent_fields": ["problem_statement"], "intent_need_ids": ["SN-1"]}]},
-    "requirements": {"session_id": "s", "requirements": [
-        {"requirement_id": "R-1", "title": "Spec file", "statement": "system shall emit a spec",
-         "priority": "must", "kind": "functional",
-         "acceptance": [{"criterion_id": "AC-1", "statement": "spec exists"}],
-         "need_ids": ["N-1"], "intent_fields": ["problem_statement"]}]},
+    "srs": {"session_id": "s", "intent_model_ref": "s", "purpose": "p", "scope_summary": "sc",
+            "functional": [
+                {"requirement_id": "R-1", "title": "Spec file", "statement": "system shall emit a spec",
+                 "priority": "must", "kind": "functional",
+                 "acceptance": [{"criterion_id": "AC-1", "statement": "spec exists"}],
+                 "need_ids": ["N-1"], "intent_fields": ["problem_statement"]}],
+            "non_functional": []},
     "architecture": {"session_id": "s", "stack": {"language": "ts"},
                      "components": [{"name": "api", "responsibility": "serve"}],
                      "decisions": [{"decision_id": "ADR-1", "title": "t", "decision": "x", "rationale": "y"}]},
@@ -63,11 +65,11 @@ def test_full_pipeline_progress_events(fake_models):
     r = g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": "s"}})
     assert "bundle" in r
     seq = [(e.stage, e.status) for e in events]
-    for stage in ("needs", "requirements", "architecture", "items", "tests", "review", "assemble"):
+    for stage in ("needs", "srs", "architecture", "items", "tests", "review", "assemble"):
         assert (stage, "started") in seq and (stage, "completed") in seq, stage
     # starts come in pipeline order
     starts = [e.stage for e in events if e.status == "started"]
-    assert starts == ["needs", "requirements", "architecture", "items", "tests", "review", "assemble"]
+    assert starts == ["needs", "srs", "architecture", "items", "tests", "review", "assemble"]
 
 
 def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
@@ -96,5 +98,5 @@ def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
     r = g2.invoke(None, cfg)
     assert "bundle" in r
     assert fake_models["needs"].calls == 1, "needs stage must NOT be re-paid after resume"
-    assert fake_models["requirements"].calls == 1
+    assert fake_models["srs"].calls == 1
     monkeypatch.undo()

@@ -11,14 +11,14 @@ from pathlib import Path
 
 from vmodel_contracts import (
     AcceptanceTest, ArchitectureOverview, ItemSpec, PunchListItem,
-    RequirementSet, SpecManifest, StakeholderNeedsSet,
+    RequirementSet, SpecManifest, SRSDocument, StakeholderNeedsSet,
 )
 
 from .errors import UserFacingError, run_cli
 from .graph import build_graph
 from .progress import ProgressBus, stderr_printer
 from .repair import coerce_for_model, normalize_enums
-from .render import render_agents_md, render_needs, render_requirements, render_spec_file
+from .render import render_agents_md, render_needs, render_srs, render_spec_file
 from .telemetry import UsageLog, jsonl_sink
 
 
@@ -96,7 +96,8 @@ def main() -> None:
         ) from e
 
     (outdir / "needs.md").write_text(render_needs(needs))
-    (outdir / "requirements.md").write_text(render_requirements(reqs))
+    srs = SRSDocument.model_validate(coerce_for_model(b["_srs"], SRSDocument))
+    (outdir / "srs.md").write_text(render_srs(srs))
     (outdir / "architecture.md").write_text(arch.model_dump_json(indent=2))
     for i in items:
         (outdir / "specs" / f"{i.spec_id}.md").write_text(render_spec_file(i))
