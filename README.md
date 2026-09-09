@@ -108,6 +108,20 @@ shall ...`). The generation process itself is untouched - same one model call
 per stage, same prompt, same completion; streaming only makes the items
 visible as they arrive.
 
+Determinism (ADR-0022): the model owns prose; code owns everything
+enumerable. All stages default to temperature 0 with a fixed seed
+(`SPEC_GENERATOR_SEED`, default 42) so a failure replays exactly. The SRS and
+items stages run as PER-SLOT MICRO-CALLS: purpose/scope in one small call,
+one call per requirement fill, then a spec plan (references enum-constrained
+to the real requirement ids) plus one body call per spec. A bad fill fails
+one cheap call - never a long composite payload - and each slot/spec lands
+its own console line as it completes. The old one-bulk-call-per-stage shape
+stays available if wall time is worse on your hardware:
+
+```bash
+export SPEC_GENERATOR_BULK=1   # one composite call per stage (pre-ADR-0022)
+```
+
 Model size: `qwen2.5-coder:14b` is the standing default - proven on a 16GB M4
 with `OLLAMA_NUM_PARALLEL=1`. `qwen2.5-coder:7b` is the lighter fallback for
 tighter machines:

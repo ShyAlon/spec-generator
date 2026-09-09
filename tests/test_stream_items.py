@@ -98,3 +98,51 @@ def test_invoke_streams_and_preserves_output_contract(monkeypatch):
     assert [e.detail for e in seen] == ["N-1 alpha", "N-2 beta"]
     assert log.records[0].prompt_tokens == 10
 
+
+
+def test_keyed_fills_stream_one_item_per_value():
+    """2026-09-09 live regression: strict per-skeleton fills changed arrays to
+    a keyed object and silently removed test-stage item lines."""
+    text = '{"fills": {"T-1": {"description": "first", "runner": "http", "definition": {"url": "/"}}, "T-22": {"description": "last", "runner": "cli", "definition": {"command": "x"}}}}'
+    items = extract_array_items(text)
+    assert len(items) == 2
+    assert json.loads(items[0]) == {"T-1": {"description": "first", "runner": "http", "definition": {"url": "/"}}}
+    assert [item_label(x, i + 1) for i, x in enumerate(items)] == ["T-1 first", "T-22 last"]
+
+
+def test_keyed_fills_incremental_stream_emits_each_once():
+    bus = ProgressBus()
+    seen = []
+    bus.subscribe(seen.append)
+    rep = ItemReporter(bus, "tests")
+    rep.feed('{"fills": {"T-1": {"description": "fir')
+    assert seen == []
+    full = '{"fills": {"T-1": {"description": "first"}, "T-2": {"description": "second"}}}'
+    rep.feed(full)
+    rep.feed(full)
+    assert [e.detail for e in seen] == ["T-1 first", "T-2 second"]
+
+
+def test_nested_ordinary_object_is_not_misreported_as_items():
+    assert extract_array_items('{"stack": {"language": "python", "framework": "fastapi"}}') == []
+
+
+def test_invoke_reports_keyed_test_fills(monkeypatch):
+    from spec_generator import graph, model_config
+    from spec_generator.telemetry import UsageLog
+
+    payload = '{"fills": {"T-1": {"description": "one"}, "T-2": {"description": "two"}}}'
+
+    class Chunk:
+        usage_metadata = {}
+        def __init__(self, c): self.content = c
+    class Model:
+        def stream(self, messages):
+            for i in range(0, len(payload), 13):
+                yield Chunk(payload[i:i + 13])
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: Model())
+    bus = ProgressBus()
+    seen = []
+    bus.subscribe(seen.append)
+    assert graph._invoke("tests", "anything", UsageLog("s"), bus) == payload
+    assert [e.detail for e in seen] == ["T-1 one", "T-2 two"]

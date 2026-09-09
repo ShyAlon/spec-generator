@@ -87,6 +87,7 @@ from vmodel_contracts import (
     AcceptanceTest,
     ArchitectureOverview,
     ItemSpec,
+    SpecItemKind,
     SRSDocument,
     StakeholderNeedsSet,
 )
@@ -162,6 +163,70 @@ def test_fill_schema(slots: list[dict]) -> dict:
                                      "required": ids,
                                      "additionalProperties": False}},
             "required": ["fills"],
+            "additionalProperties": False}
+
+
+def items_schema(requirement_ids: list[str]) -> dict:
+    """The items grammar, generated PER RUN (2026-09-09 live failure: the
+    model invented R-001..R-005 and left all ten real requirements
+    uncovered): requirement_ids references are an ENUM of the real ids, so
+    citing a nonexistent requirement is impossible by construction. The spec
+    SET itself stays model-proposed (module grouping is design analysis, not
+    skeleton structure); coverage is validated at the stage, not at assembly.
+    """
+    item = {"type": "object",
+            "properties": {"spec_id": {"type": "string"},
+                           "kind": {"enum": [k.value for k in SpecItemKind]},
+                           "title": {"type": "string"},
+                           "body_markdown": {"type": "string"},
+                           "requirement_ids": {"type": "array",
+                                               "items": {"enum": list(requirement_ids)}},
+                           "depends_on": {"type": "array", "items": {"type": "string"}}},
+            "required": ["spec_id", "kind", "title", "body_markdown", "requirement_ids"],
+            "additionalProperties": False}
+    return {"type": "array", "items": item}
+
+
+def srs_overview_schema() -> dict:
+    """ADR-0022: the purpose/scope micro-call."""
+    return {"type": "object",
+            "properties": {"purpose": {"type": "string"},
+                           "scope_summary": {"type": "string"}},
+            "required": ["purpose", "scope_summary"],
+            "additionalProperties": False}
+
+
+def srs_slot_fill_schema() -> dict:
+    """ADR-0022: one requirement fill per call - a bad fill fails one cheap
+    call, never a long composite payload."""
+    return {"type": "object",
+            "properties": {"title": {"type": "string"},
+                           "statement": {"type": "string"},
+                           "priority": {"enum": ["must", "should", "could"]},
+                           "acceptance": {"type": "array", "items": {"type": "string"}}},
+            "required": ["title", "statement", "priority", "acceptance"],
+            "additionalProperties": False}
+
+
+def items_plan_schema(requirement_ids: list[str]) -> dict:
+    """ADR-0022: the items stage splits into PLAN (module grouping - the
+    analysis - with references enum-constrained) then one body call per spec."""
+    plan = {"type": "object",
+            "properties": {"spec_id": {"type": "string"},
+                           "kind": {"enum": [k.value for k in SpecItemKind]},
+                           "title": {"type": "string"},
+                           "requirement_ids": {"type": "array",
+                                               "items": {"enum": list(requirement_ids)}},
+                           "depends_on": {"type": "array", "items": {"type": "string"}}},
+            "required": ["spec_id", "kind", "title", "requirement_ids"],
+            "additionalProperties": False}
+    return {"type": "array", "items": plan}
+
+
+def items_body_schema() -> dict:
+    return {"type": "object",
+            "properties": {"body_markdown": {"type": "string"}},
+            "required": ["body_markdown"],
             "additionalProperties": False}
 
 

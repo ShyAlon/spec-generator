@@ -60,7 +60,8 @@ class GenState(TypedDict, total=False):
 
 
 def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
-            feedback: str | None = None, schema: dict | None = None) -> str:
+            feedback: str | None = None, schema: dict | None = None,
+            stream_items: bool = True) -> str:
     """One model call per stage, STREAMED so the console can show each item as
     its JSON closes (same prompt, same parameters, same completion - progress
     is observability only, never a change to what is generated)."""
@@ -69,7 +70,9 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
     from .stream_items import ItemReporter
 
     model = model_config.build_chat_model(stage, schema=schema)
-    reporter = ItemReporter(progress, stage)
+    # ADR-0022: per-slot micro-calls skip the per-token item scanner (their
+    # output is one small object; the node emits one completion line instead).
+    reporter = ItemReporter(progress if stream_items else None, stage)
     messages = [SystemMessage(content=METHODOLOGY), HumanMessage(content=payload)]
     if feedback:
         messages.append(HumanMessage(content=feedback))
@@ -140,7 +143,7 @@ def _contract_errors(exc) -> str:
 
 
 def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
-               validate=None, schema: dict | None = None):
+               validate=None, schema: dict | None = None, stream_items: bool = True):
     """Every authoring stage goes through here: invoke -> tolerant parse ->
     CONTRACT VALIDATION -> ONE automatic retry with the failure as feedback
     (the interview-engine pattern, ADR-0015 doctrine: transient model flakes
@@ -157,7 +160,8 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
     fb = None
     last_raw = ""
     for attempt in (1, 2):
-        raw = _invoke(stage, payload, log, progress, feedback=fb, schema=schema)
+        raw = _invoke(stage, payload, log, progress, feedback=fb, schema=schema,
+                      stream_items=stream_items)
         last_raw = raw
         contract_err = None
         try:
@@ -236,6 +240,42 @@ def _strip_pipeline_owned(data):
     return data
 
 
+_PROMPT_HIDDEN = ("session_id", "intent_model_ref", "contract_version")
+
+
+def _prompt_view(data):
+    """State as the MODEL may see it: pipeline-owned bookkeeping stripped
+    recursively. session ids are plumbing; a local model that sees one reuses
+    it as content (the 2026-09-09 live failure: item specs named
+    '20260909-094216-e900 Performance')."""
+    if isinstance(data, dict):
+        return {k: _prompt_view(v) for k, v in data.items() if k not in _PROMPT_HIDDEN}
+    if isinstance(data, list):
+        return [_prompt_view(v) for v in data]
+    return data
+
+
+def checkpoint_serde():
+    """Checkpoint (de)serializer with the vmodel_contracts enums registered.
+    LangGraph warns on READ - 'Deserializing unregistered type
+    vmodel_contracts.spec.SpecItemKind from checkpoint ... will be blocked in
+    a future version' - because pydantic model_dump (python mode) leaves enum
+    instances in state. New state is dumped mode='json' (plain strings, no
+    enums); this registration silences the warning and keeps PRE-FIX
+    checkpoints resumable under future strict msgpack mode."""
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+    return JsonPlusSerializer(allowed_msgpack_modules=[
+        ("vmodel_contracts.spec", "SpecItemKind"),
+        ("vmodel_contracts.requirements", "RequirementKind"),
+        ("vmodel_contracts.requirements", "Priority"),
+        ("vmodel_contracts.verification", "VModelLevel"),
+        ("vmodel_contracts.verification", "DivergenceKind"),
+        ("vmodel_contracts.verification", "VerificationVerdict"),
+        ("vmodel_contracts.architecture", "DecisionDriver"),
+    ])
+
+
 
 
 def _tech_constraint_block(intent_model: dict) -> str:
@@ -272,8 +312,8 @@ def _srs_fill_call(state: GenState, extra: str = ""):
 
     slots = build_srs_skeleton(state["needs"])
     payload = (STAGE_PROMPTS["srs"] + "\n\nREQUIREMENT SLOTS (fill prose for each, keyed by requirement_id):\n"
-               + json.dumps(slots) + "\n\nNEEDS:\n" + json.dumps(state["needs"])
-               + "\n\nINTENT:\n" + json.dumps(state["intent_model"]) + extra)
+               + json.dumps(slots) + "\n\nNEEDS:\n" + json.dumps(_prompt_view(state["needs"]))
+               + "\n\nINTENT:\n" + json.dumps(_prompt_view(state["intent_model"])) + extra)
     ids = [sl["requirement_id"] for sl in slots]
     payload += ("\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                 "return one STRICT JSON object {purpose, scope_summary, fills: {...}} where fills has "
@@ -331,6 +371,204 @@ def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict) -> N
                     f"of the founder's stated preferences ({', '.join(prefs)}) - name the one that drove it.")
 
 
+def _check_item_refs(entries: list, req_ids: list[str]) -> None:
+    """Shared reference/coverage checks for the items stage (bulk specs and
+    ADR-0022 plans): unique ids, references resolve, deps point at emitted
+    specs, every requirement covered. Failures are NAMED so the automatic
+    retry's feedback says exactly what to fix."""
+    spec_ids = [e.get("spec_id") for e in entries]
+    dupes = sorted({s for s in spec_ids if spec_ids.count(s) > 1})
+    if dupes:
+        raise ModelStructureError(f"duplicate spec ids: {dupes} - every spec needs a unique spec_id")
+    known = set(req_ids)
+    emitted = set(spec_ids)
+    for e in entries:
+        unknown = sorted(set(e.get("requirement_ids") or []) - known)
+        if unknown:
+            raise ModelStructureError(
+                f"{e.get('spec_id')} claims unknown requirements {unknown} - valid ids: {req_ids}")
+        bad_deps = sorted(set(e.get("depends_on") or []) - emitted)
+        if bad_deps:
+            raise ModelStructureError(
+                f"{e.get('spec_id')} depends on unknown specs {bad_deps} - depends_on may only "
+                f"reference spec ids from this same answer")
+    covered = {rid for e in entries for rid in (e.get("requirement_ids") or [])}
+    uncovered = [r for r in req_ids if r not in covered]
+    if uncovered:
+        raise ModelStructureError(
+            f"requirements covered by no item spec: {uncovered} - cover every requirement: "
+            f"add a spec or extend an existing spec's requirement_ids")
+
+
+def _srs_overview_payload(state: GenState, feedback: str | None = None) -> str:
+    """ADR-0022: the purpose/scope micro-call. Its own small prompt - no slot
+    JSON, no fix tail - so the domain frame cannot get buried."""
+    previous = state.get("srs") or {}
+    payload = (STAGE_PROMPTS["srs_overview"] + "\n\nNEEDS:\n" + json.dumps(_prompt_view(state["needs"]))
+               + "\n\nINTENT:\n" + json.dumps(_prompt_view(state["intent_model"])))
+    if feedback:
+        payload += "\n\n" + feedback
+    if previous:
+        payload += ("\n\nPREVIOUS purpose/scope (revise them):\n"
+                    + json.dumps({"purpose": previous.get("purpose"),
+                                  "scope_summary": previous.get("scope_summary")}))
+    payload += ("\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
+                "return one STRICT JSON object {purpose, scope_summary} describing THE FOUNDER'S "
+                "PRODUCT in stakeholder language, from the INTENT above - never the V model, this "
+                "pipeline, or these instructions.")
+    return payload
+
+
+def _srs_slot_payload(state: GenState, slot: dict, feedback: str | None = None) -> str:
+    """ADR-0022: one requirement fill per call - slot, its need, slim intent
+    context, and (on revision) only THIS slot's previous fill. Small prompt,
+    one responsibility, contract closes."""
+    rid = slot["requirement_id"]
+    need = next((n for n in state["needs"].get("needs") or []
+                 if n.get("need_id") in (slot.get("need_ids") or [])), None)
+    intent = state["intent_model"]
+    slim = {k: intent.get(k) for k in
+            ("problem_statement", "core_value_proposition", "in_scope", "out_of_scope", "constraints")}
+    payload = (STAGE_PROMPTS["srs_slot"] + "\n\nTHE SLOT (fill exactly this one):\n" + json.dumps(slot)
+               + "\n\nTHE NEED BEHIND IT:\n" + json.dumps(_prompt_view(need))
+               + "\n\nINTENT (context):\n" + json.dumps(_prompt_view(slim)))
+    if feedback:
+        payload += "\n\n" + feedback
+    prev = None
+    for sec in ("functional", "non_functional"):
+        for r in ((state.get("srs") or {}).get(sec) or []):
+            if r.get("requirement_id") == rid:
+                prev = {"title": r.get("title"), "statement": r.get("statement"),
+                        "priority": r.get("priority"),
+                        "acceptance": [c.get("statement") for c in (r.get("acceptance") or [])]}
+    if prev:
+        payload += "\n\nPREVIOUS FILL (revise it):\n" + json.dumps(prev)
+    payload += ("\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
+                f"return one STRICT JSON object {{title, statement, priority, acceptance}} - the fill "
+                f"for slot {rid} ONLY. priority is must|should|could; acceptance is a non-empty list "
+                f"of plain observable outcome statements. The text describes THE FOUNDER'S PRODUCT - "
+                "never the V model, this pipeline, or these instructions.")
+    return payload
+
+
+def _overview_validator():
+    def _v(d):
+        if not isinstance(d, dict) or not str(d.get("purpose") or "").strip() \
+                or not str(d.get("scope_summary") or "").strip():
+            raise ModelStructureError("purpose and scope_summary are required non-empty strings")
+        return None
+    return _v
+
+
+def _slot_fill_validator(rid: str):
+    def _v(d):
+        f = d if isinstance(d, dict) else {}
+        if set(f) == {rid} and isinstance(f.get(rid), dict):
+            f = f[rid]  # tolerate a keyed answer {rid: fill} despite the flat contract
+        missing = [k for k in ("title", "statement", "priority", "acceptance") if k not in f]
+        if missing:
+            raise ModelStructureError(
+                f"{rid}: fill missing fields {missing} - return exactly "
+                "{title, statement, priority, acceptance}")
+        if f.get("priority") not in ("must", "should", "could"):
+            raise ModelStructureError(f"{rid}: priority must be must|should|could, got {f.get('priority')!r}")
+        if not isinstance(f.get("acceptance"), list) or not f["acceptance"]:
+            raise ModelStructureError(f"{rid}: acceptance must be a non-empty list of statements")
+        if not str(f.get("title") or "").strip() or not str(f.get("statement") or "").strip():
+            raise ModelStructureError(f"{rid}: title and statement must be non-empty")
+        return f  # normalized (unwrapped) fill
+    return _v
+
+
+def _items_plan_payload(state: GenState, req_ids: list[str]) -> str:
+    return (STAGE_PROMPTS["items_plan"] + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+            + "\n\nARCHITECTURE:\n" + json.dumps(_prompt_view(state["architecture"]))
+            + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
+              "return one STRICT JSON array of spec plans {spec_id, kind, title, requirement_ids, "
+              "depends_on} - NO body_markdown, bodies are written one spec per call next. "
+              "requirement_ids may contain ONLY these requirement ids: "
+            + json.dumps(req_ids) + " - and every one of them must appear in at least one plan's "
+              "requirement_ids. spec_id values are short lowercase slugs (e.g. SPEC-api, SPEC-orders); "
+              "ids and titles NEVER contain session ids, timestamps, or run identifiers. The plan is "
+              "for THE FOUNDER'S PRODUCT - never this pipeline.")
+
+
+def _items_plan_validator(req_ids: list[str]):
+    import re as _re
+
+    from vmodel_contracts import SpecItemKind
+
+    def _v(d):
+        if not isinstance(d, list) or not d:
+            raise ModelStructureError("return a non-empty JSON array of spec plans")
+        kinds = {k.value for k in SpecItemKind}
+        for p in d:
+            sid = p.get("spec_id") if isinstance(p, dict) else None
+            if not sid or not _re.fullmatch(r"SPEC-[a-z0-9-]+", str(sid)):
+                raise ModelStructureError(
+                    f"invalid spec_id {sid!r} - a short lowercase slug like SPEC-api "
+                    "(never a session id or timestamp)")
+            if p.get("kind") not in kinds:
+                raise ModelStructureError(f"{sid}: kind must be one of {sorted(kinds)}")
+            if not str(p.get("title") or "").strip():
+                raise ModelStructureError(f"{sid}: title required")
+        _check_item_refs(d, req_ids)
+        return None
+    return _v
+
+
+def _items_body_payload(state: GenState, spec: dict) -> str:
+    reqs = [r for sec in ("functional", "non_functional") for r in (state["srs"].get(sec) or [])
+            if r.get("requirement_id") in (spec.get("requirement_ids") or [])]
+    return (STAGE_PROMPTS["items_body"] + "\n\nTHE SPEC (write its body):\n" + json.dumps(spec)
+            + "\n\nTHE REQUIREMENTS IT COVERS:\n" + json.dumps(_prompt_view(reqs))
+            + "\n\nARCHITECTURE:\n" + json.dumps(_prompt_view(state["architecture"]))
+            + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
+              f"return one STRICT JSON object {{body_markdown}} - the complete markdown spec for "
+              f"{spec.get('spec_id')} ONLY: interface, data model, behaviors, error cases, "
+              "non-functionals, written for a coding agent building THE FOUNDER'S PRODUCT - never "
+              "this pipeline.")
+
+
+def _items_body_validator(spec: dict):
+    def _v(d):
+        md = (d or {}).get("body_markdown") if isinstance(d, dict) else None
+        if not str(md or "").strip():
+            raise ModelStructureError(f"{spec.get('spec_id')}: body_markdown must be a non-empty markdown spec")
+        ItemSpec.model_validate({**spec, "body_markdown": md})
+        return {"body_markdown": md}
+    return _v
+
+
+def _items_payload(state: GenState, req_ids: list[str]) -> str:
+    """The items prompt. The FORMAT CONTRACT closes it (the 14b follows the
+    last frame it read): the reference enum, the coverage rule, and the
+    id-discipline frame are the final words."""
+    return (STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+            + "\n\nARCHITECTURE:\n" + json.dumps(_prompt_view(state["architecture"]))
+            + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
+              "return one STRICT JSON array of spec objects {spec_id, kind, title, body_markdown, "
+              "requirement_ids, depends_on}. requirement_ids may contain ONLY these requirement ids: "
+            + json.dumps(req_ids) + " - and every one of them must appear in at least one spec's "
+              "requirement_ids. spec_id values are short lowercase slugs (e.g. SPEC-api, SPEC-orders); "
+              "ids and titles NEVER contain session ids, timestamps, or run identifiers. Specs are "
+              "written for a coding agent building THE FOUNDER'S PRODUCT - never this pipeline.")
+
+
+def _items_validator(req_ids: list[str]):
+    """Stage-level items contract: each spec passes ItemSpec; spec ids are
+    unique; every reference resolves (the grammar's enum already makes unknown
+    requirement ids impossible when structured output is on - this catches the
+    free-mode fallback); dependencies point at emitted specs; and EVERY
+    requirement is covered by at least one spec. Failures are named, so the
+    automatic retry's feedback says exactly what to fix."""
+    def _validate(d):
+        items = [ItemSpec.model_validate(_strip_pipeline_owned(i)) for i in d]
+        _check_item_refs([i.model_dump() for i in items], req_ids)
+        return None
+    return _validate
+
+
 def _gate_feedback(state: GenState, stage: str) -> str | None:
     return (state.get("gate_feedback") or {}).get(stage)
 
@@ -376,9 +614,50 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return sum(len(r.get("acceptance") or [])
                    for sec in ("functional", "non_functional") for r in (srs.get(sec) or []))
 
+    def _run_srs_fill_stage(state: GenState, feedback: str | None = None) -> dict:
+        """The ADR-0020 SRS fill stage, two harness shapes (ADR-0022):
+        - default: one micro-call for purpose/scope + one per requirement slot
+          (a bad fill fails one cheap call, never a long composite payload);
+        - SPEC_GENERATOR_BULK=1: the original single composite call.
+        Both end at the same merged, contract-validated body."""
+        import time as _t
+
+        from .progress import ProgressEvent
+        from .schemas import srs_overview_schema, srs_slot_fill_schema
+
+        slots = build_srs_skeleton(state["needs"])
+        if model_config.bulk_fills_enabled():
+            extra = ""
+            if feedback:
+                extra = "\n\n" + feedback
+            if state.get("srs"):
+                extra += "\n\nPREVIOUS SRS (revise it; slots and ids are unchanged):\n" + \
+                    json.dumps(_prompt_view(state["srs"]))
+            payload, _validate, schema = _srs_fill_call(state, extra)
+            return _call_json("srs", payload, log, progress, validate=_validate, schema=schema)
+        overview = _call_json("srs", _srs_overview_payload(state, feedback), log, progress,
+                              validate=_overview_validator(), schema=srs_overview_schema(),
+                              stream_items=False)
+        fills = {}
+        for slot in slots:
+            rid = slot["requirement_id"]
+            fills[rid] = _call_json("srs", _srs_slot_payload(state, slot, feedback), log, progress,
+                                    validate=_slot_fill_validator(rid), schema=srs_slot_fill_schema(),
+                                    stream_items=False)
+            if progress is not None:
+                progress.emit(ProgressEvent("srs", "", "item", _t.time(), None,
+                                            f"{rid} {fills[rid].get('title', '')}"))
+        body = {"purpose": overview["purpose"], "scope_summary": overview["scope_summary"],
+                "fills": fills}
+        merged = merge_srs_fills(slots, body)
+        sid = state["intent_model"]["session_id"]
+        SRSDocument.model_validate(srs_document_data(
+            state["intent_model"], {**merged, "session_id": sid, "intent_model_ref": sid}))
+        return merged
+
     def node_needs(state: GenState) -> dict:
         intent = IntentModel.model_validate(state["intent_model"])
-        data = _call_json("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + intent.model_dump_json(), log, progress,
+        data = _call_json("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + json.dumps(_prompt_view(state["intent_model"])), log, progress,
                           validate=_check(lambda d: StakeholderNeedsSet.model_validate(
                               {**_strip_pipeline_owned(d), "session_id": intent.session_id})))
         data.setdefault("session_id", intent.session_id)
@@ -404,16 +683,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             toolbox = SrsToolbox(slots, needs_ids)
             run_tool_loop("srs", toolbox,
                           TOOL_PROMPTS["srs"].format(skeleton=json.dumps(slots),
-                                                     needs=json.dumps(state["needs"]),
-                                                     intent=json.dumps(state["intent_model"])),
+                                                     needs=json.dumps(_prompt_view(state["needs"])),
+                                                     intent=json.dumps(_prompt_view(state["intent_model"]))),
                           log, progress)
         fb = _gate_feedback(state, "srs")
-        extra = ""
+        feedback = None
         if fb:
-            extra = ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
-                     + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["srs"]))
-        payload, _validate_srs, schema = _srs_fill_call(state, extra)
-        data = _call_json("srs", payload, log, progress, validate=_validate_srs, schema=schema)
+            feedback = "FOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
+        data = _run_srs_fill_stage(state, feedback)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         # mechanical guards: solution-agnostic + grounded (ADR-0015 doctrine)
@@ -442,12 +719,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 "gate_feedback": _clear_feedback(state, "srs")}
 
     def node_architecture(state: GenState) -> dict:
-        payload = (STAGE_PROMPTS["architecture"] + "\n\nSRS:\n" + json.dumps(state["srs"])
+        payload = (STAGE_PROMPTS["architecture"] + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
                    + _tech_constraint_block(state["intent_model"]))
         fb = _gate_feedback(state, "architecture")
         if fb:
             payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
-                        + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["architecture"]))
+                        + "\n\nPREVIOUS DRAFT:\n" + json.dumps(_prompt_view(state["architecture"])))
         def _validate_arch(d):
             merged = assign_architecture_ids(_strip_pipeline_owned(d))  # ADR-0020: code assigns ADR-n
             arch = ArchitectureOverview.model_validate(
@@ -462,11 +739,39 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}
 
     def node_items(state: GenState) -> dict:
-        # Item-level, parallel-friendly: short passes per slice beat one mega-pass (cost + regen granularity).
-        data = _call_json("items",
-                          STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(state["srs"])
-                          + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log, progress,
-                          validate=_check(lambda d: [ItemSpec.model_validate(_strip_pipeline_owned(i)) for i in d]))
+        # Bulk proposal, code disposes (same doctrine as architecture): the
+        # model chooses the module grouping - that IS design analysis, not
+        # skeleton structure to derive - but every reference is constrained
+        # to the REAL requirement ids (per-run grammar enum) and coverage is
+        # validated HERE with a retry, not as a punch-list surprise after
+        # assembly (the 2026-09-09 live failure: invented R-001..R-005 left
+        # all ten real requirements uncovered).
+        req_ids = [r.get("requirement_id") for sec in ("functional", "non_functional")
+                   for r in (state["srs"].get(sec) or [])]
+        import time as _t
+
+        from .progress import ProgressEvent
+        from .schemas import items_body_schema, items_plan_schema, items_schema
+
+        if model_config.bulk_fills_enabled():
+            data = _call_json("items", _items_payload(state, req_ids), log, progress,
+                              validate=_items_validator(req_ids), schema=items_schema(req_ids))
+        else:
+            # ADR-0022: plan the module grouping (one small call, references
+            # enum-constrained, coverage validated), then author each spec
+            # body in its own micro-call - a weak body fails one cheap call.
+            plan = _call_json("items", _items_plan_payload(state, req_ids), log, progress,
+                              validate=_items_plan_validator(req_ids),
+                              schema=items_plan_schema(req_ids))
+            data = []
+            for spec in plan:
+                body = _call_json("items", _items_body_payload(state, spec), log, progress,
+                                  validate=_items_body_validator(spec), schema=items_body_schema(),
+                                  stream_items=False)
+                data.append({**spec, "body_markdown": body["body_markdown"]})
+                if progress is not None:
+                    progress.emit(ProgressEvent("items", "", "item", _t.time(), None,
+                                                f"{spec['spec_id']} {spec.get('title', '')}"))
         if persist:
             persist("items", data, state)
         return {"items": data}
@@ -488,8 +793,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 spec_ids={i.get("spec_id") for i in state["items"]})
             run_tool_loop("tests", toolbox,
                           TOOL_PROMPTS["tests"].format(skeleton=json.dumps(slots),
-                                                      srs=json.dumps(state["srs"]),
-                                                      items=json.dumps(state["items"])),
+                                                      srs=json.dumps(_prompt_view(state["srs"])),
+                                                      items=json.dumps(_prompt_view(state["items"]))),
                           log, progress)
 
         def _validate_tests(d):
@@ -503,8 +808,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         test_ids = [sl["test_id"] for sl in slots]
         data = _call_json("tests",
                       STAGE_PROMPTS["tests"] + "\n\nTEST SLOTS (fill prose for each, keyed by test_id):\n"
-                      + json.dumps(slots) + "\n\nSRS:\n" + json.dumps(state["srs"])
-                      + "\n\nITEMS:\n" + json.dumps(state["items"])
+                      + json.dumps(slots) + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+                      + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
                       + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                         "return one STRICT JSON object {fills: {...}} with EXACTLY these keys, one per slot: "
                       + json.dumps(test_ids) + ". Each fill is {description, runner, definition}. runner and "
@@ -517,9 +822,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     def node_review(state: GenState) -> dict:
         n = state.get("review_round", 0) + 1
         fixes = _call_json("review", STAGE_PROMPTS["review"].format(n=n)
-                           + "\n\nSRS:\n" + json.dumps(state["srs"])
-                           + "\n\nITEMS:\n" + json.dumps(state["items"])
-                           + "\n\nTESTS:\n" + json.dumps(state["tests"]), log, progress)
+                           + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+                           + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
+                           + "\n\nTESTS:\n" + json.dumps(_prompt_view(state["tests"])), log, progress)
         return {"review_round": n, "review_fixes": fixes}
 
     def route_review(state: GenState) -> str:
@@ -532,12 +837,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     def node_apply_fixes(state: GenState) -> dict:
         # ADR-0020 shape: re-fire the FILL stage with the review fixes - the
         # skeleton slots/ids are unchanged, the model revises prose per slot.
-        payload, _validate, schema = _srs_fill_call(
+        data = _run_srs_fill_stage(
             state,
-            "\n\nREVIEW FIXES - apply EVERY one to the affected fills:\n"
-            + json.dumps(state["review_fixes"])
-            + "\n\nPREVIOUS SRS (revise it; slots and ids are unchanged):\n" + json.dumps(state["srs"]))
-        data = _call_json("srs", payload, log, progress, validate=_validate, schema=schema)
+            "REVIEW FIXES - apply EVERY one to the affected fills:\n"
+            + json.dumps(state["review_fixes"]))
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         if persist:
@@ -577,13 +880,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             agents_md="",  # rendered at delivery from manifest+arch (render.py)
             punch_list=punch, traceability=trace,
         )
-        out = bundle.model_dump()
-        out["_manifest"] = manifest.model_dump()
-        out["_needs"] = needs.model_dump()
-        out["_srs"] = srs.model_dump()
-        out["_requirements"] = reqs.model_dump()
-        out["_architecture"] = arch.model_dump()
-        out["_tests"] = [t.model_dump() for t in tests]
+        out = bundle.model_dump(mode="json")
+        out["_manifest"] = manifest.model_dump(mode="json")
+        out["_needs"] = needs.model_dump(mode="json")
+        out["_srs"] = srs.model_dump(mode="json")
+        out["_requirements"] = reqs.model_dump(mode="json")
+        out["_architecture"] = arch.model_dump(mode="json")
+        out["_tests"] = [t.model_dump(mode="json") for t in tests]
         return {"bundle": out, "violations": violations}
 
     g = StateGraph(GenState)
@@ -634,5 +937,5 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     g.add_conditional_edges("review", route_review, {"apply_fixes": "apply_fixes", "assemble": "assemble"})
     g.add_edge("apply_fixes", "items")
     g.add_edge("assemble", END)
-    return g.compile(checkpointer=checkpointer or MemorySaver())
+    return g.compile(checkpointer=checkpointer or MemorySaver(serde=checkpoint_serde()))
 

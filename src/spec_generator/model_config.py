@@ -16,8 +16,9 @@ from dataclasses import dataclass
 class StageModel:
     provider: str
     model: str
-    temperature: float = 0.2
+    temperature: float = 0.0  # ADR-0022: reproducibility - failures replay exactly
     max_tokens: int = 8192
+    seed: int = 42            # ADR-0022: fixed seed (SPEC_GENERATOR_SEED overrides)
 
 
 _STAGE_DEFAULTS: dict[str, StageModel] = {
@@ -41,11 +42,20 @@ def for_stage(stage: str) -> StageModel:
     if stage not in _STAGE_DEFAULTS:
         raise KeyError(f"unknown stage {stage!r}")
     cfg = _STAGE_DEFAULTS[stage]
+    seed = int(os.environ.get("SPEC_GENERATOR_SEED", str(cfg.seed)))
     override = os.environ.get(f"SPEC_GENERATOR_MODEL_{stage.upper()}")
     if override:
         provider, _, model = override.partition(":")
-        return StageModel(provider, model, cfg.temperature, cfg.max_tokens)
-    return cfg
+        return StageModel(provider, model, cfg.temperature, cfg.max_tokens, seed)
+    return StageModel(cfg.provider, cfg.model, cfg.temperature, cfg.max_tokens, seed)
+
+
+def bulk_fills_enabled() -> bool:
+    """ADR-0022: per-slot micro-calls are the default for srs fills and item
+    specs (a bad fill fails one cheap call, never a long composite payload).
+    The old one-bulk-call-per-stage path stays behind SPEC_GENERATOR_BULK=1
+    in case the wall-time trade proves bad on the founder's hardware."""
+    return os.environ.get("SPEC_GENERATOR_BULK", "0") == "1"
 
 
 def _preflight(cfg: "StageModel", stage: str) -> None:
@@ -112,6 +122,7 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
         # native /api/chat (the OpenAI-compat layer's json_schema support is
         # unreliable); grammar enforces SHAPE only - extraction+retry stays.
         return ChatOllama(model=cfg.model, temperature=cfg.temperature,
+                          seed=cfg.seed,  # ADR-0022
                           num_predict=cfg.max_tokens,
                           base_url=_BASE_URLS["ollama"].removesuffix("/v1"),
                           format=schema or _schema_for_stage(stage))
@@ -119,12 +130,15 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
         from langchain_openai import ChatOpenAI
 
         env = _API_KEY_ENV[cfg.provider]
-        return ChatOpenAI(model=cfg.model, temperature=cfg.temperature, max_tokens=cfg.max_tokens,
+        return ChatOpenAI(model=cfg.model, temperature=cfg.temperature, seed=cfg.seed,
+                          max_tokens=cfg.max_tokens,
                           base_url=_BASE_URLS[cfg.provider],
                           api_key=(os.environ.get(env, "") if env else "") or "ollama")
     if cfg.provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
+        # ADR-0022 note: anthropic exposes no seed parameter - temperature 0
+        # is the only reproducibility lever on that provider (documented in the ADR).
         return ChatAnthropic(model=cfg.model, temperature=cfg.temperature, max_tokens=cfg.max_tokens,
                              api_key=os.environ.get(_API_KEY_ENV["anthropic"], ""))
     raise ValueError(cfg.provider)

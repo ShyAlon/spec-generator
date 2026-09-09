@@ -55,8 +55,10 @@ STAGE_PROMPTS = {
                     "leading alternatives you rejected, each with one sentence on why it lost "
                     "(not strawmen; empty list only when a founder mandate genuinely leaves no "
                     "alternative). No decision is arbitrary.",
-    "items": "Write item-level specs (SPEC-...) covering every requirement in the SRS. Reference "
-             "requirements by id through requirement_ids - never restate or regroup requirement text. "
+    "items": "Write item-level specs (SPEC-...) covering EVERY requirement in the SRS: each "
+             "requirement id must appear in at least one spec's requirement_ids. Reference "
+             "requirements by id through requirement_ids - never restate or regroup requirement "
+             "text, and never invent ids: use only requirement ids that exist in the SRS below. "
              "One JSON array.",
     "tests": "Author the test prose. The skeleton is FIXED: one acceptance-level slot per SRS "
              "acceptance criterion (criterion_id linked) and one unit-level slot per item spec "
@@ -66,6 +68,23 @@ STAGE_PROMPTS = {
              "selector, command, ...) - HERE you author the executable HOW, because the "
              "architecture now exists. Return one JSON object: {fills: [{test_id, description, "
              "runner, definition}]} - exactly one fill per given slot.",
+    "srs_overview": "Author the SRS opening: purpose (why the system exists, stakeholder language) "
+                    "and scope_summary (the boundary). Describe THE FOUNDER'S PRODUCT from the INTENT "
+                    "below - never the V model, this pipeline, or these instructions.",
+    "srs_slot": "Author ONE requirement fill for the given slot. The skeleton is FIXED - never change, "
+                "renumber, add, or drop slots; you fill exactly the slot given here. Write title, "
+                "statement (well-formed shall-statement, solution-agnostic), priority "
+                "(must/should/could), and acceptance criteria as plain statements that are OBSERVABLE "
+                "outcomes - no implementation mechanics, no named technologies, no invented numbers "
+                "or artifacts.",
+    "items_plan": "Plan the item-level specs (SPEC-...) covering EVERY requirement in the SRS. The "
+                  "module grouping is yours to design - that IS the analysis - but every requirement "
+                  "id must appear in at least one plan's requirement_ids. Reference requirements by "
+                  "id - never restate or regroup their text, never invent ids. This call plans ONLY: "
+                  "spec bodies are written separately, one spec per call.",
+    "items_body": "Write the body of ONE item spec, for a coding agent to execute against: interface, "
+                  "data model, behaviors, error cases, non-functionals. Markdown. No marketing "
+                  "language. Reference requirements by id; never restate their text.",
     "review": "Review pass {n}: find gaps, contradictions, orphan requirements, uncheckable criteria, "
               "solution language in the SRS, downstream text that restates requirements. "
               "Return a JSON list of concrete fixes, or [].",

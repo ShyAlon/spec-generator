@@ -27,7 +27,7 @@ from vmodel_contracts import (
 )
 
 from .errors import UserFacingError, run_cli
-from .graph import build_graph, srs_document_data, _legacy_arch_fill
+from .graph import build_graph, checkpoint_serde, srs_document_data, _legacy_arch_fill
 from .progress import ProgressBus, stderr_printer
 from .repair import coerce_for_model, normalize_enums
 from .render import (render_agents_md, render_architecture, render_needs,
@@ -268,7 +268,7 @@ def main() -> None:
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
-    graph = build_graph(log, checkpointer=SqliteSaver(conn), progress=bus, review=args.review,
+    graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review,
                         persist=_make_persist(intent, outdir))
     print(f"Generating bundle for session {sid} (crash? rerun the same command - it resumes)\n", file=sys.stderr)
     cfg = {"configurable": {"thread_id": sid}}
