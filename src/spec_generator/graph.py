@@ -233,7 +233,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return {"bundle": out, "violations": violations}
 
     g = StateGraph(GenState)
-    g.add_node("needs", _wrap("needs", "Extracting stakeholder needs", "stage 1/6")(node_needs))
+    g.add_node("needs", _wrap("needs", "Formalizing stakeholder needs", "stage 1/6")(node_needs))
     g.add_node("srs", _wrap("srs", "Authoring the SRS", "stage 2/6")(node_srs))
     g.add_node("architecture", _wrap("architecture", "Drafting architecture overview", "stage 3/6")(node_architecture))
     g.add_node("items", _wrap("items", "Writing module specs", "stage 4/6")(node_items))

@@ -4,6 +4,8 @@
 requirements, architecture, item-level specs, test hierarchy, AGENTS.md,
 numbered build plan, manifest, traceability matrix, punch list.
 
+Pipeline map: [PROCESS.md in the meta repo](https://github.com/ShyAlon/vmodel-spec-app/blob/main/docs/PROCESS.md) shows what each stage consumes and produces (and why stage 1 is "Formalizing", not "Extracting").
+
 ## Design line (hybrid B+C)
 
 - **LLM stages**: needs, requirements, architecture, item specs, test
