@@ -32,6 +32,7 @@ from vmodel_contracts import (
 from pydantic import ValidationError
 
 from . import model_config
+from .tools import tools_enabled
 from .skeleton import (ModelStructureError, assign_architecture_ids,
                                    build_srs_skeleton, build_test_skeleton,
                                    merge_srs_fills, merge_test_fills)
@@ -321,6 +322,17 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # assignment); the model fills prose per slot. Structure carried from
         # the intent model stays deterministic (ADR-0015) via srs_document_data.
         slots = build_srs_skeleton(state["needs"])
+        if tools_enabled():
+            from .tools import SrsToolbox, run_tool_loop
+            from .prompts import TOOL_PROMPTS
+
+            needs_ids = {n.get("need_id") for n in state["needs"].get("needs") or []}
+            toolbox = SrsToolbox(slots, needs_ids)
+            run_tool_loop("srs", toolbox,
+                          TOOL_PROMPTS["srs"].format(skeleton=json.dumps(slots),
+                                                     needs=json.dumps(state["needs"]),
+                                                     intent=json.dumps(state["intent_model"])),
+                          log, progress)
         payload = (STAGE_PROMPTS["srs"] + "\n\nREQUIREMENT SLOTS (fill prose for each, keyed by requirement_id):\n"
                    + json.dumps(slots) + "\n\nNEEDS:\n" + json.dumps(state["needs"])
                    + "\n\nINTENT:\n" + json.dumps(state["intent_model"]))
@@ -392,6 +404,20 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # ADR-0020: one slot per SRS acceptance criterion (acceptance level)
         # + one per item spec (unit level); T-ids and links are code-owned.
         slots = build_test_skeleton(state["srs"], state["items"])
+        if tools_enabled():
+            from .tools import TestToolbox, run_tool_loop
+            from .prompts import TOOL_PROMPTS
+
+            toolbox = TestToolbox(
+                slots,
+                criterion_ids={c.get("criterion_id") for sec in ("functional", "non_functional")
+                               for r in (state["srs"].get(sec) or []) for c in (r.get("acceptance") or [])},
+                spec_ids={i.get("spec_id") for i in state["items"]})
+            run_tool_loop("tests", toolbox,
+                          TOOL_PROMPTS["tests"].format(skeleton=json.dumps(slots),
+                                                      srs=json.dumps(state["srs"]),
+                                                      items=json.dumps(state["items"])),
+                          log, progress)
 
         def _validate_tests(d):
             merged = merge_test_fills(slots, d)

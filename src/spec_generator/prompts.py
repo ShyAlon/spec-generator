@@ -63,3 +63,24 @@ STAGE_PROMPTS = {
               "Return a JSON list of concrete fixes, or [].",
 }
 
+
+TOOL_PROMPTS = {
+    # ADR-0020 escape hatch: where structure IS analysis the model may PROPOSE
+    # via typed tools; code disposes. Runs before the prose-fill call.
+    "srs": "Here is the requirement skeleton for this system (one slot per need, "
+           "ids/kinds/links fixed) with the needs and the intent model. BEFORE prose "
+           "is written, you may propose STRUCTURAL changes via the tools - but only "
+           "where structure is genuinely analysis: split_requirement when one need "
+           "decomposes into 2+ independently verifiable requirements, "
+           "link_requirement_to_need when a requirement truly realizes several needs. "
+           "Most honest skeletons need NO changes: 1:1 is the norm, splitting is the "
+           "exception. If nothing decomposes, call no tools and say so briefly.\n\n"
+           "SKELETON:\n{skeleton}\n\nNEEDS:\n{needs}\n\nINTENT:\n{intent}",
+    "tests": "Here is the test skeleton (one acceptance slot per SRS criterion, one "
+             "unit slot per item spec, ids/links fixed) with the SRS and the item "
+             "specs. You may propose ADDITIONAL tests via add_test - only for real "
+             "gaps the skeleton cannot cover: a module/system test spanning several "
+             "specs, or an acceptance angle with no criterion. If the skeleton covers "
+             "the V, call no tools and say so briefly.\n\n"
+             "SKELETON:\n{skeleton}\n\nSRS:\n{srs}\n\nITEMS:\n{items}",
+}

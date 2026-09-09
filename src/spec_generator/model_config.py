@@ -97,10 +97,12 @@ def _structured_enabled() -> bool:
     return os.environ.get("SPEC_GENERATOR_STRUCTURED", "1") != "0"
 
 
-def build_chat_model(stage: str):
+def build_chat_model(stage: str, structured: bool = True):
+    """structured=False builds the model WITHOUT the grammar format - required
+    for tool-calling loops (a format grammar would break tool-call emission)."""
     cfg = for_stage(stage)
     _preflight(cfg, stage)
-    if cfg.provider == "ollama" and _structured_enabled():
+    if cfg.provider == "ollama" and structured and _structured_enabled():
         from langchain_ollama import ChatOllama
 
         from .schemas import for_stage as _schema_for_stage
@@ -124,3 +126,4 @@ def build_chat_model(stage: str):
         return ChatAnthropic(model=cfg.model, temperature=cfg.temperature, max_tokens=cfg.max_tokens,
                              api_key=os.environ.get(_API_KEY_ENV["anthropic"], ""))
     raise ValueError(cfg.provider)
+

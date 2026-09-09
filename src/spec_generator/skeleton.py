@@ -108,6 +108,8 @@ def merge_test_fills(slots: list[dict], body) -> list[dict]:
         tid = slot["test_id"]
         f = by_id.pop(tid, None)
         if f is None:
+            f = slot.get("seed")  # an add_test proposal is adopted as-is (ADR-0020)
+        if f is None:
             raise ModelStructureError(f"{tid}: slot not filled - every test needs prose")
         out.append({"test_id": tid, "level": slot["level"],
                     "criterion_id": slot["criterion_id"], "spec_id": slot["spec_id"],
