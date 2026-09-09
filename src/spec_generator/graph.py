@@ -53,7 +53,8 @@ class GenState(TypedDict, total=False):
     gate_feedback: dict[str, str]  # stage -> founder feedback from a review gate (ADR-0019)
 
 
-def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None) -> str:
+def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
+            feedback: str | None = None) -> str:
     """One model call per stage, STREAMED so the console can show each item as
     its JSON closes (same prompt, same parameters, same completion - progress
     is observability only, never a change to what is generated)."""
@@ -63,10 +64,12 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
 
     model = model_config.build_chat_model(stage)
     reporter = ItemReporter(progress, stage)
+    messages = [SystemMessage(content=METHODOLOGY), HumanMessage(content=payload)]
+    if feedback:
+        messages.append(HumanMessage(content=feedback))
     chunks: list[str] = []
     usage: dict = {}
-    for chunk in model_config.stream_checked(
-            model, [SystemMessage(content=METHODOLOGY), HumanMessage(content=payload)], stage):
+    for chunk in model_config.stream_checked(model, messages, stage):
         text = chunk.content if isinstance(chunk.content, str) else "".join(
             b.get("text", "") for b in chunk.content if isinstance(b, dict))
         chunks.append(text)
@@ -77,13 +80,83 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
     return "".join(chunks)
 
 
+def _extract_json(text: str) -> str:
+    """Tolerant extraction (ported from interview-engine's run-4 fix): strip
+    fences, else cut the first balanced {...} or [...] out of prose. Returns
+    the candidate string; raises ValueError when no balanced value exists."""
+    candidate = text.strip().strip("`").removeprefix("json").strip()
+    try:
+        json.loads(candidate)
+        return candidate
+    except json.JSONDecodeError:
+        pass
+    starts = [(text.find(o), o, c) for o, c in (("{", "}"), ("[", "]")) if text.find(o) >= 0]
+    for start, open_c, close_c in sorted(starts):
+        depth = 0
+        in_str = esc = False
+        for i in range(start, len(text)):
+            c = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+                continue
+            if c == '"':
+                in_str = True
+            elif c == open_c:
+                depth += 1
+            elif c == close_c:
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+    raise ValueError("no balanced JSON value found in the model output")
+
+
 def _json(text: str, stage: str = "unknown"):
     try:
-        return json.loads(text.strip().strip("`").removeprefix("json").strip())
-    except json.JSONDecodeError as e:
+        return json.loads(_extract_json(text))
+    except (json.JSONDecodeError, ValueError) as e:
         from .errors import translate_json_error
 
         raise translate_json_error(e, stage) from e
+
+
+def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None):
+    """Every authoring stage goes through here: invoke -> tolerant parse ->
+    ONE automatic retry with the failure as feedback (the interview-engine
+    pattern, ADR-0015 doctrine: transient model flakes auto-recover; the
+    founder never manually retries a known class). On the second failure the
+    same human-readable error fires, now with a raw-output snippet."""
+    import time as _t
+
+    from .progress import ProgressEvent
+
+    fb = None
+    last_raw = ""
+    for attempt in (1, 2):
+        raw = _invoke(stage, payload, log, progress, feedback=fb)
+        last_raw = raw
+        try:
+            return json.loads(_extract_json(raw))
+        except (json.JSONDecodeError, ValueError) as e:
+            if attempt == 2:
+                from .errors import UserFacingError
+
+                snippet = raw.strip()[:200].replace("\n", " ")
+                raise UserFacingError(
+                    f"stage '{stage}': the model returned output that is not valid JSON (an automatic retry did not fix it).",
+                    f"smaller/local models often wrap JSON in prose, drop structure, or truncate. Raw output began: {snippet!r}",
+                    "rerun the same command - the checkpoint resumes at this stage; if it repeats, route the stage "
+                    f"to a stronger model (SPEC_GENERATOR_MODEL_{stage.upper()} env override).",
+                ) from e
+            if progress is not None:
+                progress.emit(ProgressEvent(stage, "", "item", _t.time(), None,
+                                            "model output was not valid JSON - retrying once with feedback"))
+            fb = ("Your previous reply was not valid JSON (prose-wrapped, unbalanced, or truncated). "
+                  "Return ONLY the complete JSON payload, no prose, no commentary, balanced to the end.")
 
 
 def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
@@ -162,8 +235,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
     def node_needs(state: GenState) -> dict:
         intent = IntentModel.model_validate(state["intent_model"])
-        raw = _invoke("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + intent.model_dump_json(), log, progress)
-        data = _json(raw, "needs")
+        data = _call_json("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + intent.model_dump_json(), log, progress)
         data.setdefault("session_id", intent.session_id)
         return {"needs": data}
 
@@ -179,8 +251,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if fb:
             payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
                         + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["srs"]))
-        raw = _invoke("srs", payload, log, progress)
-        data = _json(raw, "srs")
+        data = _call_json("srs", payload, log, progress)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         # mechanical guards: solution-agnostic + grounded (ADR-0015 doctrine)
@@ -213,36 +284,33 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if fb:
             payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
                         + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["architecture"]))
-        raw = _invoke("architecture", payload, log, progress)
-        data = _json(raw, "architecture")
+        data = _call_json("architecture", payload, log, progress)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}
 
     def node_items(state: GenState) -> dict:
         # Item-level, parallel-friendly: short passes per slice beat one mega-pass (cost + regen granularity).
-        raw = _invoke("items",
+        return {"items": _call_json("items",
                       STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(state["srs"])
-                      + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log, progress)
-        return {"items": _json(raw, "items")}
+                      + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log, progress)}
 
     def node_tests(state: GenState) -> dict:
         """Two V pairings in one pass: acceptance tests pair with SRS criteria,
         unit/module tests pair with item specs."""
-        raw = _invoke("tests",
+        data = _call_json("tests",
                       STAGE_PROMPTS["tests"] + "\n\nSRS:\n" + json.dumps(state["srs"])
                       + "\n\nITEMS:\n" + json.dumps(state["items"]), log, progress)
-        data = _json(raw, "tests")
         if isinstance(data, dict):
             return {"tests": (data.get("acceptance_tests") or []) + (data.get("unit_module_tests") or [])}
         return {"tests": data}  # tolerate a flat array from weaker models
 
     def node_review(state: GenState) -> dict:
         n = state.get("review_round", 0) + 1
-        raw = _invoke("review", STAGE_PROMPTS["review"].format(n=n)
-                      + "\n\nSRS:\n" + json.dumps(state["srs"])
-                      + "\n\nITEMS:\n" + json.dumps(state["items"])
-                      + "\n\nTESTS:\n" + json.dumps(state["tests"]), log, progress)
-        return {"review_round": n, "review_fixes": _json(raw, "review")}
+        fixes = _call_json("review", STAGE_PROMPTS["review"].format(n=n)
+                           + "\n\nSRS:\n" + json.dumps(state["srs"])
+                           + "\n\nITEMS:\n" + json.dumps(state["items"])
+                           + "\n\nTESTS:\n" + json.dumps(state["tests"]), log, progress)
+        return {"review_round": n, "review_fixes": fixes}
 
     def route_review(state: GenState) -> str:
         if state.get("review_round", 0) >= REVIEW_PASSES:
@@ -252,10 +320,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return "apply_fixes"
 
     def node_apply_fixes(state: GenState) -> dict:
-        raw = _invoke("srs",
-                      "Apply these review fixes to the SRS and return the corrected SRS body as STRICT JSON:\n"
-                      + json.dumps(state["review_fixes"]) + "\n\nSRS:\n" + json.dumps(state["srs"]), log, progress)
-        data = _json(raw, "srs")
+        data = _call_json("srs",
+                          "Apply these review fixes to the SRS and return the corrected SRS body as STRICT JSON:\n"
+                          + json.dumps(state["review_fixes"]) + "\n\nSRS:\n" + json.dumps(state["srs"]), log, progress)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         return {"srs": data}

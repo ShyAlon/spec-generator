@@ -76,6 +76,13 @@ state); **[f]eedback** takes one line and re-runs the stage with it applied;
 resume). A crash mid-gate just re-asks on rerun. Default runs (no flag) are
 ungated, exactly as before.
 
+Reliability: every stage tolerantly extracts JSON (fences, prose-wrapped) and
+auto-retries ONCE with the failure as feedback when the model returns invalid
+JSON - a transient flake recovers without you. Only a second consecutive
+failure stops the run, with a raw-output snippet for diagnosis; rerun the same
+command and the checkpoint resumes at that stage. The tests stage (largest
+payload) gets extra output-token headroom against truncation.
+
 Console output: each stage still gets one start/done line, and while a stage
 runs, every item lands its own line as its JSON closes (`     - N-3 the system
 shall ...`). The generation process itself is untouched - same one model call
