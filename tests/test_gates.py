@@ -97,3 +97,24 @@ def test_srs_document_data_injects_structure_from_intent():
     data = srs_document_data(INTENT, dict(PAYLOADS["srs"]))
     assert data["definitions"] == INTENT.get("glossary", {})
     assert "constraints" in data and "open_questions" in data
+
+
+
+def test_gate_render_of_contract_invalid_artifact_is_friendly_not_a_traceback():
+    """His live crash: render_srs(SRSDocument.model_validate(...)) at the SRS
+    gate raised a raw pydantic traceback when the draft lacked 'title'. Gate
+    render/validate failures get the friendly three-part treatment instead."""
+    from test_progress import INTENT, PAYLOADS
+    import copy
+
+    from spec_generator.cli import _render_gate
+    from spec_generator.errors import UserFacingError
+
+    bad = copy.deepcopy(PAYLOADS["srs"])
+    for r in bad["functional"]:
+        del r["title"]
+    with pytest.raises(UserFacingError) as ei:
+        _render_gate("srs", bad, dict(INTENT))
+    rendered = ei.value.render()
+    assert "does not pass the contract" in rendered
+    assert "title" in rendered

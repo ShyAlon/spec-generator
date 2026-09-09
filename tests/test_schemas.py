@@ -103,3 +103,115 @@ def test_schema_field_names_match_contract_field_names():
     item = for_stage("needs")["properties"]["needs"]["items"]
     assert set(item["properties"]) == contract_fields
     assert set(item["required"]) == contract_required
+
+
+
+def _resolve_refs(node, defs):
+    """Inline $refs the way _grammar_safe does, so raw and grammar-safe
+    schemas can be compared node-for-node."""
+    if isinstance(node, list):
+        return [_resolve_refs(v, defs) for v in node]
+    if not isinstance(node, dict):
+        return node
+    if "$ref" in node:
+        import copy
+        name = node["$ref"].rsplit("/", 1)[-1]
+        merged = copy.deepcopy(defs[name])
+        merged.update({k: v for k, v in node.items() if k != "$ref"})
+        node = merged
+    return {k: _resolve_refs(v, defs) for k, v in node.items() if k != "$defs"}
+
+
+def _object_shapes(node, out):
+    """Multiset of (properties, required) at every object node, recursively."""
+    owned = {"session_id", "contract_version"}  # pipeline prunes these at ANY depth
+    if isinstance(node, dict):
+        if "properties" in node or "required" in node:
+            out.append((tuple(sorted(set(node.get("properties", {})) - owned)),
+                        tuple(sorted(set(node.get("required", [])) - owned))))
+        for v in node.get("properties", {}).values():
+            _object_shapes(v, out)
+        if "items" in node:
+            _object_shapes(node["items"], out)
+    return out
+
+
+def test_grammar_safe_preserves_every_property_and_required_entry():
+    """His live crash: _grammar_safe stripped the PROPERTY 'title' (a contract
+    field whose name collides with a schema keyword) while 'title' stayed in
+    required - the grammar then forbade a field the contract requires and the
+    SRS gate crashed on 'title: Field required' x10. The strip must remove
+    keyword-position metadata ONLY: property sets and required arrays are
+    byte-identical before and after, at EVERY nesting level, for every stage."""
+    from spec_generator.schemas import _grammar_safe, _raw_stage_schema
+
+    for stage in ("needs", "srs", "architecture", "items", "tests"):
+        raw = _raw_stage_schema(stage)
+        resolved = _resolve_refs(raw, raw.get("$defs", {}))
+        before = sorted(_object_shapes(resolved, []))
+        after = sorted(_object_shapes(for_stage(stage), []))
+        assert before == after, f"{stage}: grammar-safe changed the structure: {set(before) ^ set(after)}"
+
+
+def test_keyword_named_fields_survive_the_strip():
+    """Explicit lock on the collision class: fields literally named like
+    schema keywords must stay declared AND required where the contract
+    requires them."""
+    req = for_stage("srs")["properties"]["functional"]["items"]
+    assert "title" in req["properties"] and "title" in req["required"]
+    dec = for_stage("architecture")["properties"]["decisions"]["items"]
+    assert "title" in dec["properties"] and "title" in dec["required"]
+    item = for_stage("items")["items"]
+    assert "title" in item["properties"] and "title" in item["required"]
+    tst = for_stage("tests")["properties"]["acceptance_tests"]["items"]
+    assert "description" in tst["properties"] and "description" in tst["required"]
+
+
+def _project(instance, schema):
+    """What the grammar lets the model emit: every schema-required field the
+    instance carries, nothing the schema does not declare."""
+    if isinstance(instance, list):
+        return [_project(v, schema.get("items", {})) for v in instance]
+    if not isinstance(instance, dict):
+        return instance
+    props = schema.get("properties", {})
+    return {k: _project(v, props[k]) for k, v in instance.items() if k in props}
+
+
+def test_schema_conformant_payloads_pass_full_contract_validation():
+    """End-to-end alignment, per stage: a payload reduced to exactly what the
+    grammar schema declares must still pass the stage's FULL contract
+    validation (patterns, enums, min-lengths, extra=forbid) once the pipeline
+    fills its own fields - and the SRS gate render path must not crash. If the
+    derived schema ever drops or un-requires a field the contract needs, this
+    fails before a user's run does."""
+    from test_progress import INTENT, PAYLOADS
+    from vmodel_contracts import (AcceptanceTest, ArchitectureOverview, ItemSpec,
+                                  SRSDocument, StakeholderNeedsSet)
+    from spec_generator.graph import srs_document_data
+    from spec_generator.render import render_srs
+
+    needs = _project(PAYLOADS["needs"], for_stage("needs"))
+    StakeholderNeedsSet.model_validate({**needs, "session_id": INTENT["session_id"]})
+
+    srs = _project(PAYLOADS["srs"], for_stage("srs"))
+    doc = SRSDocument.model_validate(srs_document_data(
+        INTENT, {**srs, "session_id": INTENT["session_id"], "intent_model_ref": INTENT["session_id"]}))
+    assert render_srs(doc)  # the gate render path (cli._render_gate) must not crash
+
+    arch = _project(PAYLOADS["architecture"], for_stage("architecture"))
+    ArchitectureOverview.model_validate({**arch, "session_id": INTENT["session_id"]})
+
+    items = _project(PAYLOADS["items"], for_stage("items"))
+    for i in items:
+        ItemSpec.model_validate(i)
+
+    tests_body = {"acceptance_tests": [
+        {"test_id": "T-2", "level": "acceptance", "criterion_id": "AC-1",
+         "description": "d", "runner": "http", "definition": {"url": "/"}}],
+        "unit_module_tests": PAYLOADS["tests"]}
+    tests = _project(tests_body, for_stage("tests"))
+    for section in ("acceptance_tests", "unit_module_tests"):
+        assert tests[section], section
+        for t in tests[section]:
+            AcceptanceTest.model_validate(t)

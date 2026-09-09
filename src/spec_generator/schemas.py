@@ -7,7 +7,11 @@ are set post-parse; SRS structure is injected deterministically at assembly).
 Ollama enforces the schema grammar-side (native /api/chat `format` param,
 structured outputs since Ollama 0.5). Grammar guarantees SHAPE, not content
 and not length: a token-budget truncation still breaks, so tolerant
-extraction + one retry stays as the net underneath.
+extraction + one retry stays as the net underneath. The strip removes
+keyword-position metadata ONLY: a contract field whose NAME collides with
+a schema keyword (Requirement.title, AcceptanceTest.description) is kept
+- dropping it made the grammar forbid a field the contract requires, and
+every structured run failed validation downstream.
 
 Every schema passes _grammar_safe() before it leaves this module: Ollama's
 schema->grammar compiler only accepts a boring subset of JSON Schema and
@@ -40,11 +44,17 @@ def _grammar_safe(schema: dict) -> dict:
 
     defs = schema.get("$defs", {})
 
-    def resolve(node):
+    def resolve(node, *, prop_map: bool = False):
         if isinstance(node, list):
             return [resolve(v) for v in node]
         if not isinstance(node, dict):
             return node
+        if prop_map:
+            # Keys here are CONTRACT FIELD NAMES, not schema keywords - a field
+            # literally named 'title' or 'description' (Requirement.title,
+            # AcceptanceTest.description, ...) must survive the strip. Only the
+            # pipeline-owned fields are pruned.
+            return {k: resolve(v) for k, v in node.items() if k not in _PIPELINE_OWNED}
         if "$ref" in node:
             name = node["$ref"].rsplit("/", 1)[-1]
             target = copy.deepcopy(defs[name])
@@ -56,13 +66,17 @@ def _grammar_safe(schema: dict) -> dict:
                 merged = {k: v for k, v in node.items() if k != "anyOf"}
                 merged.update(options[0])
                 node = merged
-        if "properties" in node:
-            node["properties"] = {k: v for k, v in node["properties"].items()
-                                  if k not in _PIPELINE_OWNED}
-        if "required" in node:
-            node["required"] = [r for r in node["required"] if r not in _PIPELINE_OWNED]
-        return {k: resolve(v) for k, v in node.items()
-                if k not in _STRIP and k not in ("$defs", "$ref")}
+        out = {}
+        for k, v in node.items():
+            if k in _STRIP or k in ("$defs", "$ref"):
+                continue  # keyword-position metadata only - never field names
+            if k == "properties":
+                out[k] = resolve(v, prop_map=True)
+            elif k == "required":
+                out[k] = [r for r in v if r not in _PIPELINE_OWNED]
+            else:
+                out[k] = resolve(v)
+        return out
 
     return resolve(schema)
 
@@ -144,3 +158,4 @@ def for_stage(stage: str) -> dict:
     if stage == "review":
         return {"type": "array", "items": {"type": "string"}}
     return _grammar_safe(_raw_stage_schema(stage))
+

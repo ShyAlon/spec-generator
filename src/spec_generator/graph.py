@@ -29,6 +29,8 @@ from vmodel_contracts import (
     text_qa,
 )
 
+from pydantic import ValidationError
+
 from . import model_config
 from .assembly import build_traceability, order_milestones, validate_traceability
 from .prompts import METHODOLOGY, STAGE_PROMPTS
@@ -124,12 +126,24 @@ def _json(text: str, stage: str = "unknown"):
         raise translate_json_error(e, stage) from e
 
 
-def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None):
+def _contract_errors(exc: ValidationError) -> str:
+    """Compact one-line-per-error rendering for retry feedback and the
+    human-readable failure: 'functional.0.title: Field required'."""
+    return "; ".join(
+        f"{'.'.join(str(p) for p in e['loc']) or '(root)'}: {e['msg']}" for e in exc.errors()[:5])
+
+
+def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
+               validate=None):
     """Every authoring stage goes through here: invoke -> tolerant parse ->
-    ONE automatic retry with the failure as feedback (the interview-engine
-    pattern, ADR-0015 doctrine: transient model flakes auto-recover; the
-    founder never manually retries a known class). On the second failure the
-    same human-readable error fires, now with a raw-output snippet."""
+    CONTRACT VALIDATION -> ONE automatic retry with the failure as feedback
+    (the interview-engine pattern, ADR-0015 doctrine: transient model flakes
+    auto-recover; the founder never manually retries a known class). The
+    validator is the stage's contract model: grammar (structured outputs)
+    guarantees shape only, so pattern/enum/min-length drift still lands here -
+    catching it at the stage means a flake costs one retry, never a crashed
+    gate. On the second failure the same human-readable error fires, now with
+    a raw-output snippet."""
     import time as _t
 
     from .progress import ProgressEvent
@@ -139,22 +153,47 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
     for attempt in (1, 2):
         raw = _invoke(stage, payload, log, progress, feedback=fb)
         last_raw = raw
+        contract_err = None
         try:
-            return json.loads(_extract_json(raw))
+            data = json.loads(_extract_json(raw))
         except (json.JSONDecodeError, ValueError) as e:
-            if attempt == 2:
-                from .errors import UserFacingError
+            data = None
+            parse_err = e
+        else:
+            if validate is None:
+                return data
+            try:
+                validate(data)
+                return data
+            except ValidationError as e:
+                contract_err = e
+        from .errors import UserFacingError
 
-                snippet = raw.strip()[:200].replace("\n", " ")
+        snippet = raw.strip()[:200].replace("\n", " ")
+        if attempt == 2:
+            if contract_err is not None:
                 raise UserFacingError(
-                    f"stage '{stage}': the model returned output that is not valid JSON (an automatic retry did not fix it).",
-                    f"smaller/local models often wrap JSON in prose, drop structure, or truncate. Raw output began: {snippet!r}",
+                    f"stage '{stage}': the model's output does not satisfy the contract (an automatic retry did not fix it).",
+                    f"contract errors: {_contract_errors(contract_err)}. Raw output began: {snippet!r}",
                     "rerun the same command - the checkpoint resumes at this stage; if it repeats, route the stage "
-                    f"to a stronger model (SPEC_GENERATOR_MODEL_{stage.upper()} env override).",
-                ) from e
-            if progress is not None:
-                progress.emit(ProgressEvent(stage, "", "item", _t.time(), None,
-                                            "model output was not valid JSON - retrying once with feedback"))
+                    f"to a stronger model (SPEC_GENERATOR_MODEL_{stage.upper()} env override) - and report it: "
+                    "schema-constrained output should not drift structurally.",
+                ) from contract_err
+            raise UserFacingError(
+                f"stage '{stage}': the model returned output that is not valid JSON (an automatic retry did not fix it).",
+                f"smaller/local models often wrap JSON in prose, drop structure, or truncate. Raw output began: {snippet!r}",
+                "rerun the same command - the checkpoint resumes at this stage; if it repeats, route the stage "
+                f"to a stronger model (SPEC_GENERATOR_MODEL_{stage.upper()} env override).",
+            ) from parse_err
+        if progress is not None:
+            progress.emit(ProgressEvent(stage, "", "item", _t.time(), None,
+                                        ("model output failed the contract" if contract_err is not None
+                                         else "model output was not valid JSON") + " - retrying once with feedback"))
+        if contract_err is not None:
+            fb = ("Your previous reply failed the output contract: " + _contract_errors(contract_err) + ". "
+                  "Return ONLY the complete corrected JSON payload - every required field present at every "
+                  "level, ids and enums exactly as specified.")
+        else:
             fb = ("Your previous reply was not valid JSON (prose-wrapped, unbalanced, or truncated). "
                   "Return ONLY the complete JSON payload, no prose, no commentary, balanced to the end.")
 
@@ -171,6 +210,23 @@ def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
     data["assumptions"] = [a.model_dump(mode="json") for a in intent.assumption_items]
     data["open_questions"] = intent.open_questions
     return data
+
+
+def _strip_pipeline_owned(data):
+    """The LLM body must not carry pipeline-owned fields; a model that copies
+    them anyway is tolerated (the pipeline overwrites), anything else extra
+    still fails the contract's extra=forbid."""
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if k not in ("session_id", "contract_version")}
+    return data
+
+
+def _srs_validator(intent_model: dict):
+    def check(d):
+        sid = intent_model["session_id"]
+        body = {**_strip_pipeline_owned(d), "session_id": sid, "intent_model_ref": sid}
+        SRSDocument.model_validate(srs_document_data(intent_model, body))
+    return check
 
 
 def _tech_constraint_block(intent_model: dict) -> str:
@@ -235,7 +291,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
     def node_needs(state: GenState) -> dict:
         intent = IntentModel.model_validate(state["intent_model"])
-        data = _call_json("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + intent.model_dump_json(), log, progress)
+        data = _call_json("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + intent.model_dump_json(), log, progress,
+                          validate=lambda d: StakeholderNeedsSet.model_validate(
+                              {**_strip_pipeline_owned(d), "session_id": intent.session_id}))
         data.setdefault("session_id", intent.session_id)
         return {"needs": data}
 
@@ -251,7 +309,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if fb:
             payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
                         + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["srs"]))
-        data = _call_json("srs", payload, log, progress)
+        data = _call_json("srs", payload, log, progress, validate=_srs_validator(state["intent_model"]))
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         # mechanical guards: solution-agnostic + grounded (ADR-0015 doctrine)
@@ -284,7 +342,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if fb:
             payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
                         + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["architecture"]))
-        data = _call_json("architecture", payload, log, progress)
+        data = _call_json("architecture", payload, log, progress,
+                          validate=lambda d: ArchitectureOverview.model_validate(
+                              {**_strip_pipeline_owned(d), "session_id": state["intent_model"]["session_id"]}))
         data.setdefault("session_id", state["intent_model"]["session_id"])
         return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}
 
@@ -292,14 +352,23 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # Item-level, parallel-friendly: short passes per slice beat one mega-pass (cost + regen granularity).
         return {"items": _call_json("items",
                       STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(state["srs"])
-                      + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log, progress)}
+                      + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log, progress,
+                      validate=lambda d: [ItemSpec.model_validate(_strip_pipeline_owned(i)) for i in d])}
 
     def node_tests(state: GenState) -> dict:
         """Two V pairings in one pass: acceptance tests pair with SRS criteria,
         unit/module tests pair with item specs."""
+        def _check_tests(d):
+            if isinstance(d, dict):
+                seq = (d.get("acceptance_tests") or []) + (d.get("unit_module_tests") or [])
+            else:
+                seq = d  # tolerate a flat array from weaker models
+            return [AcceptanceTest.model_validate(_strip_pipeline_owned(t)) for t in seq]
+
         data = _call_json("tests",
                       STAGE_PROMPTS["tests"] + "\n\nSRS:\n" + json.dumps(state["srs"])
-                      + "\n\nITEMS:\n" + json.dumps(state["items"]), log, progress)
+                      + "\n\nITEMS:\n" + json.dumps(state["items"]), log, progress,
+                          validate=_check_tests)
         if isinstance(data, dict):
             return {"tests": (data.get("acceptance_tests") or []) + (data.get("unit_module_tests") or [])}
         return {"tests": data}  # tolerate a flat array from weaker models
@@ -322,7 +391,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     def node_apply_fixes(state: GenState) -> dict:
         data = _call_json("srs",
                           "Apply these review fixes to the SRS and return the corrected SRS body as STRICT JSON:\n"
-                          + json.dumps(state["review_fixes"]) + "\n\nSRS:\n" + json.dumps(state["srs"]), log, progress)
+                          + json.dumps(state["review_fixes"]) + "\n\nSRS:\n" + json.dumps(state["srs"]), log, progress,
+                          validate=_srs_validator(state["intent_model"]))
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         return {"srs": data}
@@ -418,3 +488,4 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     g.add_edge("apply_fixes", "items")
     g.add_edge("assemble", END)
     return g.compile(checkpointer=checkpointer or MemorySaver())
+

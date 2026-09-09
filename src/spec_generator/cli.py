@@ -48,17 +48,29 @@ def _validate_gate_edit(gate: str, edited: dict, intent: dict) -> None:
 
 
 def _render_gate(gate: str, artifact: dict, intent: dict) -> str:
+    from pydantic import ValidationError
     from vmodel_contracts import ArchitectureOverview, SRSDocument
 
-    from .graph import srs_document_data
+    from .graph import _contract_errors, srs_document_data
     from .render import render_architecture, render_srs
 
-    if gate == "srs":
-        data = srs_document_data(intent, artifact)
-        data.setdefault("session_id", intent["session_id"])
-        data.setdefault("intent_model_ref", intent["session_id"])
-        return render_srs(SRSDocument.model_validate(data))
-    return render_architecture(ArchitectureOverview.model_validate({**artifact, "session_id": intent["session_id"]}))
+    try:
+        if gate == "srs":
+            data = srs_document_data(intent, artifact)
+            data.setdefault("session_id", intent["session_id"])
+            data.setdefault("intent_model_ref", intent["session_id"])
+            return render_srs(SRSDocument.model_validate(data))
+        return render_architecture(ArchitectureOverview.model_validate({**artifact, "session_id": intent["session_id"]}))
+    except ValidationError as e:
+        # the stage's own contract validation (graph._call_json) should have
+        # caught this before the gate - reaching here means a bug, but the
+        # founder still gets the friendly treatment, never a raw traceback.
+        raise UserFacingError(
+            f"the {gate} draft does not pass the contract schema, so the review gate cannot render it.",
+            f"validation detail: {_contract_errors(e)}",
+            "rerun the same command - the checkpoint resumes at the gate; if it repeats, the stage "
+            "produced a contract-breaking draft its own validation missed - please report it as a bug.",
+        ) from e
 
 
 def _run_with_gates(graph, cfg: dict, intent: dict, outdir) -> dict:
@@ -216,3 +228,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     run_cli(main)
+
