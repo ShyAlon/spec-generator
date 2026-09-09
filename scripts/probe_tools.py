@@ -3,7 +3,7 @@
 The tool path is opt-in (SPEC_GENERATOR_TOOLS=1) until this probe says the
 model emits well-formed, schema-conformant tool calls. The probe mirrors
 production exactly: same prompts (prompts.TOOL_PROMPTS + METHODOLOGY), same
-tool schemas and the SAME validating handlers (tools.SrsToolbox/TestToolbox)
+tool schemas and the SAME validating handlers (tools.SrsToolbox / VerificationToolbox)
 that run in the pipeline - so a malformed call here fails the same way it
 would fail in a real run, and an applied call here would apply there.
 
@@ -32,7 +32,7 @@ from spec_generator import model_config                     # noqa: E402
 from spec_generator.prompts import METHODOLOGY, TOOL_PROMPTS  # noqa: E402
 from spec_generator.skeleton import (ModelStructureError,     # noqa: E402
                                      build_srs_skeleton, build_test_skeleton)
-from spec_generator.tools import SrsToolbox, TestToolbox     # noqa: E402
+from spec_generator.tools import SrsToolbox, VerificationToolbox     # noqa: E402
 
 
 def check_version():
@@ -163,7 +163,7 @@ def main():
     tslots = build_test_skeleton(srs, items)
     results["add_test"] = run_scenario(
         "add_test (a module/system test spanning the flow would be a real addition)",
-        model, cfg, TestToolbox(tslots, {"AC-R-1-1"}, {"SPEC-1"}),
+        model, cfg, VerificationToolbox(tslots, {"AC-R-1-1"}, {"SPEC-1"}),
         TOOL_PROMPTS["tests"].format(skeleton=json.dumps(tslots),
                                      srs=json.dumps(srs), items=json.dumps(items)), "add")
 

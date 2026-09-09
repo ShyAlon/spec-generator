@@ -405,10 +405,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # + one per item spec (unit level); T-ids and links are code-owned.
         slots = build_test_skeleton(state["srs"], state["items"])
         if tools_enabled():
-            from .tools import TestToolbox, run_tool_loop
+            from .tools import VerificationToolbox, run_tool_loop
             from .prompts import TOOL_PROMPTS
 
-            toolbox = TestToolbox(
+            toolbox = VerificationToolbox(
                 slots,
                 criterion_ids={c.get("criterion_id") for sec in ("functional", "non_functional")
                                for r in (state["srs"].get(sec) or []) for c in (r.get("acceptance") or [])},

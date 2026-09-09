@@ -5,7 +5,7 @@ import pytest
 
 from spec_generator.skeleton import (ModelStructureError, build_srs_skeleton,
                                      build_test_skeleton, merge_test_fills)
-from spec_generator.tools import (SrsToolbox, TestToolbox, run_tool_loop,
+from spec_generator.tools import (SrsToolbox, VerificationToolbox, run_tool_loop,
                                   tools_enabled)
 
 def _srs_slots():
@@ -92,7 +92,7 @@ class TestAddTest:
                              "acceptance": [{"criterion_id": "AC-R-1-1", "statement": "a", "testable": True}]}],
              "non_functional": [], "out_of_scope": [], "open_questions": []},
             [SPEC])
-        return TestToolbox(slots, {"AC-R-1-1"}, {"SPEC-1"})
+        return VerificationToolbox(slots, {"AC-R-1-1"}, {"SPEC-1"})
 
     def test_happy_path(self):
         tb = self._tb()

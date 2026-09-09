@@ -135,7 +135,7 @@ class SrsToolbox:
         return {"requirement_id": requirement_id, "need_ids": slot["need_ids"]}
 
 
-class TestToolbox:
+class VerificationToolbox:
     """add_test over a mutable test skeleton."""
 
     def __init__(self, slots: list[dict], criterion_ids, spec_ids):
