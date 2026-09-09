@@ -51,20 +51,36 @@ stages are never re-paid (ADR-0011).
 Consumes only an `IntentModel` payload; emits only a `SpecBundle` (+ tests +
 manifest). No imports from sibling modules.
 
-## Local runs with Ollama (offline, $0)
+## Local runs with Ollama (offline, $0) - THE DEFAULT
 
-Model size: `qwen2.5-coder:7b` is the default recommendation and runs fine on
-a 16GB machine. `qwen2.5-coder:14b` is better but wants 32GB+ RAM. Set
-`OLLAMA_NUM_PARALLEL=1` so Ollama never loads two models at once (the chat
-model plus `nomic-embed-text` would otherwise compete for RAM).
+Every stage defaults to local Ollama: no API key, no cost, nothing leaves the
+machine. Pull the model and run:
 
 ```bash
 ollama pull qwen2.5-coder:7b
-for s in NEEDS REQUIREMENTS ARCHITECTURE ITEMS TESTS REVIEW; do
-  export SPEC_GENERATOR_MODEL_$s=ollama:qwen2.5-coder:7b
-done
+export OLLAMA_NUM_PARALLEL=1   # never load two models at once on 16GB
 python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
 ```
 
-Authoring stages keep a strong model for anything founder-facing - generic
-requirements are the free competitors' product. Ollama is for the dev loop.
+Model size: `qwen2.5-coder:7b` is the default. `qwen2.5-coder:14b` is better
+and runs on a 16GB M4 (proven in the interview-engine) as long as
+`OLLAMA_NUM_PARALLEL=1` is set:
+
+```bash
+ollama pull qwen2.5-coder:14b
+for s in NEEDS SRS ARCHITECTURE ITEMS TESTS REVIEW; do
+  export SPEC_GENERATOR_MODEL_$s=ollama:qwen2.5-coder:14b
+done
+```
+
+## Remote providers (opt-in)
+
+Route any stage to a strong remote model for founder-facing runs - generic
+requirements are the free competitors' product:
+
+```bash
+export DEEPSEEK_API_KEY=...
+for s in NEEDS SRS REVIEW; do
+  export SPEC_GENERATOR_MODEL_$s=deepseek:deepseek-chat
+done
+```

@@ -1,10 +1,10 @@
 """Per-stage model routing for generation (model-agnostic layer, ADR-0003).
-Providers: deepseek (default), openai, anthropic, ollama (local, $0, offline -
-for development and tests; judge demo quality on the real provider).
-
-Authoring stages (needs, requirements, review) keep a strong model - generic
-requirements are what free competitors produce. Assembly stages don't appear
-here: they are deterministic, no model.
+LOCAL-FIRST: every stage defaults to Ollama ($0, offline, no key). DeepSeek
+(or openai/anthropic) is OPT-IN per stage via SPEC_GENERATOR_MODEL_<STAGE>=
+deepseek:deepseek-chat - route authoring stages (needs, srs, review) to a
+strong provider for anything founder-facing: generic requirements are the
+free competitors' product. Assembly stages don't appear here: deterministic,
+no model.
 """
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ class StageModel:
 
 
 _STAGE_DEFAULTS: dict[str, StageModel] = {
-    "needs":        StageModel("deepseek", "deepseek-chat"),
-    "srs":          StageModel("deepseek", "deepseek-chat"),
-    "architecture": StageModel("deepseek", "deepseek-chat"),
-    "items":        StageModel("deepseek", "deepseek-chat"),
-    "tests":        StageModel("deepseek", "deepseek-chat"),
-    "review":       StageModel("deepseek", "deepseek-chat"),
+    "needs":        StageModel("ollama", "qwen2.5-coder:7b"),
+    "srs":          StageModel("ollama", "qwen2.5-coder:7b"),
+    "architecture": StageModel("ollama", "qwen2.5-coder:7b"),
+    "items":        StageModel("ollama", "qwen2.5-coder:7b"),
+    "tests":        StageModel("ollama", "qwen2.5-coder:7b"),
+    "review":       StageModel("ollama", "qwen2.5-coder:7b"),
 }
 
 _BASE_URLS = {
@@ -56,8 +56,8 @@ def _preflight(cfg: "StageModel", stage: str) -> None:
         raise UserFacingError(
             f"stage '{stage}' is routed to provider '{cfg.provider}' (model {cfg.model}), but {env} is not set.",
             "no API key in the environment.",
-            f"export {env}=... or run this stage offline via Ollama: "
-            f"SPEC_GENERATOR_MODEL_{stage.upper()}=ollama:qwen2.5-coder:7b (see README).",
+            f"export {env}=... - remote providers are opt-in (the default is local Ollama); "
+            f"or route this stage back to local: SPEC_GENERATOR_MODEL_{stage.upper()}=ollama:qwen2.5-coder:7b.",
         )
 
 

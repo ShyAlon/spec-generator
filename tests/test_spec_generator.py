@@ -19,6 +19,7 @@ def test_preflight_names_missing_remote_key(monkeypatch):
     from spec_generator.errors import UserFacingError
 
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("SPEC_GENERATOR_MODEL_NEEDS", "deepseek:deepseek-chat")  # remote is opt-in
     with pytest.raises(UserFacingError) as ei:
         model_config.build_chat_model("needs")
     assert "DEEPSEEK_API_KEY" in ei.value.render() and "SPEC_GENERATOR_MODEL_NEEDS" in ei.value.render()
