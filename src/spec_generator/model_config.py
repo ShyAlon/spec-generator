@@ -21,12 +21,12 @@ class StageModel:
 
 
 _STAGE_DEFAULTS: dict[str, StageModel] = {
-    "needs":        StageModel("ollama", "qwen2.5-coder:7b"),
-    "srs":          StageModel("ollama", "qwen2.5-coder:7b"),
-    "architecture": StageModel("ollama", "qwen2.5-coder:7b"),
-    "items":        StageModel("ollama", "qwen2.5-coder:7b"),
-    "tests":        StageModel("ollama", "qwen2.5-coder:7b"),
-    "review":       StageModel("ollama", "qwen2.5-coder:7b"),
+    "needs":        StageModel("ollama", "qwen2.5-coder:14b"),
+    "srs":          StageModel("ollama", "qwen2.5-coder:14b"),
+    "architecture": StageModel("ollama", "qwen2.5-coder:14b"),
+    "items":        StageModel("ollama", "qwen2.5-coder:14b"),
+    "tests":        StageModel("ollama", "qwen2.5-coder:14b"),
+    "review":       StageModel("ollama", "qwen2.5-coder:14b"),
 }
 
 _BASE_URLS = {
@@ -57,7 +57,7 @@ def _preflight(cfg: "StageModel", stage: str) -> None:
             f"stage '{stage}' is routed to provider '{cfg.provider}' (model {cfg.model}), but {env} is not set.",
             "no API key in the environment.",
             f"export {env}=... - remote providers are opt-in (the default is local Ollama); "
-            f"or route this stage back to local: SPEC_GENERATOR_MODEL_{stage.upper()}=ollama:qwen2.5-coder:7b.",
+            f"or route this stage back to local: SPEC_GENERATOR_MODEL_{stage.upper()}.=ollama:qwen2.5-coder:14b.",
         )
 
 

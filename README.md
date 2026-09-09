@@ -57,19 +57,18 @@ Every stage defaults to local Ollama: no API key, no cost, nothing leaves the
 machine. Pull the model and run:
 
 ```bash
-ollama pull qwen2.5-coder:7b
+ollama pull qwen2.5-coder:14b
 export OLLAMA_NUM_PARALLEL=1   # never load two models at once on 16GB
 python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
 ```
 
-Model size: `qwen2.5-coder:7b` is the default. `qwen2.5-coder:14b` is better
-and runs on a 16GB M4 (proven in the interview-engine) as long as
-`OLLAMA_NUM_PARALLEL=1` is set:
+Model size: `qwen2.5-coder:14b` is the standing default - proven on a 16GB M4
+with `OLLAMA_NUM_PARALLEL=1`. `qwen2.5-coder:7b` is the lighter fallback for
+tighter machines:
 
 ```bash
-ollama pull qwen2.5-coder:14b
 for s in NEEDS SRS ARCHITECTURE ITEMS TESTS REVIEW; do
-  export SPEC_GENERATOR_MODEL_$s=ollama:qwen2.5-coder:14b
+  export SPEC_GENERATOR_MODEL_$s=ollama:qwen2.5-coder:7b
 done
 ```
 

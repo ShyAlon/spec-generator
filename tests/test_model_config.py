@@ -20,3 +20,4 @@ def test_default_is_local_ollama(monkeypatch):
         monkeypatch.delenv(f"SPEC_GENERATOR_MODEL_{stage.upper()}", raising=False)
         cfg = model_config.for_stage(stage)
         assert cfg.provider == "ollama", stage
+        assert cfg.model == "qwen2.5-coder:14b", stage  # his standing default; 7b is the lighter fallback
