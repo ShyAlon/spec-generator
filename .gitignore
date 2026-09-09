@@ -10,3 +10,4 @@ gate_*.md
 gate_*.json
 usage.jsonl
 checkpoints.sqlite*
+.env
