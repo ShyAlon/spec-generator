@@ -17,7 +17,6 @@ from vmodel_contracts import (
     SpecManifest,
     StakeholderNeedsSet,
     TraceabilityEntry,
-    VModelLevel,
 )
 
 MANIFEST_FILENAME = "manifest.json"
