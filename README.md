@@ -62,6 +62,12 @@ export OLLAMA_NUM_PARALLEL=1   # never load two models at once on 16GB
 python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
 ```
 
+Console output: each stage still gets one start/done line, and while a stage
+runs, every item lands its own line as its JSON closes (`     - N-3 the system
+shall ...`). The generation process itself is untouched - same one model call
+per stage, same prompt, same completion; streaming only makes the items
+visible as they arrive.
+
 Model size: `qwen2.5-coder:14b` is the standing default - proven on a 16GB M4
 with `OLLAMA_NUM_PARALLEL=1`. `qwen2.5-coder:7b` is the lighter fallback for
 tighter machines:

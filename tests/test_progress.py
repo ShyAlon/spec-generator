@@ -49,6 +49,14 @@ class FakeModel:
         self.calls += 1
         return AIMessage(content=json.dumps(PAYLOADS[self.stage]))
 
+    def stream(self, messages):
+        # the production path streams; delegate to invoke (subclass overrides
+        # included) and yield the completion in chunks, like a real model
+        text = self.invoke(messages).content
+        step = max(1, len(text) // 3)
+        for i in range(0, len(text), step):
+            yield AIMessage(content=text[i:i + step])
+
 
 @pytest.fixture
 def fake_models(monkeypatch):

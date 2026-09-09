@@ -52,14 +52,28 @@ class GenState(TypedDict, total=False):
     violations: list[str]
 
 
-def _invoke(stage: str, payload: str, log: UsageLog) -> str:
-    model = model_config.build_chat_model(stage)
+def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None) -> str:
+    """One model call per stage, STREAMED so the console can show each item as
+    its JSON closes (same prompt, same parameters, same completion - progress
+    is observability only, never a change to what is generated)."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    resp = model_config.invoke_checked(model, [SystemMessage(content=METHODOLOGY), HumanMessage(content=payload)], stage)
-    log.record(stage, model_config.for_stage(stage).provider, model_config.for_stage(stage).model,
-               (getattr(resp, "usage_metadata", None) or {}))
-    return resp.content
+    from .stream_items import ItemReporter
+
+    model = model_config.build_chat_model(stage)
+    reporter = ItemReporter(progress, stage)
+    chunks: list[str] = []
+    usage: dict = {}
+    for chunk in model_config.stream_checked(
+            model, [SystemMessage(content=METHODOLOGY), HumanMessage(content=payload)], stage):
+        text = chunk.content if isinstance(chunk.content, str) else "".join(
+            b.get("text", "") for b in chunk.content if isinstance(b, dict))
+        chunks.append(text)
+        reporter.feed("".join(chunks))
+        usage = getattr(chunk, "usage_metadata", None) or usage
+    cfg = model_config.for_stage(stage)
+    log.record(stage, cfg.provider, cfg.model, usage)
+    return "".join(chunks)
 
 
 def _json(text: str, stage: str = "unknown"):
@@ -83,7 +97,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
     def node_needs(state: GenState) -> dict:
         intent = IntentModel.model_validate(state["intent_model"])
-        raw = _invoke("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + intent.model_dump_json(), log)
+        raw = _invoke("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + intent.model_dump_json(), log, progress)
         data = _json(raw, "needs")
         data.setdefault("session_id", intent.session_id)
         return {"needs": data}
@@ -96,7 +110,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         Mechanical guards (text_qa) flag solution language and invented detail."""
         raw = _invoke("srs",
                       STAGE_PROMPTS["srs"] + "\n\nNEEDS:\n" + json.dumps(state["needs"])
-                      + "\n\nINTENT:\n" + json.dumps(state["intent_model"]), log)
+                      + "\n\nINTENT:\n" + json.dumps(state["intent_model"]), log, progress)
         data = _json(raw, "srs")
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
@@ -124,7 +138,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
     def node_architecture(state: GenState) -> dict:
         raw = _invoke("architecture",
-                      STAGE_PROMPTS["architecture"] + "\n\nSRS:\n" + json.dumps(state["srs"]), log)
+                      STAGE_PROMPTS["architecture"] + "\n\nSRS:\n" + json.dumps(state["srs"]), log, progress)
         data = _json(raw, "architecture")
         data.setdefault("session_id", state["intent_model"]["session_id"])
         return {"architecture": data}
@@ -133,7 +147,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # Item-level, parallel-friendly: short passes per slice beat one mega-pass (cost + regen granularity).
         raw = _invoke("items",
                       STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(state["srs"])
-                      + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log)
+                      + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log, progress)
         return {"items": _json(raw, "items")}
 
     def node_tests(state: GenState) -> dict:
@@ -141,7 +155,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         unit/module tests pair with item specs."""
         raw = _invoke("tests",
                       STAGE_PROMPTS["tests"] + "\n\nSRS:\n" + json.dumps(state["srs"])
-                      + "\n\nITEMS:\n" + json.dumps(state["items"]), log)
+                      + "\n\nITEMS:\n" + json.dumps(state["items"]), log, progress)
         data = _json(raw, "tests")
         if isinstance(data, dict):
             return {"tests": (data.get("acceptance_tests") or []) + (data.get("unit_module_tests") or [])}
@@ -152,7 +166,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         raw = _invoke("review", STAGE_PROMPTS["review"].format(n=n)
                       + "\n\nSRS:\n" + json.dumps(state["srs"])
                       + "\n\nITEMS:\n" + json.dumps(state["items"])
-                      + "\n\nTESTS:\n" + json.dumps(state["tests"]), log)
+                      + "\n\nTESTS:\n" + json.dumps(state["tests"]), log, progress)
         return {"review_round": n, "review_fixes": _json(raw, "review")}
 
     def route_review(state: GenState) -> str:
@@ -165,7 +179,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     def node_apply_fixes(state: GenState) -> dict:
         raw = _invoke("srs",
                       "Apply these review fixes to the SRS and return the corrected SRS body as STRICT JSON:\n"
-                      + json.dumps(state["review_fixes"]) + "\n\nSRS:\n" + json.dumps(state["srs"]), log)
+                      + json.dumps(state["review_fixes"]) + "\n\nSRS:\n" + json.dumps(state["srs"]), log, progress)
         data = _json(raw, "srs")
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])

@@ -74,6 +74,22 @@ def invoke_checked(chat_model, messages, stage: str):
         raise
 
 
+def stream_checked(chat_model, messages, stage: str):
+    """Stream the same call invoke_checked would make. The concatenated chunk
+    contents are the completion itself - the output contract is unchanged,
+    the consumer just sees tokens as they land."""
+    from .errors import translate_llm_error
+
+    cfg = for_stage(stage)
+    try:
+        yield from chat_model.stream(messages)
+    except Exception as e:  # noqa: BLE001
+        friendly = translate_llm_error(e, stage, cfg.provider, cfg.model, _BASE_URLS.get(cfg.provider))
+        if friendly is not None:
+            raise friendly from e
+        raise
+
+
 def build_chat_model(stage: str):
     cfg = for_stage(stage)
     _preflight(cfg, stage)

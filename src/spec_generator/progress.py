@@ -10,7 +10,7 @@ Until then: intra-module, documented in ARCHITECTURE.md 'Progress events'.
 Event shape:
     stage:     machine name, stable per pipeline step (e.g. 'distill_intent')
     label:     human-readable present-tense phrase ('Distilling intent model')
-    status:    'started' | 'completed' | 'failed'
+    status:    'started' | 'item' | 'completed' | 'failed'
     ts:        epoch seconds when the event fired
     elapsed_s: seconds the stage took (completed/failed only)
     detail:    optional context ('turn 4', 'retrying after schema feedback')
@@ -27,7 +27,7 @@ from dataclasses import dataclass
 class ProgressEvent:
     stage: str
     label: str
-    status: str          # started | completed | failed
+    status: str          # started | item | completed | failed
     ts: float
     elapsed_s: float | None = None
     detail: str | None = None
@@ -74,6 +74,8 @@ def stderr_printer():
         detail = f" ({ev.detail})" if ev.detail else ""
         if ev.status == "started":
             print(f"  -> {ev.label}{detail}...", file=sys.stderr)
+        elif ev.status == "item":
+            print(f"     - {ev.detail}", file=sys.stderr)
         elif ev.status == "completed":
             print(f"  ok {ev.label}{detail} [{ev.elapsed_s:.1f}s]", file=sys.stderr)
         else:
