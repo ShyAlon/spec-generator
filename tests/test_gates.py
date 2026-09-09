@@ -22,7 +22,7 @@ def _review_graph(monkeypatch):
             self.last_human = messages[-1].content
             return super().invoke(messages)
 
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: box.setdefault(stage, Recording(stage)))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: box.setdefault(stage, Recording(stage)))
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver(), progress=ProgressBus(), review=True)
     return g, box
 
@@ -213,7 +213,7 @@ def test_heal_restart_end_to_end_sqlite_skeleton_mode(tmp_path, monkeypatch, cap
 
     box = {}
     monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage: box.setdefault(stage, FakeModel(stage)))
+                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
     conn = sqlite3.connect(str(tmp_path / "checkpoints.sqlite"), check_same_thread=False)
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(conn),
                     progress=ProgressBus(), review=True)

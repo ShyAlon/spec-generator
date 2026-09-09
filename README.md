@@ -38,7 +38,9 @@ Written INCREMENTALLY as each stage completes (atomic tmp+rename): needs.*
 after stage 1, srs.* after stage 2 (re-written if review fixes apply),
 architecture.* after stage 3, items.json + specs/ after stage 4, tests.json
 after stage 5. A late failure leaves every completed stage's artifacts on
-disk; AGENTS.md / manifest.json / traceability.json land at assembly.
+disk; AGENTS.md / manifest.json / traceability.json land at assembly. On
+resume, artifacts for stages completed before this shipped are backfilled
+from checkpoint state at startup (state is authoritative, zero stages re-run).
 
 ## Run
 

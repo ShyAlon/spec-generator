@@ -27,7 +27,7 @@ from vmodel_contracts import (
 )
 
 from .errors import UserFacingError, run_cli
-from .graph import build_graph, srs_document_data
+from .graph import build_graph, srs_document_data, _legacy_arch_fill
 from .progress import ProgressBus, stderr_printer
 from .repair import coerce_for_model, normalize_enums
 from .render import (render_agents_md, render_architecture, render_needs,
@@ -85,6 +85,19 @@ def _render_gate(gate: str, artifact: dict, intent: dict) -> str:
         ) from e
 
 
+def _backfill_persist(persist, values: dict) -> list[str]:
+    """Resume companion: persist artifacts for stages completed BEFORE
+    incremental persistence shipped (resume skips completed stages, so
+    persist() never fires for them and the bundle dir stays empty). State is
+    authoritative - overwrite stale files. Returns the stages written."""
+    written = []
+    for stage in ("needs", "srs", "architecture", "items", "tests"):
+        if values.get(stage):
+            persist(stage, values[stage], values)
+            written.append(stage)
+    return written
+
+
 def _atomic_write(path: Path, text: str) -> None:
     """tmp + rename: a crash mid-write can never leave a torn artifact."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +124,7 @@ def _make_persist(intent: dict, outdir: Path):
             srs = SRSDocument.model_validate(coerce_for_model(doc, SRSDocument))
             _atomic_write(outdir / "srs.md", render_srs(srs))
         elif stage == "architecture":
-            body = {**data, "session_id": sid}
+            body = _legacy_arch_fill({**data, "session_id": sid})  # pre-0.8.0 checkpoints lack the ADR-0021 fields
             _atomic_write(outdir / "architecture.json", json.dumps(body, indent=2))
             arch = ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
             _atomic_write(outdir / "architecture.md", render_architecture(arch))
@@ -259,9 +272,18 @@ def main() -> None:
                         persist=_make_persist(intent, outdir))
     print(f"Generating bundle for session {sid} (crash? rerun the same command - it resumes)\n", file=sys.stderr)
     cfg = {"configurable": {"thread_id": sid}}
-    resume = bool(graph.get_state(cfg).values)
+    prior = graph.get_state(cfg).values
+    resume = bool(prior)
     if resume:
         print("Checkpoint found - resuming; completed stages are NOT re-run.", file=sys.stderr)
+        # backfill-persist artifacts for stages completed BEFORE incremental
+        # persistence shipped: resume skips completed stages (persist never
+        # fires for them), so without this the bundle dir stays empty. State
+        # is authoritative - overwrite any stale files.
+        written = _backfill_persist(_make_persist(intent, outdir), prior)
+        if written:
+            print(f"Artifacts for already-completed stages written to the bundle dir ({', '.join(written)}).",
+                  file=sys.stderr)
     if args.review:
         result = _run_with_gates(graph, cfg, intent, outdir, resume=resume)
     else:

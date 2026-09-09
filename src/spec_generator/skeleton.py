@@ -49,9 +49,12 @@ def merge_srs_fills(slots: list[dict], body) -> dict:
     intent model (definitions, constraints, ...) is NOT part of this body -
     srs_document_data adds it at validation/assembly."""
     fills = body.get("fills") if isinstance(body, dict) else None
-    if not isinstance(fills, list):
-        raise ModelStructureError("expected a 'fills' array with one entry per requirement slot")
-    by_id = _fills_by_id(fills, "requirement_id")
+    if isinstance(fills, dict):
+        by_id = dict(fills)  # per-skeleton grammar (schemas.srs_fill_schema): fills keyed by requirement_id
+    elif isinstance(fills, list):
+        by_id = _fills_by_id(fills, "requirement_id")  # free-mode fallback without the grammar
+    else:
+        raise ModelStructureError("expected 'fills' keyed by requirement_id, one entry per requirement slot")
     functional, non_functional = [], []
     ac = 0
     for slot in slots:
@@ -100,9 +103,12 @@ def build_test_skeleton(srs: dict, items: list) -> list[dict]:
 
 def merge_test_fills(slots: list[dict], body) -> list[dict]:
     fills = body.get("fills") if isinstance(body, dict) else None
-    if not isinstance(fills, list):
-        raise ModelStructureError("expected a 'fills' array with one entry per test slot")
-    by_id = _fills_by_id(fills, "test_id")
+    if isinstance(fills, dict):
+        by_id = dict(fills)  # per-skeleton grammar (schemas.test_fill_schema): fills keyed by test_id
+    elif isinstance(fills, list):
+        by_id = _fills_by_id(fills, "test_id")  # free-mode fallback without the grammar
+    else:
+        raise ModelStructureError("expected 'fills' keyed by test_id, one entry per test slot")
     out = []
     for slot in slots:
         tid = slot["test_id"]

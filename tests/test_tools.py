@@ -223,7 +223,7 @@ def _run_graph_with_tools(monkeypatch, scripted):
 
     monkeypatch.setenv("SPEC_GENERATOR_TOOLS", "1")
 
-    def build(stage, structured=True):
+    def build(stage, structured=True, schema=None):
         if not structured:
             return _ToolScript(scripted.get(stage, [[]]))
         return FakeModel(stage)

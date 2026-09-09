@@ -39,6 +39,8 @@ STAGE_PROMPTS = {
            "solution-agnostic), priority (must/should/could), and acceptance criteria as plain "
            "statements that are OBSERVABLE outcomes - no implementation mechanics, no named "
            "technologies, no invented numbers or artifacts (ids are assigned by the pipeline). "
+           "purpose and scope_summary describe THE FOUNDER'S PRODUCT, in stakeholder language, "
+           "from the INTENT below - never the V model, this pipeline, or these instructions. "
            "Non-functional slots must NOT silently vanish into prose: give each its own real, "
            "verifiable requirement text. Return one JSON object: {purpose, scope_summary, "
            "fills: [{requirement_id, title, statement, priority, acceptance: [statements]}]} "

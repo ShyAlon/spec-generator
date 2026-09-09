@@ -97,9 +97,11 @@ def _structured_enabled() -> bool:
     return os.environ.get("SPEC_GENERATOR_STRUCTURED", "1") != "0"
 
 
-def build_chat_model(stage: str, structured: bool = True):
+def build_chat_model(stage: str, structured: bool = True, schema: dict | None = None):
     """structured=False builds the model WITHOUT the grammar format - required
-    for tool-calling loops (a format grammar would break tool-call emission)."""
+    for tool-calling loops (a format grammar would break tool-call emission).
+    schema= overrides the stage's static grammar (per-skeleton fill grammars,
+    schemas.srs_fill_schema / test_fill_schema)."""
     cfg = for_stage(stage)
     _preflight(cfg, stage)
     if cfg.provider == "ollama" and structured and _structured_enabled():
@@ -112,7 +114,7 @@ def build_chat_model(stage: str, structured: bool = True):
         return ChatOllama(model=cfg.model, temperature=cfg.temperature,
                           num_predict=cfg.max_tokens,
                           base_url=_BASE_URLS["ollama"].removesuffix("/v1"),
-                          format=_schema_for_stage(stage))
+                          format=schema or _schema_for_stage(stage))
     if cfg.provider in ("deepseek", "openai", "ollama"):
         from langchain_openai import ChatOpenAI
 

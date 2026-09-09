@@ -170,7 +170,8 @@ def test_keyword_named_fields_survive_the_strip():
     assert "title" in dec["properties"] and "title" in dec["required"]
     item = for_stage("items")["items"]
     assert "title" in item["properties"] and "title" in item["required"]
-    tst = for_stage("tests")["properties"]["fills"]["items"]
+    from spec_generator.schemas import test_fill_schema
+    tst = test_fill_schema([{"test_id": "T-1"}])["properties"]["fills"]["properties"]["T-1"]
     assert "description" in tst["properties"] and "description" in tst["required"]
 
 
@@ -204,6 +205,7 @@ def test_schema_conformant_payloads_pass_full_contract_validation():
                                   SRSDocument, StakeholderNeedsSet)
     from spec_generator.graph import srs_document_data
     from spec_generator.render import render_srs
+    from spec_generator.schemas import srs_fill_schema, test_fill_schema
     from spec_generator.skeleton import (assign_architecture_ids, build_srs_skeleton,
                                          build_test_skeleton, merge_srs_fills,
                                          merge_test_fills)
@@ -211,8 +213,9 @@ def test_schema_conformant_payloads_pass_full_contract_validation():
     needs = _project(PAYLOADS["needs"], for_stage("needs"))
     StakeholderNeedsSet.model_validate({**needs, "session_id": INTENT["session_id"]})
 
-    fills = _project(PAYLOADS["srs"], for_stage("srs"))
-    merged = merge_srs_fills(build_srs_skeleton(PAYLOADS["needs"]), fills)
+    srs_slots = build_srs_skeleton(PAYLOADS["needs"])
+    fills = _project(PAYLOADS["srs"], srs_fill_schema(srs_slots))
+    merged = merge_srs_fills(srs_slots, fills)
     doc = SRSDocument.model_validate(srs_document_data(
         INTENT, {**merged, "session_id": INTENT["session_id"], "intent_model_ref": INTENT["session_id"]}))
     assert render_srs(doc)  # the gate render path (cli._render_gate) must not crash
@@ -225,6 +228,7 @@ def test_schema_conformant_payloads_pass_full_contract_validation():
     for i in items:
         ItemSpec.model_validate(i)
 
-    tfills = _project(PAYLOADS["tests"], for_stage("tests"))
-    tests = merge_test_fills(build_test_skeleton(CONTRACT_SRS, PAYLOADS["items"]), tfills)
+    test_slots = build_test_skeleton(CONTRACT_SRS, PAYLOADS["items"])
+    tfills = _project(PAYLOADS["tests"], test_fill_schema(test_slots))
+    tests = merge_test_fills(test_slots, tfills)
     assert tests and all(AcceptanceTest.model_validate(t) for t in tests) is not None

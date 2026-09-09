@@ -19,9 +19,9 @@ PAYLOADS = {
     # ids; code owns ids, kinds, sections, and trace links (see CONTRACT_SRS
     # for the contract-shaped result the node assembles from these).
     "srs": {"purpose": "p", "scope_summary": "sc",
-            "fills": [{"requirement_id": "R-1", "title": "Spec file",
-                       "statement": "system shall emit a spec", "priority": "must",
-                       "acceptance": ["spec exists"]}]},
+            "fills": {"R-1": {"title": "Spec file",
+                              "statement": "system shall emit a spec", "priority": "must",
+                              "acceptance": ["spec exists"]}}},
     "architecture": {"session_id": "s", "stack": {"language": "ts"},
                      "components": [{"name": "api", "responsibility": "serve"}],
                      "decisions": [{"title": "t", "decision": "x", "rationale": "y",
@@ -29,10 +29,10 @@ PAYLOADS = {
                                     "options_considered": [{"option": "z", "reason": "heavier"}]}]},
     "items": [{"spec_id": "SPEC-api", "kind": "api_surface", "title": "API",
                "body_markdown": "# API", "requirement_ids": ["R-1"]}],
-    "tests": {"fills": [{"test_id": "T-1", "description": "criterion holds",
-                         "runner": "http", "definition": {"url": "/"}},
-                        {"test_id": "T-2", "description": "spec renders",
-                         "runner": "pytest", "definition": {"path": "x"}}]},
+    "tests": {"fills": {"T-1": {"description": "criterion holds",
+                                "runner": "http", "definition": {"url": "/"}},
+                        "T-2": {"description": "spec renders",
+                                "runner": "pytest", "definition": {"path": "x"}}}},
     "review": [],
 }
 
@@ -74,7 +74,7 @@ class FakeModel:
 @pytest.fixture
 def fake_models(monkeypatch):
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: box.setdefault(stage, FakeModel(stage)))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
     return box
 
 
@@ -104,7 +104,7 @@ def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
     fake_models["architecture"] = DieAtArch("architecture")
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage: fake_models.setdefault(stage, DieAtArch(stage) if stage == "architecture" else FakeModel(stage)))
+                        lambda stage, **kw: fake_models.setdefault(stage, DieAtArch(stage) if stage == "architecture" else FakeModel(stage)))
     db = str(tmp_path / "cp.sqlite")
     cfg = {"configurable": {"thread_id": "s"}}
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
@@ -115,7 +115,7 @@ def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
     fake_models["architecture"] = FakeModel("architecture")
     g2 = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
     monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage: fake_models.setdefault(stage, FakeModel(stage)))
+                        lambda stage, **kw: fake_models.setdefault(stage, FakeModel(stage)))
     r = g2.invoke(None, cfg)
     assert "bundle" in r
     assert fake_models["needs"].calls == 1, "needs stage must NOT be re-paid after resume"

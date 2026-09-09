@@ -50,7 +50,7 @@ class AlwaysBadModel:
 
 def test_transient_flake_auto_recovers(monkeypatch):
     m = FlakyModel()
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: m)
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: m)
     bus = ProgressBus()
     seen = []
     bus.subscribe(seen.append)
@@ -65,7 +65,7 @@ def test_transient_flake_auto_recovers(monkeypatch):
 
 
 def test_persistent_garbage_gets_friendly_error_with_snippet(monkeypatch):
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: AlwaysBadModel())
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: AlwaysBadModel())
     with pytest.raises(UserFacingError) as ei:
         _call_json("tests", "payload", UsageLog("s"), None)
     rendered = ei.value.render()
@@ -84,7 +84,7 @@ def test_valid_first_try_means_one_call(monkeypatch):
             yield AIMessage(content='[{"n": 1}]')
 
     m = Clean()
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: m)
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: m)
     assert _call_json("needs", "p", UsageLog("s"), None) == [{"n": 1}]
     assert m.calls == 1  # no behavioral change on the happy path
 
@@ -106,7 +106,7 @@ def _titles_missing_once_then_valid():
             self.last_messages = messages
             if self.calls == 1:
                 bad = copy.deepcopy(PAYLOADS["srs"])
-                del bad["fills"][0]["title"]
+                del bad["fills"]["R-1"]["title"]
                 yield AIMessage(content=json.dumps(bad))
             else:
                 yield AIMessage(content=json.dumps(PAYLOADS["srs"]))
@@ -130,7 +130,7 @@ def test_contract_drift_auto_recovers_with_feedback(monkeypatch):
     that parses but fails the contract gets the same one-retry treatment, with
     the contract errors as feedback."""
     m = _titles_missing_once_then_valid()
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: m)
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: m)
     bus = ProgressBus()
     seen = []
     bus.subscribe(seen.append)
@@ -149,10 +149,10 @@ def test_persistent_contract_drift_gets_friendly_error(monkeypatch):
             import copy
             from test_progress import PAYLOADS
             bad = copy.deepcopy(PAYLOADS["srs"])
-            del bad["fills"][0]["title"]
+            del bad["fills"]["R-1"]["title"]
             yield AIMessage(content=json.dumps(bad))
 
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: AlwaysDrifting())
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: AlwaysDrifting())
     with pytest.raises(UserFacingError) as ei:
         _call_json("srs", "payload", UsageLog("s"), None, validate=_srs_validate)
     rendered = ei.value.render()

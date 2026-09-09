@@ -122,6 +122,49 @@ def _array_schema(model_cls) -> dict:
     return out
 
 
+def srs_fill_schema(slots: list[dict]) -> dict:
+    """The SRS fill grammar, generated PER SKELETON (2026-09-09 live failure
+    'R-5: slot not filled'): every slot id is an explicitly required property
+    of the fills object, so a missing slot is impossible by construction -
+    the post-hoc merge check becomes a safety net, not the only guard."""
+    fill = {"type": "object",
+            "properties": {"title": {"type": "string"},
+                           "statement": {"type": "string"},
+                           "priority": {"enum": ["must", "should", "could"]},
+                           "acceptance": {"type": "array", "items": {"type": "string"}}},
+            "required": ["title", "statement", "priority", "acceptance"],
+            "additionalProperties": False}
+    ids = [sl["requirement_id"] for sl in slots]
+    return {"type": "object",
+            "properties": {"purpose": {"type": "string"},
+                           "scope_summary": {"type": "string"},
+                           "fills": {"type": "object",
+                                     "properties": {i: fill for i in ids},
+                                     "required": ids,
+                                     "additionalProperties": False}},
+            "required": ["purpose", "scope_summary", "fills"],
+            "additionalProperties": False}
+
+
+def test_fill_schema(slots: list[dict]) -> dict:
+    """Same per-skeleton tightening for the tests stage: every test slot id is
+    a required property of the fills object."""
+    fill = {"type": "object",
+            "properties": {"description": {"type": "string"},
+                           "runner": {"type": "string"},
+                           "definition": {"type": "object"}},
+            "required": ["description", "runner", "definition"],
+            "additionalProperties": False}
+    ids = [sl["test_id"] for sl in slots]
+    return {"type": "object",
+            "properties": {"fills": {"type": "object",
+                                     "properties": {i: fill for i in ids},
+                                     "required": ids,
+                                     "additionalProperties": False}},
+            "required": ["fills"],
+            "additionalProperties": False}
+
+
 def _raw_stage_schema(stage: str) -> dict:
     if stage == "needs":
         return _body_schema(StakeholderNeedsSet, drop=("session_id",))

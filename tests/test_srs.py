@@ -27,7 +27,7 @@ def _run(monkeypatch, srs_body, thread="srs1"):
         def invoke(self, messages):
             self.calls += 1
             return AIMessage(content=json.dumps(payloads[self.stage]))
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: FM(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
     g = build_graph(UsageLog("s"))
     return g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": thread}})
 
@@ -58,7 +58,7 @@ def test_structure_carried_deterministically(monkeypatch):
         def invoke(self, messages):
             self.calls += 1
             return AIMessage(content=json.dumps(payloads[self.stage]))
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: FM(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
     g = build_graph(UsageLog("s"))
     r = g.invoke({"intent_model": intent}, {"configurable": {"thread_id": "carry"}})
     srs = r["bundle"]["_srs"]

@@ -33,7 +33,7 @@ class QueueModel(FakeModel):
 def queue_models(monkeypatch):
     box = {}
     QueueModel.QUEUES = {}
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: box.setdefault(stage, QueueModel(stage)))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: box.setdefault(stage, QueueModel(stage)))
     return box
 
 
@@ -88,7 +88,7 @@ def test_late_failure_leaves_completed_stages_on_disk(tmp_path, monkeypatch):
             return super().invoke(messages)
 
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: box.setdefault(stage, DieAtTests(stage)))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: box.setdefault(stage, DieAtTests(stage)))
     persist = _make_persist(dict(INTENT), tmp_path)
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver(), persist=persist)
     with pytest.raises(RuntimeError):

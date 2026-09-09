@@ -60,7 +60,7 @@ class GenState(TypedDict, total=False):
 
 
 def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
-            feedback: str | None = None) -> str:
+            feedback: str | None = None, schema: dict | None = None) -> str:
     """One model call per stage, STREAMED so the console can show each item as
     its JSON closes (same prompt, same parameters, same completion - progress
     is observability only, never a change to what is generated)."""
@@ -68,7 +68,7 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
 
     from .stream_items import ItemReporter
 
-    model = model_config.build_chat_model(stage)
+    model = model_config.build_chat_model(stage, schema=schema)
     reporter = ItemReporter(progress, stage)
     messages = [SystemMessage(content=METHODOLOGY), HumanMessage(content=payload)]
     if feedback:
@@ -140,7 +140,7 @@ def _contract_errors(exc) -> str:
 
 
 def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
-               validate=None):
+               validate=None, schema: dict | None = None):
     """Every authoring stage goes through here: invoke -> tolerant parse ->
     CONTRACT VALIDATION -> ONE automatic retry with the failure as feedback
     (the interview-engine pattern, ADR-0015 doctrine: transient model flakes
@@ -157,7 +157,7 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
     fb = None
     last_raw = ""
     for attempt in (1, 2):
-        raw = _invoke(stage, payload, log, progress, feedback=fb)
+        raw = _invoke(stage, payload, log, progress, feedback=fb, schema=schema)
         last_raw = raw
         contract_err = None
         try:
@@ -263,11 +263,24 @@ def _srs_fill_call(state: GenState, extra: str = ""):
     same skeleton, same prompt, same merge validator - the apply-fixes path
     re-fires the FILL stage with the review fixes, never the retired
     full-document shape (the 2026-09-09 live failure: grammar said fills,
-    validator said document)."""
+    validator said document). The grammar is per-skeleton (every slot id a
+    required property) and the FORMAT CONTRACT closes the prompt - the 14b
+    follows the last frame it read, and a long REVIEW FIXES / PREVIOUS SRS
+    tail otherwise buries it (same-day live failure: purpose echoed the
+    V-model methodology instead of the founder's product)."""
+    from .schemas import srs_fill_schema
+
     slots = build_srs_skeleton(state["needs"])
     payload = (STAGE_PROMPTS["srs"] + "\n\nREQUIREMENT SLOTS (fill prose for each, keyed by requirement_id):\n"
                + json.dumps(slots) + "\n\nNEEDS:\n" + json.dumps(state["needs"])
                + "\n\nINTENT:\n" + json.dumps(state["intent_model"]) + extra)
+    ids = [sl["requirement_id"] for sl in slots]
+    payload += ("\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
+                "return one STRICT JSON object {purpose, scope_summary, fills: {...}} where fills has "
+                "EXACTLY these keys, one per slot: " + json.dumps(ids) + ". Each fill is "
+                "{title, statement, priority, acceptance: [statements]}. purpose and scope_summary "
+                "describe THE FOUNDER'S PRODUCT in stakeholder language - never the V model, this "
+                "pipeline, or these instructions.")
 
     def _validate(d):
         merged = merge_srs_fills(slots, d)
@@ -276,7 +289,7 @@ def _srs_fill_call(state: GenState, extra: str = ""):
         SRSDocument.model_validate(srs_document_data(state["intent_model"], body))
         return merged
 
-    return payload, _validate
+    return payload, _validate, srs_fill_schema(slots)
 
 
 def _legacy_arch_fill(payload: dict) -> dict:
@@ -399,8 +412,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if fb:
             extra = ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
                      + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["srs"]))
-        payload, _validate_srs = _srs_fill_call(state, extra)
-        data = _call_json("srs", payload, log, progress, validate=_validate_srs)
+        payload, _validate_srs, schema = _srs_fill_call(state, extra)
+        data = _call_json("srs", payload, log, progress, validate=_validate_srs, schema=schema)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         # mechanical guards: solution-agnostic + grounded (ADR-0015 doctrine)
@@ -485,11 +498,18 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 AcceptanceTest.model_validate(t)
             return merged
 
+        from .schemas import test_fill_schema
+
+        test_ids = [sl["test_id"] for sl in slots]
         data = _call_json("tests",
                       STAGE_PROMPTS["tests"] + "\n\nTEST SLOTS (fill prose for each, keyed by test_id):\n"
                       + json.dumps(slots) + "\n\nSRS:\n" + json.dumps(state["srs"])
-                      + "\n\nITEMS:\n" + json.dumps(state["items"]), log, progress,
-                          validate=_validate_tests)
+                      + "\n\nITEMS:\n" + json.dumps(state["items"])
+                      + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
+                        "return one STRICT JSON object {fills: {...}} with EXACTLY these keys, one per slot: "
+                      + json.dumps(test_ids) + ". Each fill is {description, runner, definition}. runner and "
+                        "definition describe how to test THE FOUNDER'S PRODUCT - never this pipeline.", log, progress,
+                          validate=_validate_tests, schema=test_fill_schema(slots))
         if persist:
             persist("tests", data, state)
         return {"tests": data}
@@ -512,12 +532,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     def node_apply_fixes(state: GenState) -> dict:
         # ADR-0020 shape: re-fire the FILL stage with the review fixes - the
         # skeleton slots/ids are unchanged, the model revises prose per slot.
-        payload, _validate = _srs_fill_call(
+        payload, _validate, schema = _srs_fill_call(
             state,
             "\n\nREVIEW FIXES - apply EVERY one to the affected fills:\n"
             + json.dumps(state["review_fixes"])
             + "\n\nPREVIOUS SRS (revise it; slots and ids are unchanged):\n" + json.dumps(state["srs"]))
-        data = _call_json("srs", payload, log, progress, validate=_validate)
+        data = _call_json("srs", payload, log, progress, validate=_validate, schema=schema)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         if persist:

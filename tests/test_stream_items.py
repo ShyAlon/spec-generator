@@ -88,7 +88,7 @@ def test_invoke_streams_and_preserves_output_contract(monkeypatch):
             for c in cuts:
                 yield FakeChunk(c)
 
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: FakeModel())
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FakeModel())
     bus = ProgressBus()
     seen = []
     bus.subscribe(seen.append)
@@ -97,3 +97,4 @@ def test_invoke_streams_and_preserves_output_contract(monkeypatch):
     assert result == payload  # byte-identical to the one-shot contract
     assert [e.detail for e in seen] == ["N-1 alpha", "N-2 beta"]
     assert log.records[0].prompt_tokens == 10
+

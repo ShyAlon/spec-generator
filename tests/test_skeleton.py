@@ -96,7 +96,7 @@ def _run_until_stage_error(monkeypatch, bad_stage, bad_payload):
                 return AIMessage(content=json.dumps(bad_payload))
             return super().invoke(messages)
 
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: FM(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
     g = build_graph(UsageLog("s"))
     with pytest.raises(UserFacingError) as ei:
         g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": "merged-" + bad_stage}})
