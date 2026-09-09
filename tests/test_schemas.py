@@ -57,3 +57,35 @@ def test_remote_providers_unaffected(monkeypatch):
     from langchain_openai import ChatOpenAI
     m = model_config.build_chat_model("needs")
     assert isinstance(m, ChatOpenAI)
+
+
+def test_schemas_are_reduced_to_ollamas_grammar_subset():
+    """Ollama 400s the call on constructs its grammar compiler rejects
+    (#8325/#8185/#12726: pattern; #8444: $ref ordering). Every stage schema
+    must be the boring subset: type/properties/required/items/enum/
+    additionalProperties, refs inlined, no null-unions, no pipeline fields.
+    The dropped constraints (pattern, minItems, ...) stay enforced by the
+    contracts after parse - the grammar only guarantees shape."""
+    allowed = {"type", "properties", "required", "items", "enum", "additionalProperties"}
+
+    def walk(node, seen):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "properties":
+                    seen.add(k)
+                    for subschema in v.values():  # keys here are field names, not keywords
+                        walk(subschema, seen)
+                else:
+                    seen.add(k)
+                    walk(v, seen)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, seen)
+        return seen
+
+    for stage in ("needs", "srs", "architecture", "items", "tests", "review"):
+        sch = for_stage(stage)
+        assert walk(sch, set()) <= allowed, f"{stage}: {walk(sch, set()) - allowed}"
+        text = str(sch)
+        assert '"null"' not in text  # anyOf T-or-null collapsed
+        assert "contract_version" not in text and "session_id" not in text
