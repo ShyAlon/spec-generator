@@ -179,3 +179,92 @@ def test_gate_render_failure_on_stale_checkpoint_restarts_once(tmp_path, monkeyp
     assert "bundle" in result
     assert calls["n"] >= 2  # failed once, rendered after restart
     assert box["srs"].calls == 2  # srs regenerated once by the restart
+
+
+POISONED_SRS = {
+    "purpose": "p", "scope_summary": "sc",
+    "functional": [{"requirement_id": f"R-{i}", "statement": "s", "priority": "must",
+                    "kind": "functional",
+                    "acceptance": [{"criterion_id": f"AC-{i}", "statement": "a"}],
+                    "need_ids": ["N-1"], "intent_fields": []} for i in range(1, 5)],
+    "non_functional": [{"requirement_id": f"R-{i}", "statement": "s", "priority": "must",
+                        "kind": "non_functional",
+                        "acceptance": [{"criterion_id": f"AC-{i}", "statement": "a"}],
+                        "need_ids": ["N-1"], "intent_fields": []} for i in range(5, 11)],
+    "session_id": "s", "intent_model_ref": "s",
+}  # his live checkpoint shape: 10 requirements (4F+6NF), every title stripped by the old grammar bug
+
+
+def test_heal_restart_end_to_end_sqlite_skeleton_mode(tmp_path, monkeypatch, capsys):
+    """THE live path (his 2:58 paste): a pre-fix checkpoint holding a poisoned
+    title-less SRS, resumed under --review with SqliteSaver. The gate render
+    fails on the old draft ONCE, the heal restarts calmly (no Error block),
+    the SRS stage regenerates in skeleton mode, and the gate then renders the
+    merged, title-ful artifact. Proves the old-draft error text is the heal's
+    first render, NOT a hole in the skeleton flow."""
+    import sqlite3
+
+    import pytest
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from test_progress import INTENT, FakeModel
+
+    from spec_generator.cli import _run_with_gates
+    from spec_generator.errors import UserFacingError
+
+    box = {}
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage: box.setdefault(stage, FakeModel(stage)))
+    conn = sqlite3.connect(str(tmp_path / "checkpoints.sqlite"), check_same_thread=False)
+    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(conn),
+                    progress=ProgressBus(), review=True)
+    cfg = {"configurable": {"thread_id": "heal-e2e"}}
+    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    assert _interrupt_payload(g, cfg)["gate"] == "srs"
+    g.update_state(cfg, {"srs": json.loads(json.dumps(POISONED_SRS))})
+
+    # the poisoned draft fails the gate with EXACTLY his pasted (capped) text
+    from spec_generator.cli import _render_gate
+    with pytest.raises(UserFacingError) as ei:
+        _render_gate("srs", POISONED_SRS, dict(INTENT))
+    detail = ei.value.cause
+    assert detail.startswith("validation detail: functional.0.title: Field required; "
+                             "functional.1.title: Field required")
+
+    capsys.readouterr()  # reset capture
+    answers = iter(["a", "a"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    srs_calls_before = box["srs"].calls
+    result = _run_with_gates(g, cfg, dict(INTENT), tmp_path, resume=True)
+    out = capsys.readouterr().err
+
+    assert "bundle" in result
+    assert box["srs"].calls == srs_calls_before + 1, "SRS regenerated exactly once by the heal"
+    func = result["bundle"]["_srs"]["functional"]
+    assert all(r.get("title") for r in func), "merged skeleton-mode body carries titles"
+    assert "expected one-time heal" in out and "do NOT rerun" in out
+    assert "Error: the srs draft" not in out, "the expected heal must not look like a failure"
+
+
+def test_heal_second_failure_reraises_with_full_detail(tmp_path, monkeypatch):
+    """If the REGENERATED draft also fails the gate render, the heal re-raises
+    with the full validation detail (that would be a real bug, and it must be
+    loud)."""
+    import pytest
+    from test_progress import INTENT
+
+    from spec_generator.cli import _run_with_gates
+    from spec_generator.errors import UserFacingError
+
+    g, box = _review_graph(monkeypatch)
+    cfg = {"configurable": {"thread_id": "heal-twice"}}
+    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.update_state(cfg, {"srs": json.loads(json.dumps(POISONED_SRS))})
+
+    import spec_generator.cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_render_gate", cli_mod._render_gate)  # real render: fails every time on the poison
+    # poison survives the restart: make the srs stage re-emit the same title-less body
+    monkeypatch.setattr("spec_generator.graph.merge_srs_fills",
+                        lambda slots, body: json.loads(json.dumps(POISONED_SRS)))
+    with pytest.raises(UserFacingError) as ei:
+        _run_with_gates(g, cfg, dict(INTENT), tmp_path, resume=True)
+    assert "functional.0.title: Field required" in ei.value.render()

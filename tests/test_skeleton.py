@@ -1,12 +1,18 @@
 """ADR-0020 skeletons: code owns ids, kinds, ordering, and trace links; the
 model's prose fills are merged onto them, and unusable structure is a named,
 retryable error (ModelStructureError), never a silent remap."""
+import json
+
 import pytest
+
+from spec_generator import model_config
+from spec_generator.graph import build_graph
+from spec_generator.telemetry import UsageLog
 
 from spec_generator.skeleton import (ModelStructureError, assign_architecture_ids,
                                      build_srs_skeleton, build_test_skeleton,
                                      merge_srs_fills, merge_test_fills)
-from test_progress import CONTRACT_SRS, PAYLOADS
+from test_progress import CONTRACT_SRS, INTENT, PAYLOADS, FakeModel
 
 
 def test_srs_skeleton_one_slot_per_need_in_order():
@@ -71,3 +77,50 @@ def test_architecture_ids_assigned_and_duplicates_rejected():
     with pytest.raises(ModelStructureError, match="duplicate"):
         assign_architecture_ids({"components": [{"name": "a", "responsibility": "r"},
                                                 {"name": "a", "responsibility": "r2"}], "decisions": []})
+
+
+def _run_until_stage_error(monkeypatch, bad_stage, bad_payload):
+    """Full graph with one stage's model emitting a contract-broken draft on
+    EVERY attempt: the failure must surface at THAT stage (retryable contract
+    feedback, then a friendly stage error) - never downstream at a gate or in
+    assembly. The stage validator owns the MERGED body (ADR-0020)."""
+    import pytest
+    from langchain_core.messages import AIMessage
+
+    from spec_generator.errors import UserFacingError
+
+    class FM(FakeModel):
+        def invoke(self, messages):
+            self.calls += 1
+            if self.stage == bad_stage:
+                return AIMessage(content=json.dumps(bad_payload))
+            return super().invoke(messages)
+
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: FM(stage))
+    g = build_graph(UsageLog("s"))
+    with pytest.raises(UserFacingError) as ei:
+        g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": "merged-" + bad_stage}})
+    return ei.value
+
+
+def test_architecture_merged_body_validated_at_stage(monkeypatch):
+    """Architecture: model proposes, code assigns ADR-ids and validates the
+    MERGED overview at the stage. A decision with empty rationale breaks the
+    contract and must fail AT the architecture stage."""
+    bad = {"stack": {"language": "ts"},
+           "components": [{"name": "api", "responsibility": "serve"}],
+           "decisions": [{"title": "t", "decision": "x"}]}  # rationale missing: Field required
+    e = _run_until_stage_error(monkeypatch, "architecture", bad)
+    assert "architecture" in e.render()
+
+
+def test_tests_merged_body_validated_at_stage(monkeypatch):
+    """Tests: model fills prose per slot, code merges and validates EVERY
+    merged AcceptanceTest at the stage. A definition that is not an object
+    breaks the contract and must fail AT the tests stage, not in assembly."""
+    bad = {"fills": [{"test_id": "T-1", "description": "ok", "runner": "http",
+                      "definition": {"url": "/"}},
+                     {"test_id": "T-2", "description": "broken", "runner": "pytest",
+                      "definition": "not-an-object"}]}
+    e = _run_until_stage_error(monkeypatch, "tests", bad)
+    assert "tests" in e.render()

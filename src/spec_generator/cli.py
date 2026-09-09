@@ -96,16 +96,20 @@ def _run_with_gates(graph, cfg: dict, intent: dict, outdir, resume: bool = False
         title = "SRS (requirements + acceptance criteria)" if gate == "srs" else "architecture overview"
         try:
             md = _render_gate(gate, artifact, intent)
-        except UserFacingError as e:
+        except UserFacingError:
             # a checkpoint that predates stage-level contract validation can hold
             # a poisoned draft; restarting regenerates it under the fixed schema
             # (invoke-with-input on an interrupted thread restarts from entry).
+            # The first failure is EXPECTED on a pre-fix checkpoint - say so
+            # calmly. Do NOT print the Error block here: it reads as a fresh
+            # failure and founders kill the run mid-heal (his 2:58 paste).
             if restarted:
-                raise
+                raise  # second failure on a REGENERATED draft: real bug, full detail
             restarted = True
-            print(file=sys.stderr)
-            print(e.render(), file=sys.stderr)
-            print("The checkpointed draft predates stage validation - restarting the run so the stage regenerates it.", file=sys.stderr)
+            print(f"\nThe checkpointed {gate} draft predates today's validation fixes. "
+                  "This is the expected one-time heal: discarding it and regenerating "
+                  "the stage under the fixed pipeline - the run continues on its own, "
+                  "do NOT rerun the command.\n", file=sys.stderr)
             result = graph.invoke({"intent_model": intent}, cfg)
             continue
         (outdir / f"gate_{gate}.md").write_text(md)
