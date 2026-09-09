@@ -94,8 +94,8 @@ def _titles_missing_once_then_valid():
     from test_progress import PAYLOADS
 
     class SchemaBlindModel:
-        """The live failure shape: valid JSON, but every requirement is
-        missing the contract-required 'title' - then a corrected reply."""
+        """The live failure shape: valid JSON, but the fill is missing the
+        contract-required 'title' - then a corrected reply."""
         def __init__(self):
             self.calls = 0
             self.last_messages = None
@@ -106,8 +106,7 @@ def _titles_missing_once_then_valid():
             self.last_messages = messages
             if self.calls == 1:
                 bad = copy.deepcopy(PAYLOADS["srs"])
-                for r in bad["functional"]:
-                    del r["title"]
+                del bad["fills"][0]["title"]
                 yield AIMessage(content=json.dumps(bad))
             else:
                 yield AIMessage(content=json.dumps(PAYLOADS["srs"]))
@@ -116,11 +115,14 @@ def _titles_missing_once_then_valid():
 
 
 def _srs_validate(d):
-    from test_progress import INTENT, PAYLOADS  # noqa: F401
+    from test_progress import INTENT, PAYLOADS
     from vmodel_contracts import SRSDocument
     from spec_generator.graph import srs_document_data
-    body = {**d, "session_id": "s", "intent_model_ref": "s"}
+    from spec_generator.skeleton import build_srs_skeleton, merge_srs_fills
+    merged = merge_srs_fills(build_srs_skeleton(PAYLOADS["needs"]), d)
+    body = {**merged, "session_id": "s", "intent_model_ref": "s"}
     SRSDocument.model_validate(srs_document_data(INTENT, body))
+    return merged
 
 
 def test_contract_drift_auto_recovers_with_feedback(monkeypatch):
@@ -133,11 +135,12 @@ def test_contract_drift_auto_recovers_with_feedback(monkeypatch):
     seen = []
     bus.subscribe(seen.append)
     data = _call_json("srs", "payload", UsageLog("s"), bus, validate=_srs_validate)
-    assert data["functional"][0]["title"] == "Spec file"
+    assert data["functional"][0]["title"] == "Spec file"  # the validator's merged body is returned
+    assert data["functional"][0]["acceptance"][0]["criterion_id"] == "AC-1"  # code-assigned
     assert m.calls == 2
     assert any("failed the contract" in (e.detail or "") for e in seen)
     fb = " ".join(str(getattr(msg, "content", "")) for msg in m.last_messages)
-    assert "title" in fb and "Field required" in fb  # the model is told WHAT to fix
+    assert "title" in fb  # the model is told WHAT to fix
 
 
 def test_persistent_contract_drift_gets_friendly_error(monkeypatch):
@@ -146,8 +149,7 @@ def test_persistent_contract_drift_gets_friendly_error(monkeypatch):
             import copy
             from test_progress import PAYLOADS
             bad = copy.deepcopy(PAYLOADS["srs"])
-            for r in bad["functional"]:
-                del r["title"]
+            del bad["fills"][0]["title"]
             yield AIMessage(content=json.dumps(bad))
 
     monkeypatch.setattr(model_config, "build_chat_model", lambda stage: AlwaysDrifting())
@@ -155,5 +157,5 @@ def test_persistent_contract_drift_gets_friendly_error(monkeypatch):
         _call_json("srs", "payload", UsageLog("s"), None, validate=_srs_validate)
     rendered = ei.value.render()
     assert "does not satisfy the contract" in rendered
-    assert "title" in rendered and "Field required" in rendered
+    assert "title" in rendered
     assert "SPEC_GENERATOR_MODEL_SRS" in rendered

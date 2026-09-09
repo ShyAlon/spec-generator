@@ -22,7 +22,7 @@ Authoring rules (these are what separate this from a free PRD generator):
   matrix. Restating or regrouping a requirement's text downstream is a defect.
 - Item specs are written FOR A CODING AGENT: interface, data model, behaviors, error cases,
   non-functionals. No marketing language.
-- Numbering is assigned deterministically after generation; use the placeholder ids given.
+- Numbering is owned by the pipeline: ids and trace links are assigned in code; fill exactly the slots you are given, keyed by the given id.
 - Output STRICT JSON matching the requested schema. No prose around it."""
 
 STAGE_PROMPTS = {
@@ -31,28 +31,35 @@ STAGE_PROMPTS = {
              "classified functional/non_functional): carry them forward - every SN-id maps to at "
              "least one N-id (intent_need_ids), with kind preserved and the stakeholder named. "
              "Add needs the founder implied but did not state (mark their intent_need_ids []).",
-    "srs": "From these needs + intent, author the SOFTWARE REQUIREMENTS SPECIFICATION body: "
-           "purpose (why the system exists, stakeholder language), scope_summary (the boundary), "
-           "and the requirements as two arrays - functional[] (behaviors) and non_functional[] "
-           "(qualities/constraints on behavior: security, performance, privacy, auditability, cost). "
-           "Each requirement: requirement_id placeholder (R-1..), title, statement (well-formed "
-           "shall-statement, solution-agnostic), priority (must/should/could), kind, need_ids, "
-           "intent_fields, and acceptance criteria (AC-1..) that are OBSERVABLE outcomes - "
-           "no implementation mechanics, no named technologies, no invented numbers or artifacts. "
-           "Non-functional needs must NOT silently vanish: each becomes its own verifiable "
-           "requirement, never absorbed into prose. Every requirement traces to at least one N-id.",
+    "srs": "Author the SOFTWARE REQUIREMENTS SPECIFICATION prose. The skeleton is FIXED: "
+           "one requirement slot per need is given with requirement_id, kind, need_ids, and "
+           "intent_fields already assigned - never change, renumber, add, or drop them. "
+           "Write purpose (why the system exists, stakeholder language), scope_summary (the "
+           "boundary), and for EACH slot: title, statement (well-formed shall-statement, "
+           "solution-agnostic), priority (must/should/could), and acceptance criteria as plain "
+           "statements that are OBSERVABLE outcomes - no implementation mechanics, no named "
+           "technologies, no invented numbers or artifacts (ids are assigned by the pipeline). "
+           "Non-functional slots must NOT silently vanish into prose: give each its own real, "
+           "verifiable requirement text. Return one JSON object: {purpose, scope_summary, "
+           "fills: [{requirement_id, title, statement, priority, acceptance: [statements]}]} "
+           "- exactly one fill per given slot.",
     "architecture": "Given the SRS and the target archetype, propose the architecture: stack, "
                     "components, ADRs, non-functionals. Components and decisions REFERENCE "
-                    "requirement ids (R-n) - never restate requirement text.",
+                    "requirement ids (R-n) - never restate requirement text. Do NOT number the "
+                    "decisions: ADR ids are assigned by the pipeline in order.",
     "items": "Write item-level specs (SPEC-...) covering every requirement in the SRS. Reference "
              "requirements by id through requirement_ids - never restate or regroup requirement text. "
              "One JSON array.",
-    "tests": "Derive the test hierarchy in two halves. acceptance_tests: one per SRS acceptance "
-             "criterion (criterion_id set) - HERE you author the executable_hint (http GET ..., "
-             "DOM selector, db probe) because the architecture now exists. unit_module_tests: "
-             "per item spec (spec_id set). One JSON object: {\"acceptance_tests\": [...], "
-             "\"unit_module_tests\": [...]}.",
+    "tests": "Author the test prose. The skeleton is FIXED: one acceptance-level slot per SRS "
+             "acceptance criterion (criterion_id linked) and one unit-level slot per item spec "
+             "(spec_id linked), test_ids already assigned - never change, renumber, add, or drop "
+             "them. For EACH slot write description, runner ('http' | 'dom' | 'cli' | 'static' | "
+             "'semantic'), and definition (the runner-specific payload: URL + expected status, "
+             "selector, command, ...) - HERE you author the executable HOW, because the "
+             "architecture now exists. Return one JSON object: {fills: [{test_id, description, "
+             "runner, definition}]} - exactly one fill per given slot.",
     "review": "Review pass {n}: find gaps, contradictions, orphan requirements, uncheckable criteria, "
               "solution language in the SRS, downstream text that restates requirements. "
               "Return a JSON list of concrete fixes, or [].",
 }
+

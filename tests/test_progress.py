@@ -15,22 +15,33 @@ PAYLOADS = {
     "needs": {"session_id": "s", "needs": [
         {"need_id": "N-1", "stakeholder": "founder", "statement": "needs specs",
          "kind": "functional", "intent_fields": ["problem_statement"], "intent_need_ids": ["SN-1"]}]},
-    "srs": {"session_id": "s", "intent_model_ref": "s", "purpose": "p", "scope_summary": "sc",
-            "functional": [
-                {"requirement_id": "R-1", "title": "Spec file", "statement": "system shall emit a spec",
-                 "priority": "must", "kind": "functional",
-                 "acceptance": [{"criterion_id": "AC-1", "statement": "spec exists"}],
-                 "need_ids": ["N-1"], "intent_fields": ["problem_statement"]}],
-            "non_functional": []},
+    # ADR-0020: the model returns PROSE FILLS keyed by pipeline-assigned slot
+    # ids; code owns ids, kinds, sections, and trace links (see CONTRACT_SRS
+    # for the contract-shaped result the node assembles from these).
+    "srs": {"purpose": "p", "scope_summary": "sc",
+            "fills": [{"requirement_id": "R-1", "title": "Spec file",
+                       "statement": "system shall emit a spec", "priority": "must",
+                       "acceptance": ["spec exists"]}]},
     "architecture": {"session_id": "s", "stack": {"language": "ts"},
                      "components": [{"name": "api", "responsibility": "serve"}],
-                     "decisions": [{"decision_id": "ADR-1", "title": "t", "decision": "x", "rationale": "y"}]},
+                     "decisions": [{"title": "t", "decision": "x", "rationale": "y"}]},
     "items": [{"spec_id": "SPEC-api", "kind": "api_surface", "title": "API",
                "body_markdown": "# API", "requirement_ids": ["R-1"]}],
-    "tests": [{"test_id": "T-1", "level": "unit", "description": "spec renders",
-               "runner": "pytest", "definition": {"path": "x"}}],
+    "tests": {"fills": [{"test_id": "T-1", "description": "criterion holds",
+                         "runner": "http", "definition": {"url": "/"}},
+                        {"test_id": "T-2", "description": "spec renders",
+                         "runner": "pytest", "definition": {"path": "x"}}]},
     "review": [],
 }
+
+# the contract-shaped SRS the srs node assembles from PAYLOADS needs+srs
+CONTRACT_SRS = {"session_id": "s", "intent_model_ref": "s", "purpose": "p", "scope_summary": "sc",
+                "functional": [
+                    {"requirement_id": "R-1", "title": "Spec file", "statement": "system shall emit a spec",
+                     "priority": "must", "kind": "functional",
+                     "acceptance": [{"criterion_id": "AC-1", "statement": "spec exists"}],
+                     "need_ids": ["N-1"], "intent_fields": ["problem_statement"]}],
+                "non_functional": []}
 
 INTENT = {"session_id": "s", "problem_statement": "p", "target_users": ["u"],
           "core_value_proposition": "v",
@@ -126,14 +137,15 @@ def test_stage_start_lines_carry_input_counts(fake_models):
     n_needs = len(PAYLOADS["needs"]["needs"])
     assert started["srs"].detail == f"stage 2/6, from {n_needs} stakeholder needs"
 
-    n_reqs = len(PAYLOADS["srs"]["functional"]) + len(PAYLOADS["srs"]["non_functional"])
+    n_reqs = len(CONTRACT_SRS["functional"]) + len(CONTRACT_SRS["non_functional"])
     assert started["architecture"].detail == f"stage 3/6, from {n_reqs} requirements"
     assert started["items"].detail == f"stage 4/6, covering {n_reqs} requirements"
 
-    n_ac = sum(len(r["acceptance"]) for sec in ("functional", "non_functional") for r in PAYLOADS["srs"][sec])
+    n_ac = sum(len(r["acceptance"]) for sec in ("functional", "non_functional") for r in CONTRACT_SRS[sec])
     assert started["tests"].detail == f"stage 5/6, from {n_ac} acceptance criteria + {len(PAYLOADS['items'])} module specs"
 
     # no detail may promise an output count
     for e in started.values():
         if e.detail:
             assert "will produce" not in e.detail and "expecting" not in e.detail
+

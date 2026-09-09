@@ -11,7 +11,7 @@ from spec_generator import model_config
 from spec_generator.graph import build_graph, srs_document_data, _tech_constraint_block
 from spec_generator.progress import ProgressBus
 from spec_generator.telemetry import UsageLog
-from test_progress import INTENT, PAYLOADS, FakeModel
+from test_progress import CONTRACT_SRS, INTENT, PAYLOADS, FakeModel
 
 
 def _review_graph(monkeypatch):
@@ -94,7 +94,7 @@ def test_architecture_prompt_carries_tech_constraints():
 
 
 def test_srs_document_data_injects_structure_from_intent():
-    data = srs_document_data(INTENT, dict(PAYLOADS["srs"]))
+    data = srs_document_data(INTENT, dict(CONTRACT_SRS))
     assert data["definitions"] == INTENT.get("glossary", {})
     assert "constraints" in data and "open_questions" in data
 
@@ -104,13 +104,13 @@ def test_gate_render_of_contract_invalid_artifact_is_friendly_not_a_traceback():
     """His live crash: render_srs(SRSDocument.model_validate(...)) at the SRS
     gate raised a raw pydantic traceback when the draft lacked 'title'. Gate
     render/validate failures get the friendly three-part treatment instead."""
-    from test_progress import INTENT, PAYLOADS
+    from test_progress import CONTRACT_SRS, INTENT
     import copy
 
     from spec_generator.cli import _render_gate
     from spec_generator.errors import UserFacingError
 
-    bad = copy.deepcopy(PAYLOADS["srs"])
+    bad = copy.deepcopy(CONTRACT_SRS)
     for r in bad["functional"]:
         del r["title"]
     with pytest.raises(UserFacingError) as ei:

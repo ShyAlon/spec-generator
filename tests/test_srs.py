@@ -11,8 +11,18 @@ from spec_generator.telemetry import UsageLog
 from test_progress import INTENT, PAYLOADS, FakeModel
 
 
+def _fills(srs_body):
+    """ADR-0020: the model returns prose fills keyed by the skeleton's slot
+    ids; derive the fills shape from a contract-shaped fixture body."""
+    return {"purpose": srs_body["purpose"], "scope_summary": srs_body["scope_summary"],
+            "fills": [{"requirement_id": r["requirement_id"], "title": r["title"],
+                       "statement": r["statement"], "priority": r["priority"],
+                       "acceptance": [a["statement"] for a in r["acceptance"]]}
+                      for r in srs_body["functional"] + srs_body["non_functional"]]}
+
+
 def _run(monkeypatch, srs_body, thread="srs1"):
-    payloads = dict(PAYLOADS, srs=srs_body)
+    payloads = dict(PAYLOADS, srs=_fills(srs_body))
     class FM(FakeModel):
         def invoke(self, messages):
             self.calls += 1
@@ -43,7 +53,7 @@ def test_structure_carried_deterministically(monkeypatch):
                   constraints=["mandated stack"],
                   assumption_items=[{"statement": "feeds stay up", "source_turns": [0]}],
                   open_questions=["who owns the data?"])
-    payloads = dict(PAYLOADS, srs=SRS)
+    payloads = dict(PAYLOADS, srs=_fills(SRS))
     class FM(FakeModel):
         def invoke(self, messages):
             self.calls += 1
@@ -89,15 +99,14 @@ def test_render_srs_document():
     assert "executable_hint" not in md, "no solution mechanics in the SRS render"
 
 
-def test_tests_stage_tolerates_flat_array(monkeypatch):
-    payloads = dict(PAYLOADS, srs=SRS,
-                    tests=[{"test_id": "T-1", "level": "unit", "description": "d",
-                            "runner": "pytest", "definition": {"path": "x"}}])
-    class FM(FakeModel):
-        def invoke(self, messages):
-            self.calls += 1
-            return AIMessage(content=json.dumps(payloads[self.stage]))
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage: FM(stage))
-    g = build_graph(UsageLog("s"))
-    r = g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": "flat"}})
-    assert "bundle" in r
+def test_tests_stage_owns_ids_and_links(monkeypatch):
+    """ADR-0020: the tests skeleton assigns T-ids (acceptance per criterion,
+    then unit per item spec) and the criterion/spec links; the model's fills
+    carry prose only - emitted ids/levels are irrelevant."""
+    r = _run(monkeypatch, SRS, thread="skeleton")
+    tests = r["bundle"]["_tests"]
+    assert [(t["test_id"], t["level"], t.get("criterion_id"), t.get("spec_id")) for t in tests] == [
+        ("T-1", "acceptance", "AC-1", None),
+        ("T-2", "unit", None, "SPEC-api"),
+    ]
+

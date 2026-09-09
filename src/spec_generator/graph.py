@@ -32,6 +32,9 @@ from vmodel_contracts import (
 from pydantic import ValidationError
 
 from . import model_config
+from .skeleton import (ModelStructureError, assign_architecture_ids,
+                                   build_srs_skeleton, build_test_skeleton,
+                                   merge_srs_fills, merge_test_fills)
 from .assembly import build_traceability, order_milestones, validate_traceability
 from .prompts import METHODOLOGY, STAGE_PROMPTS
 from .telemetry import UsageLog
@@ -126,9 +129,11 @@ def _json(text: str, stage: str = "unknown"):
         raise translate_json_error(e, stage) from e
 
 
-def _contract_errors(exc: ValidationError) -> str:
+def _contract_errors(exc) -> str:
     """Compact one-line-per-error rendering for retry feedback and the
     human-readable failure: 'functional.0.title: Field required'."""
+    if isinstance(exc, ModelStructureError):
+        return str(exc)
     return "; ".join(
         f"{'.'.join(str(p) for p in e['loc']) or '(root)'}: {e['msg']}" for e in exc.errors()[:5])
 
@@ -163,9 +168,9 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
             if validate is None:
                 return data
             try:
-                validate(data)
-                return data
-            except ValidationError as e:
+                checked = validate(data)
+                return data if checked is None else checked
+            except (ValidationError, ModelStructureError) as e:
                 contract_err = e
         from .errors import UserFacingError
 
@@ -210,6 +215,15 @@ def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
     data["assumptions"] = [a.model_dump(mode="json") for a in intent.assumption_items]
     data["open_questions"] = intent.open_questions
     return data
+
+
+def _check(fn):
+    """A validator that only RAISES (returns no normalized form): wrap it so
+    its pydantic return value is not mistaken for normalized data."""
+    def go(d):
+        fn(d)
+        return None
+    return go
 
 
 def _strip_pipeline_owned(data):
@@ -292,8 +306,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     def node_needs(state: GenState) -> dict:
         intent = IntentModel.model_validate(state["intent_model"])
         data = _call_json("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + intent.model_dump_json(), log, progress,
-                          validate=lambda d: StakeholderNeedsSet.model_validate(
-                              {**_strip_pipeline_owned(d), "session_id": intent.session_id}))
+                          validate=_check(lambda d: StakeholderNeedsSet.model_validate(
+                              {**_strip_pipeline_owned(d), "session_id": intent.session_id})))
         data.setdefault("session_id", intent.session_id)
         return {"needs": data}
 
@@ -303,13 +317,26 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         carried DETERMINISTICALLY from the intent model in assembly - the LLM
         authors purpose, scope_summary, and the sectioned requirements only.
         Mechanical guards (text_qa) flag solution language and invented detail."""
-        payload = (STAGE_PROMPTS["srs"] + "\n\nNEEDS:\n" + json.dumps(state["needs"])
+        # ADR-0020: code owns the skeleton (R-ids, kinds, trace links, section
+        # assignment); the model fills prose per slot. Structure carried from
+        # the intent model stays deterministic (ADR-0015) via srs_document_data.
+        slots = build_srs_skeleton(state["needs"])
+        payload = (STAGE_PROMPTS["srs"] + "\n\nREQUIREMENT SLOTS (fill prose for each, keyed by requirement_id):\n"
+                   + json.dumps(slots) + "\n\nNEEDS:\n" + json.dumps(state["needs"])
                    + "\n\nINTENT:\n" + json.dumps(state["intent_model"]))
         fb = _gate_feedback(state, "srs")
         if fb:
             payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
                         + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["srs"]))
-        data = _call_json("srs", payload, log, progress, validate=_srs_validator(state["intent_model"]))
+
+        def _validate_srs(d):
+            merged = merge_srs_fills(slots, d)
+            sid = state["intent_model"]["session_id"]
+            body = {**merged, "session_id": sid, "intent_model_ref": sid}
+            SRSDocument.model_validate(srs_document_data(state["intent_model"], body))
+            return merged
+
+        data = _call_json("srs", payload, log, progress, validate=_validate_srs)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         # mechanical guards: solution-agnostic + grounded (ADR-0015 doctrine)
@@ -342,9 +369,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if fb:
             payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
                         + "\n\nPREVIOUS DRAFT:\n" + json.dumps(state["architecture"]))
-        data = _call_json("architecture", payload, log, progress,
-                          validate=lambda d: ArchitectureOverview.model_validate(
-                              {**_strip_pipeline_owned(d), "session_id": state["intent_model"]["session_id"]}))
+        def _validate_arch(d):
+            merged = assign_architecture_ids(_strip_pipeline_owned(d))  # ADR-0020: code assigns ADR-n
+            ArchitectureOverview.model_validate(
+                {**merged, "session_id": state["intent_model"]["session_id"]})
+            return merged
+
+        data = _call_json("architecture", payload, log, progress, validate=_validate_arch)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}
 
@@ -353,25 +384,27 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return {"items": _call_json("items",
                       STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(state["srs"])
                       + "\n\nARCHITECTURE:\n" + json.dumps(state["architecture"]), log, progress,
-                      validate=lambda d: [ItemSpec.model_validate(_strip_pipeline_owned(i)) for i in d])}
+                      validate=_check(lambda d: [ItemSpec.model_validate(_strip_pipeline_owned(i)) for i in d]))}
 
     def node_tests(state: GenState) -> dict:
         """Two V pairings in one pass: acceptance tests pair with SRS criteria,
         unit/module tests pair with item specs."""
-        def _check_tests(d):
-            if isinstance(d, dict):
-                seq = (d.get("acceptance_tests") or []) + (d.get("unit_module_tests") or [])
-            else:
-                seq = d  # tolerate a flat array from weaker models
-            return [AcceptanceTest.model_validate(_strip_pipeline_owned(t)) for t in seq]
+        # ADR-0020: one slot per SRS acceptance criterion (acceptance level)
+        # + one per item spec (unit level); T-ids and links are code-owned.
+        slots = build_test_skeleton(state["srs"], state["items"])
+
+        def _validate_tests(d):
+            merged = merge_test_fills(slots, d)
+            for t in merged:
+                AcceptanceTest.model_validate(t)
+            return merged
 
         data = _call_json("tests",
-                      STAGE_PROMPTS["tests"] + "\n\nSRS:\n" + json.dumps(state["srs"])
+                      STAGE_PROMPTS["tests"] + "\n\nTEST SLOTS (fill prose for each, keyed by test_id):\n"
+                      + json.dumps(slots) + "\n\nSRS:\n" + json.dumps(state["srs"])
                       + "\n\nITEMS:\n" + json.dumps(state["items"]), log, progress,
-                          validate=_check_tests)
-        if isinstance(data, dict):
-            return {"tests": (data.get("acceptance_tests") or []) + (data.get("unit_module_tests") or [])}
-        return {"tests": data}  # tolerate a flat array from weaker models
+                          validate=_validate_tests)
+        return {"tests": data}
 
     def node_review(state: GenState) -> dict:
         n = state.get("review_round", 0) + 1

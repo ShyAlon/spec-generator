@@ -14,13 +14,18 @@ def test_needs_schema_drops_pipeline_owned_fields():
     assert sch["additionalProperties"] is False
 
 
-def test_srs_schema_keeps_only_what_the_llm_authors():
+def test_srs_schema_is_prose_fills_only():
+    """ADR-0020: the SRS schema asks for prose per pipeline-assigned slot -
+    no requirement ids to invent (the slot id is echoed), no kinds, no links,
+    no AC ids, no intent-carried structure."""
     sch = for_stage("srs")
-    props = sch["properties"]
-    assert {"purpose", "scope_summary", "functional", "non_functional"} <= set(props)
-    # structure is injected deterministically at assembly - the LLM must not emit it
-    for owned in ("definitions", "constraints", "assumptions", "open_questions", "session_id"):
-        assert owned not in props
+    assert set(sch["properties"]) == {"purpose", "scope_summary", "fills"}
+    fill = sch["properties"]["fills"]["items"]
+    assert set(fill["properties"]) == {"requirement_id", "title", "statement", "priority", "acceptance"}
+    assert fill["properties"]["acceptance"]["items"] == {"type": "string"}  # AC ids are code-assigned
+    for owned in ("functional", "non_functional", "definitions", "constraints",
+                  "assumptions", "open_questions", "session_id", "kind", "need_ids"):
+        assert owned not in str(sch)
 
 
 def test_items_and_review_shapes():
@@ -29,10 +34,14 @@ def test_items_and_review_shapes():
     assert for_stage("review") == {"type": "array", "items": {"type": "string"}}
 
 
-def test_tests_schema_two_arrays_of_acceptance_tests():
+def test_tests_schema_is_prose_fills_only():
     sch = for_stage("tests")
-    assert set(sch["required"]) == {"acceptance_tests", "unit_module_tests"}
-    assert sch["properties"]["acceptance_tests"]["items"]["type"] == "object"
+    assert set(sch["properties"]) == {"fills"}
+    fill = sch["properties"]["fills"]["items"]
+    assert set(fill["properties"]) == {"test_id", "description", "runner", "definition"}
+    # ids, levels, and criterion/spec links are code-owned (ADR-0020)
+    for owned in ("level", "criterion_id", "spec_id"):
+        assert owned not in str(sch)
 
 
 def test_ollama_routes_to_native_chatollama_with_schema(monkeypatch):
@@ -157,14 +166,19 @@ def test_keyword_named_fields_survive_the_strip():
     """Explicit lock on the collision class: fields literally named like
     schema keywords must stay declared AND required where the contract
     requires them."""
-    req = for_stage("srs")["properties"]["functional"]["items"]
-    assert "title" in req["properties"] and "title" in req["required"]
     dec = for_stage("architecture")["properties"]["decisions"]["items"]
     assert "title" in dec["properties"] and "title" in dec["required"]
     item = for_stage("items")["items"]
     assert "title" in item["properties"] and "title" in item["required"]
-    tst = for_stage("tests")["properties"]["acceptance_tests"]["items"]
+    tst = for_stage("tests")["properties"]["fills"]["items"]
     assert "description" in tst["properties"] and "description" in tst["required"]
+
+
+def test_architecture_schema_drops_pipeline_assigned_adr_ids():
+    dec = for_stage("architecture")["properties"]["decisions"]["items"]
+    assert "decision_id" not in dec["properties"]
+    assert "decision_id" not in dec["required"]
+    assert {"title", "decision", "rationale"} <= set(dec["properties"])
 
 
 def _project(instance, schema):
@@ -180,38 +194,37 @@ def _project(instance, schema):
 
 def test_schema_conformant_payloads_pass_full_contract_validation():
     """End-to-end alignment, per stage: a payload reduced to exactly what the
-    grammar schema declares must still pass the stage's FULL contract
-    validation (patterns, enums, min-lengths, extra=forbid) once the pipeline
-    fills its own fields - and the SRS gate render path must not crash. If the
-    derived schema ever drops or un-requires a field the contract needs, this
-    fails before a user's run does."""
-    from test_progress import INTENT, PAYLOADS
+    grammar schema declares must, after the pipeline merges its owned
+    structure (ADR-0020) and fills its own fields, pass the stage's FULL
+    contract validation - and the SRS gate render path must not crash. If a
+    schema ever drops or un-requires a field the contract needs, this fails
+    before a user's run does."""
+    from test_progress import CONTRACT_SRS, INTENT, PAYLOADS
     from vmodel_contracts import (AcceptanceTest, ArchitectureOverview, ItemSpec,
                                   SRSDocument, StakeholderNeedsSet)
     from spec_generator.graph import srs_document_data
     from spec_generator.render import render_srs
+    from spec_generator.skeleton import (assign_architecture_ids, build_srs_skeleton,
+                                         build_test_skeleton, merge_srs_fills,
+                                         merge_test_fills)
 
     needs = _project(PAYLOADS["needs"], for_stage("needs"))
     StakeholderNeedsSet.model_validate({**needs, "session_id": INTENT["session_id"]})
 
-    srs = _project(PAYLOADS["srs"], for_stage("srs"))
+    fills = _project(PAYLOADS["srs"], for_stage("srs"))
+    merged = merge_srs_fills(build_srs_skeleton(PAYLOADS["needs"]), fills)
     doc = SRSDocument.model_validate(srs_document_data(
-        INTENT, {**srs, "session_id": INTENT["session_id"], "intent_model_ref": INTENT["session_id"]}))
+        INTENT, {**merged, "session_id": INTENT["session_id"], "intent_model_ref": INTENT["session_id"]}))
     assert render_srs(doc)  # the gate render path (cli._render_gate) must not crash
 
     arch = _project(PAYLOADS["architecture"], for_stage("architecture"))
-    ArchitectureOverview.model_validate({**arch, "session_id": INTENT["session_id"]})
+    ArchitectureOverview.model_validate(
+        {**assign_architecture_ids(arch), "session_id": INTENT["session_id"]})
 
     items = _project(PAYLOADS["items"], for_stage("items"))
     for i in items:
         ItemSpec.model_validate(i)
 
-    tests_body = {"acceptance_tests": [
-        {"test_id": "T-2", "level": "acceptance", "criterion_id": "AC-1",
-         "description": "d", "runner": "http", "definition": {"url": "/"}}],
-        "unit_module_tests": PAYLOADS["tests"]}
-    tests = _project(tests_body, for_stage("tests"))
-    for section in ("acceptance_tests", "unit_module_tests"):
-        assert tests[section], section
-        for t in tests[section]:
-            AcceptanceTest.model_validate(t)
+    tfills = _project(PAYLOADS["tests"], for_stage("tests"))
+    tests = merge_test_fills(build_test_skeleton(CONTRACT_SRS, PAYLOADS["items"]), tfills)
+    assert tests and all(AcceptanceTest.model_validate(t) for t in tests) is not None

@@ -1,8 +1,10 @@
 """Per-stage OUTPUT schemas for constrained decoding (his ask: enforce
-structure instead of retrying). Derived from vmodel-contracts models - the
-contracts stay the single source of truth; these are the same models minus
-the fields the PIPELINE fills, never the LLM (session_id + contract_version
-are set post-parse; SRS structure is injected deterministically at assembly).
+structure instead of retrying). needs/architecture derive from vmodel-contracts
+models - the contracts stay the single source of truth; those are the same
+models minus the fields the PIPELINE fills, never the LLM (session_id +
+contract_version are set post-parse; ADR ids are pipeline-assigned, ADR-0020).
+srs/tests are prose-fill shapes by design (ADR-0020: code owns the skeleton -
+ids, kinds, ordering, trace links - the LLM authors prose only).
 
 Ollama enforces the schema grammar-side (native /api/chat `format` param,
 structured outputs since Ollama 0.5). Grammar guarantees SHAPE, not content
@@ -124,29 +126,46 @@ def _raw_stage_schema(stage: str) -> dict:
     if stage == "needs":
         return _body_schema(StakeholderNeedsSet, drop=("session_id",))
     if stage == "srs":
-        # the LLM authors purpose/scope/requirements; structure is carried
-        # deterministically from the intent model at assembly (ADR-0015).
-        return _body_schema(SRSDocument, drop=("session_id", "intent_model_ref", "definitions",
-                                               "constraints", "assumptions", "open_questions"))
+        # ADR-0020: code owns the requirement skeleton (ids, kinds, links) -
+        # the LLM fills PROSE per slot. Not contract-derived on purpose.
+        fill = {"type": "object",
+                "properties": {"requirement_id": {"type": "string"},
+                               "title": {"type": "string"},
+                               "statement": {"type": "string"},
+                               "priority": {"enum": ["must", "should", "could"]},
+                               "acceptance": {"type": "array", "items": {"type": "string"}}},
+                "required": ["requirement_id", "title", "statement", "priority", "acceptance"],
+                "additionalProperties": False}
+        return {"type": "object",
+                "properties": {"purpose": {"type": "string"},
+                               "scope_summary": {"type": "string"},
+                               "fills": {"type": "array", "items": fill}},
+                "required": ["purpose", "scope_summary", "fills"],
+                "additionalProperties": False}
     if stage == "architecture":
-        return _body_schema(ArchitectureOverview, drop=("session_id",))
+        # ADR-0020: bulk proposal, code disposes - ADR ids are assigned by the
+        # pipeline, so decision_id leaves the schema.
+        sch = _body_schema(ArchitectureOverview, drop=("session_id",))
+        dec = sch["$defs"]["ArchitectureDecision"]
+        dec["properties"].pop("decision_id", None)
+        dec["required"] = [r for r in dec.get("required", []) if r != "decision_id"]
+        return sch
     if stage == "items":
         return _array_schema(ItemSpec)
     if stage == "tests":
-        sch = AcceptanceTest.model_json_schema()
-        item = {"type": "object",
-                "properties": {k: v for k, v in sch.get("properties", {}).items()
-                               if k not in _PIPELINE_OWNED},
-                "required": [r for r in sch.get("required", []) if r not in _PIPELINE_OWNED],
+        # ADR-0020: code owns the test skeleton (T-ids, levels, criterion/spec
+        # links); the LLM fills prose per slot.
+        fill = {"type": "object",
+                "properties": {"test_id": {"type": "string"},
+                               "description": {"type": "string"},
+                               "runner": {"type": "string"},
+                               "definition": {"type": "object"}},
+                "required": ["test_id", "description", "runner", "definition"],
                 "additionalProperties": False}
-        out = {"type": "object",
-               "properties": {"acceptance_tests": {"type": "array", "items": item},
-                              "unit_module_tests": {"type": "array", "items": item}},
-               "required": ["acceptance_tests", "unit_module_tests"],
-               "additionalProperties": False}
-        if "$defs" in sch:
-            out["$defs"] = sch["$defs"]
-        return out
+        return {"type": "object",
+                "properties": {"fills": {"type": "array", "items": fill}},
+                "required": ["fills"],
+                "additionalProperties": False}
     if stage == "review":
         return {"type": "array", "items": {"type": "string"}}
     raise KeyError(f"no output schema for stage {stage!r}")
