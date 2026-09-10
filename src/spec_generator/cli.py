@@ -375,6 +375,7 @@ def main() -> None:
     if args.from_stage:
         os.environ["SPEC_GENERATOR_FROM"] = args.from_stage  # guardrail errors must not echo --from back
     print(f"Generating bundle for session {sid} (crash? {_mc._rerun_guidance('')})", file=sys.stderr)
+    print(f"Models: {_mc.describe_models()}", file=sys.stderr)
     print(f"Bundle dir: {outdir.resolve()}", file=sys.stderr)
     print("  progress persists there per item (*.partial.json as items close; stage artifacts land "
           "as each stage completes)\n", file=sys.stderr)
