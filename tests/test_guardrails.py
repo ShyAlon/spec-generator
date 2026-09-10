@@ -32,7 +32,8 @@ class FakeModel:
 @pytest.fixture(autouse=True)
 def _clean_guard_env(monkeypatch):
     monkeypatch.setattr(mc, "_CALLS_USED", 0)
-    for v in ("VMODEL_LLM_CALL_TIMEOUT_S", "VMODEL_LLM_STALL_TIMEOUT_S", "VMODEL_LLM_MAX_CALLS"):
+    for v in ("VMODEL_LLM_CALL_TIMEOUT_S", "VMODEL_LLM_STALL_TIMEOUT_S", "VMODEL_LLM_MAX_CALLS",
+              "VMODEL_LLM_MAX_TOKENS"):
         monkeypatch.delenv(v, raising=False)
 
 
@@ -104,3 +105,47 @@ def test_printer_renders_item_timestamps(capsys):
     # events without timing (retry notices) keep the old plain line
     bus.emit(ProgressEvent("srs", "", "item", end, None, "model output was not valid JSON - retrying once"))
     assert "- model output was not valid JSON - retrying once" in capsys.readouterr().err
+
+
+class _Resp:
+    def __init__(self, content, reason=None):
+        self.content = content
+        self.response_metadata = {} if reason is None else {"done_reason": reason}
+
+
+def test_generation_length_ceiling_defaults_to_the_stage_ceiling(monkeypatch):
+    assert mc._max_tokens_limit(8192) == 8192
+    monkeypatch.setenv("VMODEL_LLM_MAX_TOKENS", "1024")
+    assert mc._max_tokens_limit(8192) == 1024
+    monkeypatch.setenv("VMODEL_LLM_MAX_TOKENS", "junk")
+    assert mc._max_tokens_limit(8192) == 8192  # garbage falls back
+
+
+def test_truncated_generation_is_named_not_silently_passed():
+    class M:
+        def invoke(self, messages):
+            return _Resp('{"partial":', "length")  # ollama done_reason / openai finish_reason
+
+    with pytest.raises(UserFacingError) as ei:
+        mc.invoke_checked(M(), [], "srs")
+    err = ei.value.render()
+    assert "generation-length ceiling" in err and "8192 tokens" in err
+    assert "VMODEL_LLM_MAX_TOKENS" in err and "'srs'" in err
+
+
+def test_clean_finish_reason_passes():
+    class M:
+        def invoke(self, messages):
+            return _Resp("{}", "stop")
+
+    assert mc.invoke_checked(M(), [], "srs").content == "{}"
+
+
+def test_stream_cut_at_token_ceiling_is_named_not_silently_passed():
+    chunks = [_Resp('{"a":', None), _Resp("1}", "length")]
+    gen = mc.stream_checked(FakeModel(chunks=chunks), [], "items")
+    assert next(gen).content == '{"a":'  # chunks still flow through
+    with pytest.raises(UserFacingError) as ei:
+        list(gen)
+    err = ei.value.render()
+    assert "generation-length ceiling" in err and "VMODEL_LLM_MAX_TOKENS" in err
