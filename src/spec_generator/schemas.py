@@ -175,14 +175,14 @@ def items_schema(requirement_ids: list[str]) -> dict:
     skeleton structure); coverage is validated at the stage, not at assembly.
     """
     item = {"type": "object",
-            "properties": {"spec_id": {"type": "string"},
+            "properties": {"slug": {"type": "string"},  # the pipeline numbers SPEC-1..N; the model names slugs
                            "kind": {"enum": [k.value for k in SpecItemKind]},
                            "title": {"type": "string"},
                            "body_markdown": {"type": "string"},
                            "requirement_ids": {"type": "array",
                                                "items": {"enum": list(requirement_ids)}},
                            "depends_on": {"type": "array", "items": {"type": "string"}}},
-            "required": ["spec_id", "kind", "title", "body_markdown", "requirement_ids"],
+            "required": ["slug", "kind", "title", "body_markdown", "requirement_ids"],
             "additionalProperties": False}
     return {"type": "array", "items": item}
 
@@ -212,13 +212,13 @@ def items_plan_schema(requirement_ids: list[str]) -> dict:
     """ADR-0022: the items stage splits into PLAN (module grouping - the
     analysis - with references enum-constrained) then one body call per spec."""
     plan = {"type": "object",
-            "properties": {"spec_id": {"type": "string"},
+            "properties": {"slug": {"type": "string"},  # the pipeline numbers SPEC-1..N; the model names slugs
                            "kind": {"enum": [k.value for k in SpecItemKind]},
                            "title": {"type": "string"},
                            "requirement_ids": {"type": "array",
                                                "items": {"enum": list(requirement_ids)}},
                            "depends_on": {"type": "array", "items": {"type": "string"}}},
-            "required": ["spec_id", "kind", "title", "requirement_ids"],
+            "required": ["slug", "kind", "title", "requirement_ids"],
             "additionalProperties": False}
     return {"type": "array", "items": plan}
 

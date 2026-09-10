@@ -27,7 +27,7 @@ import time
 
 from .progress import ProgressBus, ProgressEvent
 
-_ID_KEYS = ("need_id", "requirement_id", "spec_id", "test_id", "criterion_id",
+_ID_KEYS = ("need_id", "requirement_id", "spec_id", "slug", "test_id", "criterion_id",
             "decision_id", "milestone_id", "item_id")
 _TEXT_KEYS = ("title", "name", "statement", "description")
 

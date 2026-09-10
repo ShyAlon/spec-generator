@@ -388,12 +388,13 @@ def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict) -> N
                     f"of the founder's stated preferences ({', '.join(prefs)}) - name the one that drove it.")
 
 
-def _check_item_refs(entries: list, req_ids: list[str]) -> None:
+def _check_item_refs(entries: list, req_ids: list[str], key: str = "spec_id") -> None:
     """Shared reference/coverage checks for the items stage (bulk specs and
     ADR-0022 plans): unique ids, references resolve, deps point at emitted
     specs, every requirement covered. Failures are NAMED so the automatic
-    retry's feedback says exactly what to fix."""
-    spec_ids = [e.get("spec_id") for e in entries]
+    retry's feedback says exactly what to fix. key="slug" checks the
+    model-proposed slugs BEFORE code numbers the specs (see _assign_spec_ids)."""
+    spec_ids = [e.get(key) for e in entries]
     dupes = sorted({s for s in spec_ids if spec_ids.count(s) > 1})
     if dupes:
         raise ModelStructureError(f"duplicate spec ids: {dupes} - every spec needs a unique spec_id")
@@ -403,18 +404,29 @@ def _check_item_refs(entries: list, req_ids: list[str]) -> None:
         unknown = sorted(set(e.get("requirement_ids") or []) - known)
         if unknown:
             raise ModelStructureError(
-                f"{e.get('spec_id')} claims unknown requirements {unknown} - valid ids: {req_ids}")
+                f"{e.get(key)} claims unknown requirements {unknown} - valid ids: {req_ids}")
         bad_deps = sorted(set(e.get("depends_on") or []) - emitted)
         if bad_deps:
             raise ModelStructureError(
-                f"{e.get('spec_id')} depends on unknown specs {bad_deps} - depends_on may only "
-                f"reference spec ids from this same answer")
+                f"{e.get(key)} depends on unknown specs {bad_deps} - depends_on may only "
+                f"reference {key}s from this same answer")
     covered = {rid for e in entries for rid in (e.get("requirement_ids") or [])}
     uncovered = [r for r in req_ids if r not in covered]
     if uncovered:
         raise ModelStructureError(
             f"requirements covered by no item spec: {uncovered} - cover every requirement: "
             f"add a spec or extend an existing spec's requirement_ids")
+
+
+def _assign_spec_ids(entries: list) -> list:
+    """Code owns ids (ADR-0022 doctrine): the model proposes short slugs, the
+    pipeline numbers the specs SPEC-1..N in plan order and translates
+    depends_on slugs to ids. Numbered ids keep every output line consistent
+    (R-1, SPEC-1, T-1); the slug stays on the spec as the human-readable name."""
+    slug_to_id = {e["slug"]: f"SPEC-{i}" for i, e in enumerate(entries, 1)}
+    return [{**e, "spec_id": slug_to_id[e["slug"]],
+             "depends_on": [slug_to_id[d] for d in e.get("depends_on") or []]}
+            for e in entries]
 
 
 def _srs_overview_payload(state: GenState, feedback: str | None = None) -> str:
@@ -501,13 +513,14 @@ def _items_plan_payload(state: GenState, req_ids: list[str]) -> str:
     return (STAGE_PROMPTS["items_plan"] + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
             + "\n\nARCHITECTURE:\n" + json.dumps(_prompt_view(state["architecture"]))
             + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
-              "return one STRICT JSON array of spec plans {spec_id, kind, title, requirement_ids, "
+              "return one STRICT JSON array of spec plans {slug, kind, title, requirement_ids, "
               "depends_on} - NO body_markdown, bodies are written one spec per call next. "
               "requirement_ids may contain ONLY these requirement ids: "
             + json.dumps(req_ids) + " - and every one of them must appear in at least one plan's "
-              "requirement_ids. spec_id values are short lowercase slugs (e.g. SPEC-api, SPEC-orders); "
-              "ids and titles NEVER contain session ids, timestamps, or run identifiers. The plan is "
-              "for THE FOUNDER'S PRODUCT - never this pipeline.")
+              "requirement_ids. slug values are short lowercase names (e.g. api, orders); depends_on "
+              "references slugs from this same answer. The pipeline numbers the specs SPEC-1, SPEC-2, "
+              "... in your order - never invent SPEC-ids. slugs and titles NEVER contain session ids, "
+              "timestamps, or run identifiers. The plan is for THE FOUNDER'S PRODUCT - never this pipeline.")
 
 
 def _items_plan_validator(req_ids: list[str]):
@@ -520,17 +533,17 @@ def _items_plan_validator(req_ids: list[str]):
             raise ModelStructureError("return a non-empty JSON array of spec plans")
         kinds = {k.value for k in SpecItemKind}
         for p in d:
-            sid = p.get("spec_id") if isinstance(p, dict) else None
-            if not sid or not _re.fullmatch(r"SPEC-[a-z0-9-]+", str(sid)):
+            slug = p.get("slug") if isinstance(p, dict) else None
+            if not slug or not _re.fullmatch(r"[a-z0-9][a-z0-9-]*", str(slug)):
                 raise ModelStructureError(
-                    f"invalid spec_id {sid!r} - a short lowercase slug like SPEC-api "
+                    f"invalid slug {slug!r} - a short lowercase name like api or orders "
                     "(never a session id or timestamp)")
             if p.get("kind") not in kinds:
-                raise ModelStructureError(f"{sid}: kind must be one of {sorted(kinds)}")
+                raise ModelStructureError(f"{slug}: kind must be one of {sorted(kinds)}")
             if not str(p.get("title") or "").strip():
-                raise ModelStructureError(f"{sid}: title required")
-        _check_item_refs(d, req_ids)
-        return None
+                raise ModelStructureError(f"{slug}: title required")
+        _check_item_refs(d, req_ids, key="slug")
+        return _assign_spec_ids(d)
     return _v
 
 
@@ -564,12 +577,14 @@ def _items_payload(state: GenState, req_ids: list[str]) -> str:
     return (STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
             + "\n\nARCHITECTURE:\n" + json.dumps(_prompt_view(state["architecture"]))
             + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
-              "return one STRICT JSON array of spec objects {spec_id, kind, title, body_markdown, "
+              "return one STRICT JSON array of spec objects {slug, kind, title, body_markdown, "
               "requirement_ids, depends_on}. requirement_ids may contain ONLY these requirement ids: "
             + json.dumps(req_ids) + " - and every one of them must appear in at least one spec's "
-              "requirement_ids. spec_id values are short lowercase slugs (e.g. SPEC-api, SPEC-orders); "
-              "ids and titles NEVER contain session ids, timestamps, or run identifiers. Specs are "
-              "written for a coding agent building THE FOUNDER'S PRODUCT - never this pipeline.")
+              "requirement_ids. slug values are short lowercase names (e.g. api, orders); depends_on "
+              "references slugs from this same answer. The pipeline numbers the specs SPEC-1, SPEC-2, "
+              "... in your order - never invent SPEC-ids. slugs and titles NEVER contain session ids, "
+              "timestamps, or run identifiers. Specs are written for a coding agent building THE "
+              "FOUNDER'S PRODUCT - never this pipeline.")
 
 
 def _items_validator(req_ids: list[str]):
@@ -580,9 +595,19 @@ def _items_validator(req_ids: list[str]):
     requirement is covered by at least one spec. Failures are named, so the
     automatic retry's feedback says exactly what to fix."""
     def _validate(d):
-        items = [ItemSpec.model_validate(_strip_pipeline_owned(i)) for i in d]
-        _check_item_refs([i.model_dump() for i in items], req_ids)
-        return None
+        import re as _re
+
+        if not isinstance(d, list) or not d:
+            raise ModelStructureError("return a non-empty JSON array of spec objects")
+        for i in d:
+            slug = i.get("slug") if isinstance(i, dict) else None
+            if not slug or not _re.fullmatch(r"[a-z0-9][a-z0-9-]*", str(slug)):
+                raise ModelStructureError(
+                    f"invalid slug {slug!r} - a short lowercase name like api or orders "
+                    "(never a session id or timestamp)")
+        _check_item_refs(d, req_ids, key="slug")
+        items = [ItemSpec.model_validate(_strip_pipeline_owned(i)) for i in _assign_spec_ids(d)]
+        return [i.model_dump() for i in items]
     return _validate
 
 
@@ -806,7 +831,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 body = _call_json("items", _items_body_payload(state, spec), log, progress,
                                   validate=_items_body_validator(spec), schema=items_body_schema(),
                                   stream_items=False,
-                                  item_label=f"{spec['spec_id']} {spec.get('title', '')}".strip())
+                                  item_label=((f"{spec['spec_id']} ({spec['slug']})"
+                                               if spec.get("slug") else spec["spec_id"])
+                                              + f" {spec.get('title', '')}").strip())
                 entry = {**spec, "body_markdown": body["body_markdown"]}
                 data.append(entry)
                 if partials:
