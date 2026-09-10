@@ -85,6 +85,9 @@ def test_cli_from_items_end_to_end(monkeypatch, tmp_path, capsys):
     outdir = tmp_path / "bundle"
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir)])
     main()
+    err = capsys.readouterr().err
+    assert f"Bundle dir: {outdir.resolve()}" in err  # he watches folders mid-run - name where progress lands
+    assert "*.partial.json" in err
     assert box["items"].calls == 1
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--from", "items"])
     main()
