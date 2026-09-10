@@ -33,7 +33,7 @@ class FakeModel:
 def _clean_guard_env(monkeypatch):
     monkeypatch.setattr(mc, "_CALLS_USED", 0)
     for v in ("VMODEL_LLM_CALL_TIMEOUT_S", "VMODEL_LLM_STALL_TIMEOUT_S", "VMODEL_LLM_MAX_CALLS",
-              "VMODEL_LLM_MAX_TOKENS", "VMODEL_LLM_LOG", "VMODEL_LLM_HEARTBEAT_S", "VMODEL_OLLAMA_THINK", "VMODEL_OLLAMA_NUM_CTX", "SPEC_GENERATOR_FROM"):
+              "VMODEL_LLM_MAX_TOKENS", "VMODEL_LLM_LOG", "VMODEL_LLM_HEARTBEAT_S", "VMODEL_OLLAMA_THINK", "VMODEL_OLLAMA_NUM_CTX", "VMODEL_OLLAMA_KEEP_ALIVE", "SPEC_GENERATOR_FROM"):
         monkeypatch.delenv(v, raising=False)
 
 
@@ -323,9 +323,11 @@ def test_stream_calls_are_logged(tmp_path, monkeypatch):
             yield type("C", (), {"content": "x"})()
 
     list(mc.stream_checked(M(), [], "items", item="ITEM-1"))
-    events = [r["event"] for r in _read_log(log)]
+    recs = _read_log(log)
+    events = [r["event"] for r in recs]
     assert events == ["llm_call_start", "llm_call_end"]
-    assert _read_log(log)[0]["item"] == "ITEM-1"
+    assert recs[0]["item"] == "ITEM-1"
+    assert recs[1]["ttft_s"] is not None and recs[1]["ttft_s"] <= recs[1]["latency_s"]  # prefill cost visible
 
 
 def test_heartbeat_prints_during_silent_call_then_stops(monkeypatch, capsys):
@@ -379,3 +381,12 @@ def test_ollama_num_ctx_default_and_knob(monkeypatch):
     monkeypatch.setenv("VMODEL_OLLAMA_NUM_CTX", "16384")
     m = mc.build_chat_model("srs")
     assert m.num_ctx == 16384
+
+
+def test_ollama_keep_alive_pinned(monkeypatch):
+    monkeypatch.delenv("VMODEL_OLLAMA_KEEP_ALIVE", raising=False)
+    m = mc.build_chat_model("srs")
+    assert m.keep_alive == "30m"  # idle timer must not unload mid-run
+    monkeypatch.setenv("VMODEL_OLLAMA_KEEP_ALIVE", "1h")
+    m = mc.build_chat_model("srs")
+    assert m.keep_alive == "1h"

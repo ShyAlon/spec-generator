@@ -428,6 +428,7 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None):
     threading.Thread(target=_pump, daemon=True).start()
     last = None  # final chunk carries the truncation metadata (done_reason/finish_reason)
     first_chunk_seen = False  # prefill silence is healthy; only mid-stream quiet is a stall
+    ttft_s: float | None = None  # time to first token - the prefill cost, made visible
     try:
         while True:
             elapsed = time.monotonic() - t0
@@ -451,12 +452,15 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None):
                                         stall_timeout, stall_timeout) from None
                 continue  # prefill: no chunks yet, still inside the wall budget
             if kind == "chunk":
+                if not first_chunk_seen:
+                    ttft_s = round(time.monotonic() - t0, 2)
                 first_chunk_seen = True
                 last = payload
                 yield payload
             elif kind == "done":
                 _check_truncated(last, stage, cfg)
                 _log_llm({"event": "llm_call_end", **base, "latency_s": round(time.monotonic() - t0, 2),
+                          **({"ttft_s": ttft_s} if ttft_s is not None else {}),
                           "usage": _usage_of(last)})
                 return
             else:
@@ -479,6 +483,15 @@ def _structured_enabled() -> bool:
     Ollama; SPEC_GENERATOR_STRUCTURED=0 opts out (older Ollama < 0.5, or a
     quality regression the founder wants off)."""
     return os.environ.get("SPEC_GENERATOR_STRUCTURED", "1") != "0"
+
+
+def _ollama_keep_alive() -> str:
+    """Pin the model between calls: VMODEL_OLLAMA_KEEP_ALIVE, default 30m.
+    Without it the idle timer (5m default) can unload the model out from
+    under a long in-flight request - and a model stuck 'Stopping...' hangs
+    the client until the wall-clock budget (ollama#14364/#12179/#8178;
+    2026-09-10: T-1 hung 6+ minutes while `ollama ps` showed 'Stopping...')."""
+    return _env("VMODEL_OLLAMA_KEEP_ALIVE") or "30m"
 
 
 def _ollama_num_ctx() -> int:
@@ -521,6 +534,7 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
         # unreliable); grammar enforces SHAPE only - extraction+retry stays.
         return ChatOllama(model=cfg.model, temperature=cfg.temperature,
                           reasoning=_ollama_think(), num_ctx=_ollama_num_ctx(),
+                          keep_alive=_ollama_keep_alive(),
             timeout=_guard_limits()[0],  # the socket dies with the guardrail deadline
                           seed=cfg.seed,  # ADR-0022
                           num_predict=_max_tokens_limit(cfg.max_tokens),
@@ -532,7 +546,8 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
         env = _API_KEY_ENV[cfg.provider]
         extra = {}
         if cfg.provider == "ollama":
-            body = {"num_ctx": _ollama_num_ctx()}  # honored once ollama PR #16825 lands
+            body = {"num_ctx": _ollama_num_ctx(),  # honored once ollama PR #16825 lands
+                    "keep_alive": _ollama_keep_alive()}
             if not _ollama_think():
                 body["think"] = False
             extra = {"extra_body": body}
