@@ -1,6 +1,6 @@
 """Intent model in, repo-ready bundle out.
 
-Usage: python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
+Usage: python -m spec_generator.cli out/<session>/intent_model.json
 
 Bundle layout (written INCREMENTALLY as each stage completes, atomic
 tmp+rename - a late failure leaves all completed work on disk):
@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from vmodel_contracts import (
@@ -307,10 +308,29 @@ def _run_with_gates(graph, cfg: dict, intent: dict, outdir, resume: bool = False
         result = graph.invoke(Command(resume={"action": "accept"}), cfg)
 
 
+def _default_outdir(intent_path: Path, session_id: str) -> Path:
+    """Stable default output dir, derived from the run identity.
+
+    Interview session ids begin YYYYMMDD-HHMMSS, so a resumed command selects
+    the same directory instead of inventing a fresh timestamp. Hand-authored
+    ids fall back to the intent file's mtime, which is likewise stable for the
+    file being run.
+    """
+    import re
+
+    match = re.match(r"^(\d{8})-(\d{6})(?:-|$)", session_id)
+    if match:
+        stamp = datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
+    else:
+        stamp = datetime.fromtimestamp(intent_path.stat().st_mtime)
+    return Path(f"artifacts-{stamp:%Y-%m-%d_%H-%M-%S}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("intent_model", type=Path)
-    ap.add_argument("-o", "--out", type=Path, default=Path("bundle"))
+    ap.add_argument("-o", "--out", type=Path, default=None,
+                    help="artifact directory (default: artifacts-YYYY-MM-DD_HH-MM-SS, from the session id)")
     ap.add_argument("--review", action="store_true",
                     help="opt-in founder review gates after the SRS and architecture stages (ADR-0019)")
     ap.add_argument("--from", dest="from_stage", metavar="STAGE", default=None,
@@ -352,7 +372,7 @@ def main() -> None:
             "otherwise re-run the interview (minutes on a local model) to regenerate the intent model.",
         ) from e
     sid = intent["session_id"]
-    outdir = args.out
+    outdir = args.out if args.out is not None else _default_outdir(args.intent_model, sid)
     outdir.mkdir(parents=True, exist_ok=True)
     (outdir / "specs").mkdir(exist_ok=True)
 

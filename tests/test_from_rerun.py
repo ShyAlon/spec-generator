@@ -115,3 +115,38 @@ def test_from_warns_before_discarding_preserved_partials(monkeypatch, tmp_path, 
     err = capsys.readouterr().err
     assert "warning: --from items discards 1 preserved item(s) (tests_fills)" in err
     assert not (outdir / "tests_fills.partial.json").exists()
+
+
+def test_default_output_dir_is_human_readable_and_stable(monkeypatch, tmp_path, capsys):
+    """Default derives from the session timestamp: rerunning the same intent
+    resumes the same checkpoint rather than creating a fresh directory."""
+    box = {}
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    monkeypatch.chdir(tmp_path)
+    intent_file = tmp_path / "intent_model.json"
+    intent = dict(INTENT, session_id="20260910-164100-ab12", contract_version=CONTRACT_VERSION)
+    intent_file.write_text(json.dumps(intent))
+
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file)])
+    main()
+    outdir = tmp_path / "artifacts-2026-09-10_16-41-00"
+    assert (outdir / "tests.json").exists()
+    first_counts = {k: v.calls for k, v in box.items()}
+
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file)])
+    main()
+    assert {k: v.calls for k, v in box.items()} == first_counts
+    assert "Checkpoint found - resuming" in capsys.readouterr().err
+
+
+def test_explicit_output_dir_is_unchanged(monkeypatch, tmp_path):
+    box = {}
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    intent_file = tmp_path / "intent_model.json"
+    intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
+    chosen = tmp_path / "my-output"
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(chosen)])
+    main()
+    assert (chosen / "tests.json").exists()

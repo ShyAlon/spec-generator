@@ -24,7 +24,7 @@ resumable. Batch-API eligible stages are marked in `model_config.py`.
 ## Bundle layout (Spec Kit-compatible)
 
 ```
-bundle/
+artifacts-2026-09-10_16-41-00/   # default: timestamp comes from the session id
   AGENTS.md            # build order, decided architecture, guardrails
   manifest.json        # machine-readable index - read this first
   needs.md  srs.md  architecture.md   # srs.md: the standalone, solution-agnostic SRS
@@ -47,12 +47,14 @@ from checkpoint state at startup (state is authoritative, zero stages re-run).
 ```bash
 pip install -e .[dev]
 export DEEPSEEK_API_KEY=...
-python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
+python -m spec_generator.cli out/<session>/intent_model.json
 ```
+
+By default the output directory is `artifacts-YYYY-MM-DD_HH-MM-SS`, derived from the interview session id. That makes it readable and sortable while ensuring the same command resumes into the same checkpoint directory. Pass `-o <path>` to choose a directory explicitly; explicit paths are unchanged.
 
 Live per-stage progress lines (`-> Drafting architecture overview (stage 3/6)...`)
 come from structured `ProgressEvent`s (progress.py) - the same stream the UI
-will consume later (ADR-0010). Checkpoints persist to `bundle/checkpoints.sqlite`:
+will consume later (ADR-0010). Checkpoints persist inside the artifacts directory (for example, `artifacts-2026-09-10_16-41-00/checkpoints.sqlite`):
 a crash mid-generation is recovered by rerunning the same command - completed
 stages are never re-paid (ADR-0011).
 
@@ -69,7 +71,7 @@ machine. Pull the model and run:
 ```bash
 ollama pull qwen2.5-coder:14b
 export OLLAMA_NUM_PARALLEL=1   # never load two models at once on 16GB
-python -m spec_generator.cli out/<session>/intent_model.json -o bundle/
+python -m spec_generator.cli out/<session>/intent_model.json
 ```
 
 ## Founder review gates (`--review`, ADR-0019)
@@ -114,7 +116,7 @@ preserved - e.g. after a pipeline fix, regenerate specs/tests/review/assembly
 from the checkpointed SRS without repaying stages 1-3:
 
 ```bash
-python -m spec_generator.cli out/<session>/intent_model.json -o bundle/ --from items
+python -m spec_generator.cli out/<session>/intent_model.json --from items
 ```
 
 Determinism (ADR-0022): the model owns prose; code owns everything
