@@ -598,9 +598,12 @@ def _items_plan_validator(req_ids: list[str]):
 def _items_body_payload(state: GenState, spec: dict) -> str:
     reqs = [r for sec in ("functional", "non_functional") for r in (state["srs"].get(sec) or [])
             if r.get("requirement_id") in (spec.get("requirement_ids") or [])]
-    return (STAGE_PROMPTS["items_body"] + "\n\nTHE SPEC (write its body):\n" + json.dumps(spec)
-            + "\n\nTHE REQUIREMENTS IT COVERS:\n" + json.dumps(_prompt_view(reqs))
+    # Shared prefix first (prompt + architecture are identical across spec
+    # calls - prefix-cache friendly), the varying spec + requirements last.
+    return (STAGE_PROMPTS["items_body"]
             + "\n\nARCHITECTURE:\n" + json.dumps(_prompt_view(state["architecture"]))
+            + "\n\nTHE SPEC (write its body):\n" + json.dumps(spec)
+            + "\n\nTHE REQUIREMENTS IT COVERS:\n" + json.dumps(_prompt_view(reqs))
             + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
               f"return one STRICT JSON object {{body_markdown}} - the complete markdown spec for "
               f"{spec.get('spec_id')} ONLY: interface, data model, behaviors, error cases, "
@@ -976,10 +979,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             AcceptanceTest.model_validate(t)
                         return d
 
+                    # Shared prefix FIRST (SRS+ITEMS are identical across
+                    # slots - ollama's prefix cache then makes slot 2..N
+                    # prefills nearly free), the varying slot LAST.
                     out = _call_json("tests",
-                          STAGE_PROMPTS["tests"] + "\n\nTEST SLOT (fill its prose):\n" + json.dumps(sl)
+                          STAGE_PROMPTS["tests"]
                           + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
                           + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
+                          + "\n\nTEST SLOT (fill its prose):\n" + json.dumps(sl)
                           + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                             "return one STRICT JSON object {fills: {...}} with EXACTLY this one key: "
                           + json.dumps([tid]) + ". The fill is {description, runner, definition}. runner and "

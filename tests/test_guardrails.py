@@ -79,6 +79,40 @@ def test_stalled_stream_is_killed_with_an_informative_error(monkeypatch):
     assert "killed" in err and "stall" in err and "'items'" in err
 
 
+def test_silent_prefill_is_not_a_stall(monkeypatch):
+    """No chunks BEFORE the first token = prefill (healthy, bounded by the
+    call budget) - the stall guard only applies mid-stream (2026-09-10: a
+    healthy T-1 fill was killed at 180s while ollama prefilled SRS+ITEMS)."""
+    monkeypatch.setenv("VMODEL_LLM_STALL_TIMEOUT_S", "1")
+    monkeypatch.setenv("VMODEL_LLM_CALL_TIMEOUT_S", "30")
+
+    class SlowPrefill:
+        def stream(self, messages):
+            time.sleep(3)  # 3x the stall limit, before ANY chunk
+            yield type("C", (), {"content": '{"a": 1}'})()
+
+    out = list(mc.stream_checked(SlowPrefill(), [], "items"))
+    assert "".join(c.content for c in out) == '{"a": 1}'
+
+
+def test_midstream_silence_is_still_a_stall(monkeypatch):
+    """A stream that produced a chunk and then goes quiet IS hung."""
+    monkeypatch.setenv("VMODEL_LLM_STALL_TIMEOUT_S", "1")
+    monkeypatch.setenv("VMODEL_LLM_CALL_TIMEOUT_S", "30")
+
+    class MidStall:
+        def stream(self, messages):
+            yield type("C", (), {"content": '{"a":'})()
+            time.sleep(3)
+            yield type("C", (), {"content": ' 1}'})()
+
+    gen = mc.stream_checked(MidStall(), [], "items")
+    next(gen)
+    with pytest.raises(UserFacingError) as ei:
+        next(gen)
+    assert "stalled mid-call" in ei.value.render()
+
+
 def test_item_reporter_carries_start_and_end():
     bus = ProgressBus()
     events = []

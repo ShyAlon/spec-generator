@@ -393,10 +393,15 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
 
 def stream_checked(chat_model, messages, stage: str, item: str | None = None):
     """Stream the same call invoke_checked would make, under the guardrails:
-    the whole call has a wall-clock budget and the stream a stall limit (a
-    stream that goes quiet is hung, not thinking). The concatenated chunk
-    contents are the completion itself - the output contract is unchanged,
-    the consumer just sees tokens as they land. Logged like invoke_checked."""
+    the whole call has a wall-clock budget, and a MID-STREAM stall limit (a
+    stream that goes quiet between chunks is hung). Silence BEFORE the first
+    chunk is prefill - healthy prompt evaluation, potentially minutes on a
+    local model with a large context (2026-09-10: a T-1 fill died to the
+    stall guard at 180s while ollama was happily prefilling SRS+ITEMS) - so
+    only the wall-clock budget bounds time-to-first-chunk. The concatenated
+    chunk contents are the completion itself - the output contract is
+    unchanged, the consumer just sees tokens as they land. Logged like
+    invoke_checked."""
     import queue
     import threading
 
@@ -422,6 +427,7 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None):
     t0 = time.monotonic()
     threading.Thread(target=_pump, daemon=True).start()
     last = None  # final chunk carries the truncation metadata (done_reason/finish_reason)
+    first_chunk_seen = False  # prefill silence is healthy; only mid-stream quiet is a stall
     try:
         while True:
             elapsed = time.monotonic() - t0
@@ -429,19 +435,23 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None):
                 _log_llm({"event": "llm_call_error", **base, "latency_s": round(elapsed, 2),
                           "error": {"kind": "timeout", "limit_s": call_timeout}})
                 raise _guard_killed(stage, "no completion within the call budget", elapsed, call_timeout)
+            wait = stall_timeout if first_chunk_seen else min(5.0, call_timeout - elapsed)
             try:
-                kind, payload = q.get(timeout=max(0.05, min(stall_timeout, call_timeout - elapsed)))
+                kind, payload = q.get(timeout=max(0.05, min(wait, call_timeout - elapsed)))
             except queue.Empty:
                 if time.monotonic() - t0 > call_timeout:
                     _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
                               "error": {"kind": "timeout", "limit_s": call_timeout}})
                     raise _guard_killed(stage, "no completion within the call budget",
                                         time.monotonic() - t0, call_timeout) from None
-                _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
-                          "error": {"kind": "stall", "limit_s": stall_timeout}})
-                raise _guard_killed(stage, "no output for the stall limit",
-                                    stall_timeout, stall_timeout) from None
+                if first_chunk_seen:
+                    _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
+                              "error": {"kind": "stall", "limit_s": stall_timeout}})
+                    raise _guard_killed(stage, "the stream stalled mid-call (output stopped after starting)",
+                                        stall_timeout, stall_timeout) from None
+                continue  # prefill: no chunks yet, still inside the wall budget
             if kind == "chunk":
+                first_chunk_seen = True
                 last = payload
                 yield payload
             elif kind == "done":
