@@ -38,3 +38,19 @@ def test_env_helper_reads_api_key_from_dotenv(monkeypatch, tmp_path):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-real-env-wins")
     assert mc._env("DEEPSEEK_API_KEY") == "sk-real-env-wins"
     assert mc._env("ANTHROPIC_API_KEY") is None
+
+def test_shared_env_is_the_base_layer(monkeypatch, tmp_path):
+    """One file drives every process: <require-root>/.env is the shared base,
+    the repo-local .env overrides it, the real environment overrides both."""
+    repo = tmp_path / "interview-engine"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    (tmp_path / ".env").write_text("SPEC_GENERATOR_MODEL_SRS=ollama:shared-model\nVMODEL_LLM_MAX_CALLS=ollama:only-shared\n")
+    (repo / ".env").write_text("SPEC_GENERATOR_MODEL_SRS=deepseek:repo-override\n")
+    monkeypatch.delenv("SPEC_GENERATOR_MODEL_SRS", raising=False)
+    monkeypatch.delenv("VMODEL_LLM_MAX_CALLS", raising=False)
+    monkeypatch.setattr(mc, "_DOTENV", None)
+    assert mc._env("SPEC_GENERATOR_MODEL_SRS") == "deepseek:repo-override"   # repo-local beats shared
+    assert mc._env("VMODEL_LLM_MAX_CALLS") == "ollama:only-shared"   # shared fills the gap
+    monkeypatch.setenv("SPEC_GENERATOR_MODEL_SRS", "ollama:real-env")
+    assert mc._env("SPEC_GENERATOR_MODEL_SRS") == "ollama:real-env"          # real env beats both

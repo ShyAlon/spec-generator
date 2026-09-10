@@ -68,19 +68,38 @@ def track(bus: ProgressBus | None, stage: str, label: str, detail: str | None = 
         bus.emit(ProgressEvent(stage, label, "completed", time.time(), time.time() - t0, detail))
 
 
+def _hhmmss(ts: float) -> str:
+    return time.strftime("%H:%M:%S", time.localtime(ts))
+
+
 def stderr_printer():
-    """The CLI consumer. Plain stderr lines; no TUI dependencies."""
+    """The CLI consumer. Plain stderr lines; no TUI dependencies. A per-slot
+    item prints when it BEGINS (so a hung item is visible live) and its line
+    gains the end time when it finishes - in place on a terminal, as a second
+    line when stderr is redirected."""
+    open_item = {"detail": None}
+
     def _print(ev: ProgressEvent) -> None:
         detail = f" ({ev.detail})" if ev.detail else ""
         if ev.status == "started":
             print(f"  -> {ev.label}{detail}...", file=sys.stderr)
+        elif ev.status == "item_started":
+            line = f"     - [{_hhmmss(ev.ts)}] {ev.detail}"
+            if sys.stderr.isatty():
+                print(line, end="", file=sys.stderr, flush=True)
+            else:
+                print(line, file=sys.stderr)
+            open_item["detail"] = ev.detail
         elif ev.status == "item":
             if ev.elapsed_s is not None:
-                start = time.strftime("%H:%M:%S", time.localtime(ev.ts - ev.elapsed_s))
-                end = time.strftime("%H:%M:%S", time.localtime(ev.ts))
-                print(f"     - [{start}-{end}] {ev.detail}", file=sys.stderr)
+                line = f"     - [{_hhmmss(ev.ts - ev.elapsed_s)}-{_hhmmss(ev.ts)}] {ev.detail}"
             else:
-                print(f"     - {ev.detail}", file=sys.stderr)
+                line = f"     - {ev.detail}"
+            if open_item["detail"] is not None and sys.stderr.isatty():
+                print("\r" + line + "  ", file=sys.stderr)  # overwrite the running line
+            else:
+                print(line, file=sys.stderr)
+            open_item["detail"] = None
         elif ev.status == "completed":
             print(f"  ok {ev.label}{detail} [{ev.elapsed_s:.1f}s]", file=sys.stderr)
         else:

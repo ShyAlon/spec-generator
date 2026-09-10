@@ -106,6 +106,40 @@ def _atomic_write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def _make_partials(outdir: Path):
+    """Per-item resume WITHIN an authoring stage (his ask 2026-09-10, after a
+    Ctrl+C at T-34 of 36 reran everything): completed fills/bodies land in a
+    partial file the moment they close; a rerun of the stage skips them, the
+    same way completed stages are skipped. Cleared when the stage completes;
+    --from <stage> deletes partials for that stage and everything downstream
+    (explicit rewind forces real re-runs)."""
+    FILES = {"srs_fills": "srs_fills.partial.json",
+             "items": "items.partial.json",
+             "tests_fills": "tests_fills.partial.json"}
+
+    class _Partials:
+        def load(self, key: str):
+            p = outdir / FILES[key]
+            return json.loads(p.read_text()) if p.exists() else None
+
+        def save(self, key: str, data) -> None:
+            _atomic_write(outdir / FILES[key], json.dumps(data, indent=2))
+
+        def clear(self, key: str) -> None:
+            p = outdir / FILES[key]
+            if p.exists():
+                p.unlink()
+
+    return _Partials()
+
+
+# partial files invalidated by --from <stage> (that stage and everything after)
+_PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "items", "tests_fills"),
+                      "architecture": ("items", "tests_fills"),
+                      "items": ("items", "tests_fills"),
+                      "tests": ("tests_fills",)}
+
+
 def _make_persist(intent: dict, outdir: Path):
     """The incremental bundle writer (his ask 2026-09-09: 'persist them
     intermittently so we'll have some of the data'). Fires after each stage;
@@ -327,8 +361,9 @@ def main() -> None:
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
+    partials = _make_partials(outdir)
     graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review,
-                        persist=_make_persist(intent, outdir))
+                        persist=_make_persist(intent, outdir), partials=partials)
     print(f"Generating bundle for session {sid} (crash? rerun the same command - it resumes)\n", file=sys.stderr)
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
@@ -345,6 +380,8 @@ def main() -> None:
                   file=sys.stderr)
     if args.from_stage:
         _invalidate_from(graph, cfg, args.from_stage, args.review)
+        for key in _PARTIAL_DOWNSTREAM.get(args.from_stage, ()):
+            partials.clear(key)
         resume = args.from_stage != "needs"
         if resume:
             kept = [s for s in STAGE_ORDER[:STAGE_ORDER.index(args.from_stage)] if prior.get(s)]

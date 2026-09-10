@@ -142,19 +142,24 @@ class ItemReporter:
     """Feeds streamed text through the scanner and emits one progress event
     per newly completed element. Cheap enough to run per chunk."""
 
-    def __init__(self, bus: ProgressBus | None, stage: str) -> None:
+    def __init__(self, bus: ProgressBus | None, stage: str, on_item=None) -> None:
         self._bus = bus
         self._stage = stage
+        self._on_item = on_item  # callback(raw_json, label) per closed item - per-item resume hook
         self._reported = 0
         self._last = time.time()  # an item's start is the previous item's end
 
     def feed(self, accumulated: str) -> None:
-        if self._bus is None:
+        if self._bus is None and self._on_item is None:
             return
         items = extract_array_items(accumulated)
         for raw in items[self._reported:]:
             self._reported += 1
             now = time.time()
-            self._bus.emit(ProgressEvent(self._stage, "", "item", now,
-                                         now - self._last, item_label(raw, self._reported)))
+            label = item_label(raw, self._reported)
+            if self._bus is not None:
+                self._bus.emit(ProgressEvent(self._stage, "", "item", now,
+                                             now - self._last, label))
+            if self._on_item is not None:
+                self._on_item(raw, label)
             self._last = now

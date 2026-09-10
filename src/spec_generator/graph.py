@@ -61,18 +61,30 @@ class GenState(TypedDict, total=False):
 
 def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
             feedback: str | None = None, schema: dict | None = None,
-            stream_items: bool = True) -> str:
+            stream_items: bool = True, item_label: str | None = None,
+            on_item=None) -> str:
     """One model call per stage, STREAMED so the console can show each item as
     its JSON closes (same prompt, same parameters, same completion - progress
-    is observability only, never a change to what is generated)."""
+    is observability only, never a change to what is generated).
+    item_label: the call IS one item (per-slot micro-call) - emit a start line
+    when it begins and a completion line (with token count when the provider
+    reports it) when it ends, so a hung item is visible in the log.
+    on_item: callback(raw_json, label) fired as each streamed item closes -
+    the per-item resume hook (partial persistence mid-call)."""
+    import time as _t
+
     from langchain_core.messages import HumanMessage, SystemMessage
 
+    from .progress import ProgressEvent
     from .stream_items import ItemReporter
 
     model = model_config.build_chat_model(stage, schema=schema)
     # ADR-0022: per-slot micro-calls skip the per-token item scanner (their
-    # output is one small object; the node emits one completion line instead).
-    reporter = ItemReporter(progress if stream_items else None, stage)
+    # output is one small object; the item_label lines cover them instead).
+    reporter = ItemReporter(progress if stream_items else None, stage, on_item=on_item)
+    t0 = _t.time()
+    if item_label and progress is not None:
+        progress.emit(ProgressEvent(stage, "", "item_started", t0, None, item_label))
     messages = [SystemMessage(content=METHODOLOGY), HumanMessage(content=payload)]
     if feedback:
         messages.append(HumanMessage(content=feedback))
@@ -86,6 +98,10 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
         usage = getattr(chunk, "usage_metadata", None) or usage
     cfg = model_config.for_stage(stage)
     log.record(stage, cfg.provider, cfg.model, usage)
+    if item_label and progress is not None:
+        tok = (usage or {}).get("total_tokens")
+        progress.emit(ProgressEvent(stage, "", "item", _t.time(), _t.time() - t0,
+                                    item_label + (f" · {tok} tok" if tok else "")))
     return "".join(chunks)
 
 
@@ -143,7 +159,8 @@ def _contract_errors(exc) -> str:
 
 
 def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
-               validate=None, schema: dict | None = None, stream_items: bool = True):
+               validate=None, schema: dict | None = None, stream_items: bool = True,
+               item_label: str | None = None, on_item=None):
     """Every authoring stage goes through here: invoke -> tolerant parse ->
     CONTRACT VALIDATION -> ONE automatic retry with the failure as feedback
     (the interview-engine pattern, ADR-0015 doctrine: transient model flakes
@@ -161,7 +178,7 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
     last_raw = ""
     for attempt in (1, 2):
         raw = _invoke(stage, payload, log, progress, feedback=fb, schema=schema,
-                      stream_items=stream_items)
+                      stream_items=stream_items, item_label=item_label, on_item=on_item)
         last_raw = raw
         contract_err = None
         try:
@@ -578,12 +595,16 @@ def _clear_feedback(state: GenState, stage: str) -> dict:
 
 
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
-                review: bool = False, persist=None):
+                review: bool = False, persist=None, partials=None):
     """persist(stage, data, state): optional side-effect hook fired after each
     authoring stage completes - the CLI uses it to write the bundle
     incrementally, so a late failure leaves all completed work on disk.
     Pure side effect: resume semantics are unchanged (a re-run stage
-    re-persists)."""
+    re-persists).
+    partials: optional store with load(key)/save(key, data)/clear(key) for
+    PER-ITEM resume inside the looped authoring stages (srs fills, items
+    bodies, tests fills) - completed items are preserved on crash/Ctrl+C and
+    skipped on rerun, the same way completed stages already are."""
 
     def _wrap(stage: str, label: str, detail=None):
         """detail: a string, or a callable(state) -> str. A callable resolves at
@@ -638,22 +659,31 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         overview = _call_json("srs", _srs_overview_payload(state, feedback), log, progress,
                               validate=_overview_validator(), schema=srs_overview_schema(),
                               stream_items=False)
+        done = (partials.load("srs_fills") or {}) if partials else {}
+        need_hint = {n.get("need_id"): (n.get("statement") or "")[:50]
+                     for n in state["needs"].get("needs") or []}
         fills = {}
         for slot in slots:
             rid = slot["requirement_id"]
-            t0 = _t.time()
+            if rid in done:  # per-item resume: preserved from the crashed run
+                fills[rid] = done[rid]
+                continue
+            hint = need_hint.get((slot.get("need_ids") or [""])[0], "")
             fills[rid] = _call_json("srs", _srs_slot_payload(state, slot, feedback), log, progress,
                                     validate=_slot_fill_validator(rid), schema=srs_slot_fill_schema(),
-                                    stream_items=False)
-            if progress is not None:
-                progress.emit(ProgressEvent("srs", "", "item", _t.time(), _t.time() - t0,
-                                            f"{rid} {fills[rid].get('title', '')}"))
+                                    stream_items=False,
+                                    item_label=f"{rid} {hint}".strip())
+            if partials:
+                done[rid] = fills[rid]
+                partials.save("srs_fills", done)
         body = {"purpose": overview["purpose"], "scope_summary": overview["scope_summary"],
                 "fills": fills}
         merged = merge_srs_fills(slots, body)
         sid = state["intent_model"]["session_id"]
         SRSDocument.model_validate(srs_document_data(
             state["intent_model"], {**merged, "session_id": sid, "intent_model_ref": sid}))
+        if partials:
+            partials.clear("srs_fills")
         return merged
 
     def node_needs(state: GenState) -> dict:
@@ -763,19 +793,29 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             # body in its own micro-call - a weak body fails one cheap call.
             plan = _call_json("items", _items_plan_payload(state, req_ids), log, progress,
                               validate=_items_plan_validator(req_ids),
-                              schema=items_plan_schema(req_ids))
+                              schema=items_plan_schema(req_ids), stream_items=False)
+            if progress is not None:
+                progress.emit(ProgressEvent("items", "", "item", _t.time(), None,
+                                            f"plan: {len(plan)} specs to write"))
+            done = {d["spec_id"]: d for d in ((partials.load("items") or []) if partials else [])}
             data = []
             for spec in plan:
-                t0 = _t.time()
+                if spec["spec_id"] in done:  # per-item resume: preserved body
+                    data.append(done[spec["spec_id"]])
+                    continue
                 body = _call_json("items", _items_body_payload(state, spec), log, progress,
                                   validate=_items_body_validator(spec), schema=items_body_schema(),
-                                  stream_items=False)
-                data.append({**spec, "body_markdown": body["body_markdown"]})
-                if progress is not None:
-                    progress.emit(ProgressEvent("items", "", "item", _t.time(), _t.time() - t0,
-                                                f"{spec['spec_id']} {spec.get('title', '')}"))
+                                  stream_items=False,
+                                  item_label=f"{spec['spec_id']} {spec.get('title', '')}".strip())
+                entry = {**spec, "body_markdown": body["body_markdown"]}
+                data.append(entry)
+                if partials:
+                    done[entry["spec_id"]] = entry
+                    partials.save("items", list(done.values()))
         if persist:
             persist("items", data, state)
+        if partials:
+            partials.clear("items")
         return {"items": data}
 
     def node_tests(state: GenState) -> dict:
@@ -807,18 +847,46 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
         from .schemas import test_fill_schema
 
-        test_ids = [sl["test_id"] for sl in slots]
-        data = _call_json("tests",
+        # Per-item resume: each fill is preserved the moment its JSON closes
+        # (streamed), so a Ctrl+C at T-34/36 reruns only T-35 and T-36.
+        done = (partials.load("tests_fills") or {}) if partials else {}
+        missing = [sl for sl in slots if sl["test_id"] not in done]
+        if missing:
+            def _keep(raw: str, label: str = "") -> None:
+                try:
+                    obj = json.loads(raw)
+                except json.JSONDecodeError:
+                    return
+                if isinstance(obj, dict) and len(obj) == 1:
+                    tid, fill = next(iter(obj.items()))
+                    if isinstance(fill, dict) and fill.get("definition") is not None:
+                        done[tid] = fill
+                        partials.save("tests_fills", done)
+
+            def _validate_new(d):
+                for t in merge_test_fills(missing, d):
+                    AcceptanceTest.model_validate(t)
+                return d
+
+            missing_ids = [sl["test_id"] for sl in missing]
+            out = _call_json("tests",
                       STAGE_PROMPTS["tests"] + "\n\nTEST SLOTS (fill prose for each, keyed by test_id):\n"
-                      + json.dumps(slots) + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+                      + json.dumps(missing) + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
                       + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
                       + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                         "return one STRICT JSON object {fills: {...}} with EXACTLY these keys, one per slot: "
-                      + json.dumps(test_ids) + ". Each fill is {description, runner, definition}. runner and "
+                      + json.dumps(missing_ids) + ". Each fill is {description, runner, definition}. runner and "
                         "definition describe how to test THE FOUNDER'S PRODUCT - never this pipeline.", log, progress,
-                          validate=_validate_tests, schema=test_fill_schema(slots))
+                          validate=_validate_new, schema=test_fill_schema(missing),
+                          on_item=(_keep if partials else None))
+            fills = {**done, **(out.get("fills") or {})}
+        else:
+            fills = done
+        data = _validate_tests({"fills": fills})
         if persist:
             persist("tests", data, state)
+        if partials:
+            partials.clear("tests_fills")
         return {"tests": data}
 
     def node_review(state: GenState) -> dict:
