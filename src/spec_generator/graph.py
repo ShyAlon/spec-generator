@@ -388,6 +388,53 @@ def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict) -> N
                     f"of the founder's stated preferences ({', '.join(prefs)}) - name the one that drove it.")
 
 
+def _heal_slugs(entries: list) -> list:
+    """ADR-0022: punctuation drift in a model-proposed slug is not a semantic
+    failure - normalize before validation instead of burning a retry:
+    lowercase, whitespace/underscores/invalid runs -> single hyphens
+    ('user_capabilities' -> 'user-capabilities'). Every heal is printed;
+    depends_on references are remapped with the same table. Heals that would
+    come out empty are left untouched so validation still fails loudly on
+    REAL drift; collisions get deterministic -2/-3 suffixes in plan order."""
+    import re as _re
+
+    def _heal(s: str) -> str:
+        h = _re.sub(r"[^a-z0-9]+", "-", s.strip().lower()).strip("-")
+        return _re.sub(r"-{2,}", "-", h)
+
+    mapping: dict[str, str] = {}
+    used: set[str] = set()
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        raw = e.get("slug")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        h = _heal(raw)
+        if h and _re.fullmatch(r"[a-z0-9][a-z0-9-]*", h):
+            base, n = h, 2
+            while h in used:
+                h, n = f"{base}-{n}", n + 1
+            used.add(h)
+            mapping[raw] = h
+    out = []
+    for e in entries:
+        if not isinstance(e, dict):
+            out.append(e)
+            continue
+        e = dict(e)
+        raw = e.get("slug")
+        healed = mapping.get(raw) if isinstance(raw, str) else None
+        if healed and healed != raw:
+            e["slug"] = healed
+            model_config._console_line(f"     - slug healed: {raw!r} -> {healed!r}")
+        deps = e.get("depends_on")
+        if isinstance(deps, list):
+            e["depends_on"] = [mapping.get(str(d), d) for d in deps]
+        out.append(e)
+    return out
+
+
 def _check_item_refs(entries: list, req_ids: list[str], key: str = "spec_id") -> None:
     """Shared reference/coverage checks for the items stage (bulk specs and
     ADR-0022 plans): unique ids, references resolve, deps point at emitted
@@ -531,6 +578,7 @@ def _items_plan_validator(req_ids: list[str]):
     def _v(d):
         if not isinstance(d, list) or not d:
             raise ModelStructureError("return a non-empty JSON array of spec plans")
+        d = _heal_slugs(d)
         kinds = {k.value for k in SpecItemKind}
         for p in d:
             slug = p.get("slug") if isinstance(p, dict) else None
@@ -599,6 +647,7 @@ def _items_validator(req_ids: list[str]):
 
         if not isinstance(d, list) or not d:
             raise ModelStructureError("return a non-empty JSON array of spec objects")
+        d = _heal_slugs(d)
         for i in d:
             slug = i.get("slug") if isinstance(i, dict) else None
             if not slug or not _re.fullmatch(r"[a-z0-9][a-z0-9-]*", str(slug)):

@@ -108,7 +108,39 @@ def test_items_validator_units():
     with pytest.raises(ModelStructureError, match="claims unknown requirements \\['R-99'\\]"):
         v([dict(good[0], requirement_ids=["R-1", "R-99"]), good[1]])
     with pytest.raises(ModelStructureError, match="invalid slug"):
-        v([dict(good[0], slug="SPEC-a")])  # model must not invent SPEC-ids
+        v([dict(good[0], slug="!!!")])  # unhealable (normalizes to empty) - real drift still fails
+
+
+def test_items_validator_heals_slug_punctuation():
+    """ADR-0022: punctuation drift in a model slug is healed, not retried;
+    depends_on references remap with the same table."""
+    v = _items_validator(["R-1", "R-2"])
+    plans = [{"slug": "user_capabilities", "kind": "api_surface", "title": "Caps", "body_markdown": "b",
+              "requirement_ids": ["R-1"]},
+             {"slug": "Order API", "kind": "data_model", "title": "B", "body_markdown": "b",
+              "requirement_ids": ["R-2"], "depends_on": ["user_capabilities"]}]
+    out = v(plans)
+    assert [o["slug"] for o in out] == ["user-capabilities", "order-api"]
+    assert out[1]["depends_on"] == ["SPEC-1"]  # healed refs still translate to SPEC-ids
+
+
+def test_items_validator_heal_collisions_get_deterministic_suffixes():
+    v = _items_validator(["R-1", "R-2"])
+    plans = [{"slug": "Order API", "kind": "api_surface", "title": "A", "body_markdown": "b",
+              "requirement_ids": ["R-1"]},
+             {"slug": "order-api", "kind": "data_model", "title": "B", "body_markdown": "b",
+              "requirement_ids": ["R-2"]}]
+    out = v(plans)
+    assert [o["slug"] for o in out] == ["order-api", "order-api-2"]
+
+
+def test_items_plan_validator_heals_slugs():
+    from spec_generator.graph import _items_plan_validator
+
+    v = _items_plan_validator(["R-1"])
+    out = v([{"slug": "User_Capabilities", "kind": "api_surface", "title": "Caps",
+              "requirement_ids": ["R-1"], "depends_on": []}])
+    assert out[0]["slug"] == "user-capabilities" and out[0]["spec_id"] == "SPEC-1"
 
 
 def test_prompt_view_strips_pipeline_owned_recursively():
