@@ -33,7 +33,7 @@ class FakeModel:
 def _clean_guard_env(monkeypatch):
     monkeypatch.setattr(mc, "_CALLS_USED", 0)
     for v in ("VMODEL_LLM_CALL_TIMEOUT_S", "VMODEL_LLM_STALL_TIMEOUT_S", "VMODEL_LLM_MAX_CALLS",
-              "VMODEL_LLM_MAX_TOKENS"):
+              "VMODEL_LLM_MAX_TOKENS", "SPEC_GENERATOR_FROM"):
         monkeypatch.delenv(v, raising=False)
 
 
@@ -149,3 +149,28 @@ def test_stream_cut_at_token_ceiling_is_named_not_silently_passed():
         list(gen)
     err = ei.value.render()
     assert "generation-length ceiling" in err and "VMODEL_LLM_MAX_TOKENS" in err
+
+def test_kill_guidance_drops_from_when_the_failing_command_carried_it(monkeypatch):
+    """2026-09-10: a killed run whose command carried --from items told the
+    user to "rerun the same command" - which forcibly re-ran the stage and
+    discarded 36 finished items. The guidance must name the --from drop."""
+    monkeypatch.setenv("VMODEL_LLM_CALL_TIMEOUT_S", "1")
+    monkeypatch.setenv("SPEC_GENERATOR_FROM", "items")
+    with pytest.raises(UserFacingError) as ei:
+        mc.invoke_checked(FakeModel(invoke_sleep_s=5), [], "tests")
+    err = ei.value.render()
+    assert "WITHOUT '--from items'" in err
+    assert "discards finished per-item work" in err
+    assert "checkpoint resumes at this stage" in err
+
+
+def test_truncation_guidance_also_drops_from(monkeypatch):
+    monkeypatch.setenv("SPEC_GENERATOR_FROM", "items")
+
+    class M:
+        def invoke(self, messages):
+            return _Resp('{"partial":', "length")
+
+    with pytest.raises(UserFacingError) as ei:
+        mc.invoke_checked(M(), [], "tests")
+    assert "WITHOUT '--from items'" in ei.value.render()

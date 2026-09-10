@@ -80,9 +80,15 @@ def _render_gate(gate: str, artifact: dict, intent: dict) -> str:
         raise UserFacingError(
             f"the {gate} draft does not pass the contract schema, so the review gate cannot render it.",
             f"validation detail: {_contract_errors(e)}",
-            "rerun the same command - the checkpoint resumes at the gate; if it repeats, the stage "
+            f"{_rerun_guidance_from_env()}; if it repeats, the stage "
             "produced a contract-breaking draft its own validation missed - please report it as a bug.",
         ) from e
+
+
+def _rerun_guidance_from_env() -> str:
+    from . import model_config
+
+    return model_config._rerun_guidance("")
 
 
 def _backfill_persist(persist, values: dict) -> list[str]:
@@ -277,7 +283,7 @@ def _run_with_gates(graph, cfg: dict, intent: dict, outdir, resume: bool = False
             if action in ("a", "e", "f", "r"):
                 break
         if action == "r":
-            print(f"Rejected at the {gate} gate. The run is checkpointed - rerun the same command to resume.", file=sys.stderr)
+            print(f"Rejected at the {gate} gate. The run is checkpointed - {_mc._rerun_guidance(gate)}.", file=sys.stderr)
             raise SystemExit(1)
         if action == "f":
             fb = input("Feedback (one line, founder language): ").strip()
@@ -364,7 +370,11 @@ def main() -> None:
     partials = _make_partials(outdir)
     graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review,
                         persist=_make_persist(intent, outdir), partials=partials)
-    print(f"Generating bundle for session {sid} (crash? rerun the same command - it resumes)\n", file=sys.stderr)
+    from . import model_config as _mc
+
+    if args.from_stage:
+        os.environ["SPEC_GENERATOR_FROM"] = args.from_stage  # guardrail errors must not echo --from back
+    print(f"Generating bundle for session {sid} (crash? {_mc._rerun_guidance('')})\n", file=sys.stderr)
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
     resume = bool(prior)
@@ -381,6 +391,10 @@ def main() -> None:
     if args.from_stage:
         _invalidate_from(graph, cfg, args.from_stage, args.review)
         for key in _PARTIAL_DOWNSTREAM.get(args.from_stage, ()):
+            saved = partials.load(key) or {}
+            if len(saved):
+                print(f"warning: --from {args.from_stage} discards {len(saved)} preserved item(s) "
+                      f"({key}) - they will be regenerated.", file=sys.stderr)
             partials.clear(key)
         resume = args.from_stage != "needs"
         if resume:

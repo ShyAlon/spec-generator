@@ -96,8 +96,8 @@ def test_crash_mid_tests_asks_only_for_missing_fills(monkeypatch, tmp_path):
     g, _ = _build(monkeypatch, calls, tmp_path, "run", partials=partials)
     r = g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
     tests_calls = [sc for st, sc in calls if st == "tests"]
-    assert tests_calls and "T-1" not in tests_calls[0]["properties"]["fills"]["required"]
-    assert set(tests_calls[0]["properties"]["fills"]["required"]) == {"T-2", "T-3"}
+    wanted = [tuple(sc["properties"]["fills"]["required"]) for sc in tests_calls]
+    assert sorted(t for (t,) in wanted) == ["T-2", "T-3"]  # one micro-call per missing slot; T-1 preserved
     assert [t["test_id"] for t in r["tests"]] == ["T-1", "T-2", "T-3"]
     assert partials.load("tests_fills") is None
 

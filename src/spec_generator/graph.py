@@ -202,14 +202,14 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
                 raise UserFacingError(
                     f"stage '{stage}': the model's output does not satisfy the contract (an automatic retry did not fix it).",
                     f"contract errors: {_contract_errors(contract_err)}. Raw output began: {snippet!r}",
-                    "rerun the same command - the checkpoint resumes at this stage; if it repeats, route the stage "
+                    f"{model_config._rerun_guidance(stage)}; if it repeats, route the stage "
                     f"to a stronger model (SPEC_GENERATOR_MODEL_{stage.upper()} env override) - and report it: "
                     "schema-constrained output should not drift structurally.",
                 ) from contract_err
             raise UserFacingError(
                 f"stage '{stage}': the model returned output that is not valid JSON (an automatic retry did not fix it).",
                 f"smaller/local models often wrap JSON in prose, drop structure, or truncate. Raw output began: {snippet!r}",
-                "rerun the same command - the checkpoint resumes at this stage; if it repeats, route the stage "
+                f"{model_config._rerun_guidance(stage)}; if it repeats, route the stage "
                 f"to a stronger model (SPEC_GENERATOR_MODEL_{stage.upper()} env override).",
             ) from parse_err
         if progress is not None:
@@ -879,34 +879,68 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         done = (partials.load("tests_fills") or {}) if partials else {}
         missing = [sl for sl in slots if sl["test_id"] not in done]
         if missing:
-            def _keep(raw: str, label: str = "") -> None:
-                try:
-                    obj = json.loads(raw)
-                except json.JSONDecodeError:
-                    return
-                if isinstance(obj, dict) and len(obj) == 1:
-                    tid, fill = next(iter(obj.items()))
-                    if isinstance(fill, dict) and fill.get("definition") is not None:
-                        done[tid] = fill
+            if model_config.bulk_fills_enabled():
+                # Legacy one-call path (SPEC_GENERATOR_BULK=1): one streamed
+                # call for every missing slot. Cheaper on prefill, but the
+                # call's wall time grows with the slot count - 36 fills at
+                # ~14s each is already at the 600s call budget, which is why
+                # per-slot calls below are the default.
+                def _keep(raw: str, label: str = "") -> None:
+                    try:
+                        obj = json.loads(raw)
+                    except json.JSONDecodeError:
+                        return
+                    if isinstance(obj, dict) and len(obj) == 1:
+                        tid, fill = next(iter(obj.items()))
+                        if isinstance(fill, dict) and fill.get("definition") is not None:
+                            done[tid] = fill
+                            partials.save("tests_fills", done)
+
+                def _validate_new(d):
+                    for t in merge_test_fills(missing, d):
+                        AcceptanceTest.model_validate(t)
+                    return d
+
+                missing_ids = [sl["test_id"] for sl in missing]
+                out = _call_json("tests",
+                          STAGE_PROMPTS["tests"] + "\n\nTEST SLOTS (fill prose for each, keyed by test_id):\n"
+                          + json.dumps(missing) + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+                          + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
+                          + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
+                            "return one STRICT JSON object {fills: {...}} with EXACTLY these keys, one per slot: "
+                          + json.dumps(missing_ids) + ". Each fill is {description, runner, definition}. runner and "
+                            "definition describe how to test THE FOUNDER'S PRODUCT - never this pipeline.", log, progress,
+                              validate=_validate_new, schema=test_fill_schema(missing),
+                              on_item=(_keep if partials else None))
+                fills = {**done, **(out.get("fills") or {})}
+            else:
+                # ADR-0022: one fill per call, like the srs fills and spec
+                # bodies - a weak fill fails one cheap call, a hung slot is
+                # the visible last start line, and a kill reruns ONLY the
+                # missing slots (partials persist per slot).
+                for sl in missing:
+                    tid = sl["test_id"]
+                    link = sl.get("criterion_id") or sl.get("spec_id") or ""
+
+                    def _validate_one(d, sl=sl):
+                        for t in merge_test_fills([sl], d):
+                            AcceptanceTest.model_validate(t)
+                        return d
+
+                    out = _call_json("tests",
+                          STAGE_PROMPTS["tests"] + "\n\nTEST SLOT (fill its prose):\n" + json.dumps(sl)
+                          + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+                          + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
+                          + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
+                            "return one STRICT JSON object {fills: {...}} with EXACTLY this one key: "
+                          + json.dumps([tid]) + ". The fill is {description, runner, definition}. runner and "
+                            "definition describe how to test THE FOUNDER'S PRODUCT - never this pipeline.", log, progress,
+                              validate=_validate_one, schema=test_fill_schema([sl]), stream_items=False,
+                              item_label=f"{tid} ({sl['level']}: {link})")
+                    done[tid] = (out.get("fills") or {})[tid]
+                    if partials:
                         partials.save("tests_fills", done)
-
-            def _validate_new(d):
-                for t in merge_test_fills(missing, d):
-                    AcceptanceTest.model_validate(t)
-                return d
-
-            missing_ids = [sl["test_id"] for sl in missing]
-            out = _call_json("tests",
-                      STAGE_PROMPTS["tests"] + "\n\nTEST SLOTS (fill prose for each, keyed by test_id):\n"
-                      + json.dumps(missing) + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
-                      + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
-                      + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
-                        "return one STRICT JSON object {fills: {...}} with EXACTLY these keys, one per slot: "
-                      + json.dumps(missing_ids) + ". Each fill is {description, runner, definition}. runner and "
-                        "definition describe how to test THE FOUNDER'S PRODUCT - never this pipeline.", log, progress,
-                          validate=_validate_new, schema=test_fill_schema(missing),
-                          on_item=(_keep if partials else None))
-            fills = {**done, **(out.get("fills") or {})}
+                fills = done
         else:
             fills = done
         data = _validate_tests({"fills": fills})

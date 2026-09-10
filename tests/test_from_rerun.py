@@ -93,3 +93,22 @@ def test_cli_from_items_end_to_end(monkeypatch, tmp_path, capsys):
     assert "preserved: needs, srs, architecture" in err
     assert box["items"].calls == 2 and box["srs"].calls == 1
     assert json.loads((outdir / "items.json").read_text())[0]["spec_id"] == "SPEC-1"
+
+def test_from_warns_before_discarding_preserved_partials(monkeypatch, tmp_path, capsys):
+    """--from items invalidates downstream partials by design - but it must
+    SAY so: a silent discard cost a user 36 finished test items (2026-09-10)."""
+    box = {}
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    intent_file = tmp_path / "intent_model.json"
+    intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
+    outdir = tmp_path / "bundle"
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir)])
+    main()
+    (outdir / "tests_fills.partial.json").write_text(json.dumps(
+        {"T-1": {"description": "d", "runner": "r", "definition": {"path": "x"}}}))
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--from", "items"])
+    main()
+    err = capsys.readouterr().err
+    assert "warning: --from items discards 1 preserved item(s) (tests_fills)" in err
+    assert not (outdir / "tests_fills.partial.json").exists()

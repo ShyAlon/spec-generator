@@ -96,7 +96,7 @@ def _check_truncated(resp, stage: str, cfg) -> None:
         f"stage '{stage}': the {cfg.provider}/{cfg.model} call hit the generation-length "
         f"ceiling ({ceiling} tokens) and its output was cut off.",
         "the model had more to emit than one call allows - the payload is truncated.",
-        "rerun the same command - the checkpoint resumes at this stage. If it repeats, raise "
+        f"{_rerun_guidance(stage)}. If it repeats, raise "
         f"{_MAX_TOKENS_ENV} only deliberately, or route the stage to another provider with "
         "vmodel-spec-app/scripts/switch-model.sh.",
     )
@@ -116,6 +116,21 @@ def _guard_limits() -> tuple[int, int, int]:
             _num("VMODEL_LLM_MAX_CALLS", _MAX_CALLS))
 
 
+def _rerun_guidance(stage: str) -> str:
+    """The rerun instruction that is TRUE for this invocation. An explicit
+    --from <stage> forces that stage to re-execute AND discards preserved
+    per-item work downstream, so after a failure the right command DROPS
+    --from and lets the checkpoint + per-item resume do their job (2026-09-10:
+    the old blanket "rerun the same command" cost a user a forced re-run of
+    every finished item)."""
+    frm = os.environ.get("SPEC_GENERATOR_FROM")
+    if frm:
+        return (f"rerun the command WITHOUT '--from {frm}' ('--from' forces a re-run from '{frm}' and "
+                "discards finished per-item work) - the checkpoint resumes at this stage and finished "
+                "items are skipped")
+    return "rerun the same command - the checkpoint resumes at this stage"
+
+
 def _guard_enter(stage: str) -> None:
     """One LLM call is starting: charge it against the run budget."""
     global _CALLS_USED
@@ -128,7 +143,7 @@ def _guard_enter(stage: str) -> None:
             f"stage '{stage}': this run hit its LLM call budget ({_guard_limits()[2]} calls) and was stopped.",
             "the budget bounds what one run can cost and catches retry loops; the "
             f"{cfg.provider}/{cfg.model} calls before it all completed.",
-            "rerun the same command - the checkpoint resumes at this stage. If the run keeps "
+            f"{_rerun_guidance(stage)}. If the run keeps "
             "hitting the budget a stage is looping: report it. Raise the ceiling with "
             "VMODEL_LLM_MAX_CALLS only deliberately.",
         )
@@ -142,7 +157,7 @@ def _guard_killed(stage: str, kind: str, waited: float, limit: int):
         f"stage '{stage}': the {cfg.provider}/{cfg.model} call was killed - {kind} "
         f"(limit {limit}s, waited {waited:.0f}s).",
         "a runaway generation or a hung connection; the call was making no useful progress.",
-        "rerun the same command - the checkpoint resumes at this stage. If it repeats, check "
+        f"{_rerun_guidance(stage)}. If it repeats, check "
         "the provider is healthy (for ollama: ollama ps + server logs), raise "
         "VMODEL_LLM_CALL_TIMEOUT_S / VMODEL_LLM_STALL_TIMEOUT_S, or route the stage to another "
         "provider with vmodel-spec-app/scripts/switch-model.sh.",

@@ -73,9 +73,9 @@ def test_micro_call_prompts_are_small_and_id_clean():
 
 
 def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
-    """One requirement => overview + one slot; items => plan + one body.
-    The tests stage stays bulk-but-keyed (22 output lines restore its
-    observability; one call avoids 22 Ollama prefill cycles)."""
+    """One requirement => overview + one slot; items => plan + one body;
+    tests => one call per slot (a single 36-item call outgrows the call
+    budget - 2026-09-10 live kill at 600s after the last item closed)."""
     monkeypatch.delenv("SPEC_GENERATOR_BULK", raising=False)
     calls = []
 
@@ -96,6 +96,9 @@ def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
                             "requirement_ids": ["R-1"], "depends_on": []}]
                 else:
                     out = {"body_markdown": "# API"}
+            elif self.stage == "tests":
+                wanted = self.schema["properties"]["fills"]["required"]
+                out = {"fills": {tid: PAYLOADS["tests"]["fills"][tid] for tid in wanted}}
             else:
                 out = PAYLOADS[self.stage]
             yield AIMessage(content=json.dumps(out))
@@ -110,5 +113,6 @@ def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
                    for v in r["violations"])
     assert [s for s, _, _ in calls].count("srs") == 2
     assert [s for s, _, _ in calls].count("items") == 2
+    assert [s for s, _, _ in calls].count("tests") == 2  # one call per slot
     assert r["srs"]["functional"][0]["requirement_id"] == "R-1"  # code-owned
     assert r["items"][0]["spec_id"] == "SPEC-1" and r["items"][0]["slug"] == "api"  # code-owned numbering
