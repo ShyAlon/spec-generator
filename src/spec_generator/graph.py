@@ -90,7 +90,7 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
         messages.append(HumanMessage(content=feedback))
     chunks: list[str] = []
     usage: dict = {}
-    for chunk in model_config.stream_checked(model, messages, stage):
+    for chunk in model_config.stream_checked(model, messages, stage, item=item_label):
         text = chunk.content if isinstance(chunk.content, str) else "".join(
             b.get("text", "") for b in chunk.content if isinstance(b, dict))
         chunks.append(text)

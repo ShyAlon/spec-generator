@@ -8,7 +8,10 @@ no model.
 """
 from __future__ import annotations
 
+import json
 import os
+import re as _re
+import sys
 import time
 from dataclasses import dataclass
 
@@ -92,6 +95,8 @@ def _check_truncated(resp, stage: str, cfg) -> None:
     from .errors import UserFacingError
 
     ceiling = _max_tokens_limit(cfg.max_tokens)
+    _log_llm({"event": "llm_call_error", "provider": cfg.provider, "model": cfg.model, "stage": stage,
+              "error": {"kind": "token_ceiling", "ceiling_tokens": ceiling}})
     raise UserFacingError(
         f"stage '{stage}': the {cfg.provider}/{cfg.model} call hit the generation-length "
         f"ceiling ({ceiling} tokens) and its output was cut off.",
@@ -129,6 +134,67 @@ def _rerun_guidance(stage: str) -> str:
                 "discards finished per-item work) - the checkpoint resumes at this stage and finished "
                 "items are skipped")
     return "rerun the same command - the checkpoint resumes at this stage"
+
+
+def _llm_log_sink() -> str | None:
+    """VMODEL_LLM_LOG: unset = off (default, zero cost); 'stderr' = console;
+    any other value = a file path, one JSON object per line."""
+    return _env("VMODEL_LLM_LOG")
+
+
+def _mask_secrets(value: str) -> str:
+    return _re.sub(r"(sk-[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+", r"\1...", str(value))
+
+
+def _log_llm(event: dict) -> None:
+    """One JSON line per LLM call event. Never logs message content or keys -
+    metadata, token usage, and provider error payloads only. Logging must
+    never break a run."""
+    sink = _llm_log_sink()
+    if not sink:
+        return
+    line = json.dumps({**event, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")}, default=str)
+    try:
+        if sink == "stderr":
+            print(line, file=sys.stderr)
+        else:
+            with open(sink, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def _provider_error_detail(exc) -> dict:
+    """Best-effort raw provider error for logs and the error taxonomy: HTTP
+    status, error type/code/message, request id, retry-after. The openai SDK
+    shape (openai, deepseek) carries .status_code/.body/.response; local
+    ollama errors degrade to class + message. Secret-shaped strings masked."""
+    out = {"class": type(exc).__name__}
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        out["http_status"] = status
+    headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+    for h, key in (("x-request-id", "request_id"), ("retry-after", "retry_after_s")):
+        try:
+            v = headers.get(h)
+        except Exception:
+            v = None
+        if v:
+            out[key] = v
+    body = getattr(exc, "body", None)
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict):
+        for k in ("type", "code", "param", "message"):
+            if err.get(k) is not None:
+                out[k] = _mask_secrets(str(err[k]))[:600]
+    if "message" not in out:
+        out["message"] = _mask_secrets(str(exc))[:600]
+    return out
+
+
+def _usage_of(resp) -> dict:
+    usage = getattr(resp, "usage_metadata", None) or {}
+    return {k: usage[k] for k in ("input_tokens", "output_tokens", "total_tokens") if k in usage}
 
 
 def _guard_enter(stage: str) -> None:
@@ -239,34 +305,48 @@ def _preflight(cfg: "StageModel", stage: str) -> None:
         )
 
 
-def invoke_checked(chat_model, messages, stage: str):
+def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
     """chat_model.invoke under the guardrails (budget + deadline), with the
-    known pains translated to human language."""
-    from .errors import translate_llm_error
+    known pains translated to human language. Every call is logged when
+    VMODEL_LLM_LOG is set (start/end/error, latency, token usage, raw provider
+    error payload - never message content, never keys)."""
+    from .errors import UserFacingError, translate_llm_error
 
     cfg = for_stage(stage)
     _guard_enter(stage)
     call_timeout = _guard_limits()[0]
+    base = {"provider": cfg.provider, "model": cfg.model, "stage": stage,
+            **({"item": item} if item else {})}
+    _log_llm({"event": "llm_call_start", **base})
+    t0 = time.monotonic()
     try:
         resp = _run_with_deadline(lambda: chat_model.invoke(messages), call_timeout, stage)
         _check_truncated(resp, stage, cfg)
+        _log_llm({"event": "llm_call_end", **base, "latency_s": round(time.monotonic() - t0, 2),
+                  "usage": _usage_of(resp)})
         return resp
     except TimeoutError:
+        _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
+                  "error": {"kind": "timeout", "limit_s": call_timeout}})
         raise _guard_killed(stage, "no completion within the call budget",
                             call_timeout, call_timeout) from None
+    except UserFacingError:
+        raise
     except Exception as e:  # noqa: BLE001
+        _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
+                  "error": _provider_error_detail(e)})
         friendly = translate_llm_error(e, stage, cfg.provider, cfg.model, _BASE_URLS.get(cfg.provider))
         if friendly is not None:
             raise friendly from e
         raise
 
 
-def stream_checked(chat_model, messages, stage: str):
+def stream_checked(chat_model, messages, stage: str, item: str | None = None):
     """Stream the same call invoke_checked would make, under the guardrails:
     the whole call has a wall-clock budget and the stream a stall limit (a
     stream that goes quiet is hung, not thinking). The concatenated chunk
     contents are the completion itself - the output contract is unchanged,
-    the consumer just sees tokens as they land."""
+    the consumer just sees tokens as they land. Logged like invoke_checked."""
     import queue
     import threading
 
@@ -275,6 +355,8 @@ def stream_checked(chat_model, messages, stage: str):
     cfg = for_stage(stage)
     _guard_enter(stage)
     call_timeout, stall_timeout, _ = _guard_limits()
+    base = {"provider": cfg.provider, "model": cfg.model, "stage": stage,
+            **({"item": item} if item else {})}
     q: queue.Queue = queue.Queue()
 
     def _pump() -> None:
@@ -285,6 +367,7 @@ def stream_checked(chat_model, messages, stage: str):
         except Exception as e:  # noqa: BLE001 - delivered to the consumer below
             q.put(("error", e))
 
+    _log_llm({"event": "llm_call_start", **base})
     t0 = time.monotonic()
     threading.Thread(target=_pump, daemon=True).start()
     last = None  # final chunk carries the truncation metadata (done_reason/finish_reason)
@@ -292,13 +375,19 @@ def stream_checked(chat_model, messages, stage: str):
         while True:
             elapsed = time.monotonic() - t0
             if elapsed > call_timeout:
+                _log_llm({"event": "llm_call_error", **base, "latency_s": round(elapsed, 2),
+                          "error": {"kind": "timeout", "limit_s": call_timeout}})
                 raise _guard_killed(stage, "no completion within the call budget", elapsed, call_timeout)
             try:
                 kind, payload = q.get(timeout=max(0.05, min(stall_timeout, call_timeout - elapsed)))
             except queue.Empty:
                 if time.monotonic() - t0 > call_timeout:
+                    _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
+                              "error": {"kind": "timeout", "limit_s": call_timeout}})
                     raise _guard_killed(stage, "no completion within the call budget",
                                         time.monotonic() - t0, call_timeout) from None
+                _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
+                          "error": {"kind": "stall", "limit_s": stall_timeout}})
                 raise _guard_killed(stage, "no output for the stall limit",
                                     stall_timeout, stall_timeout) from None
             if kind == "chunk":
@@ -306,8 +395,12 @@ def stream_checked(chat_model, messages, stage: str):
                 yield payload
             elif kind == "done":
                 _check_truncated(last, stage, cfg)
+                _log_llm({"event": "llm_call_end", **base, "latency_s": round(time.monotonic() - t0, 2),
+                          "usage": _usage_of(last)})
                 return
             else:
+                _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
+                          "error": _provider_error_detail(payload)})
                 raise payload
     except UserFacingError:
         raise
