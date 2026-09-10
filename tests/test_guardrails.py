@@ -33,7 +33,7 @@ class FakeModel:
 def _clean_guard_env(monkeypatch):
     monkeypatch.setattr(mc, "_CALLS_USED", 0)
     for v in ("VMODEL_LLM_CALL_TIMEOUT_S", "VMODEL_LLM_STALL_TIMEOUT_S", "VMODEL_LLM_MAX_CALLS",
-              "VMODEL_LLM_MAX_TOKENS", "VMODEL_LLM_LOG", "VMODEL_LLM_HEARTBEAT_S", "VMODEL_OLLAMA_THINK", "SPEC_GENERATOR_FROM"):
+              "VMODEL_LLM_MAX_TOKENS", "VMODEL_LLM_LOG", "VMODEL_LLM_HEARTBEAT_S", "VMODEL_OLLAMA_THINK", "VMODEL_OLLAMA_NUM_CTX", "SPEC_GENERATOR_FROM"):
         monkeypatch.delenv(v, raising=False)
 
 
@@ -336,3 +336,12 @@ def test_ollama_thinking_knob_reenables(monkeypatch):
     monkeypatch.setenv("VMODEL_OLLAMA_THINK", "1")
     m = mc.build_chat_model("srs")
     assert m.reasoning is True
+
+
+def test_ollama_num_ctx_default_and_knob(monkeypatch):
+    monkeypatch.delenv("VMODEL_OLLAMA_NUM_CTX", raising=False)
+    m = mc.build_chat_model("srs")
+    assert m.num_ctx == 32768  # ollama's 4096 default silently truncates stage prompts
+    monkeypatch.setenv("VMODEL_OLLAMA_NUM_CTX", "16384")
+    m = mc.build_chat_model("srs")
+    assert m.num_ctx == 16384
