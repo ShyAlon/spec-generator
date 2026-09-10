@@ -75,9 +75,15 @@ def stderr_printer():
         if ev.status == "started":
             print(f"  -> {ev.label}{detail}...", file=sys.stderr)
         elif ev.status == "item":
-            print(f"     - {ev.detail}", file=sys.stderr)
+            if ev.elapsed_s is not None:
+                start = time.strftime("%H:%M:%S", time.localtime(ev.ts - ev.elapsed_s))
+                end = time.strftime("%H:%M:%S", time.localtime(ev.ts))
+                print(f"     - [{start}-{end}] {ev.detail}", file=sys.stderr)
+            else:
+                print(f"     - {ev.detail}", file=sys.stderr)
         elif ev.status == "completed":
             print(f"  ok {ev.label}{detail} [{ev.elapsed_s:.1f}s]", file=sys.stderr)
         else:
             print(f"  !! {ev.label}{detail} FAILED after {ev.elapsed_s:.1f}s", file=sys.stderr)
     return _print
+

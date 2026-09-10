@@ -641,11 +641,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         fills = {}
         for slot in slots:
             rid = slot["requirement_id"]
+            t0 = _t.time()
             fills[rid] = _call_json("srs", _srs_slot_payload(state, slot, feedback), log, progress,
                                     validate=_slot_fill_validator(rid), schema=srs_slot_fill_schema(),
                                     stream_items=False)
             if progress is not None:
-                progress.emit(ProgressEvent("srs", "", "item", _t.time(), None,
+                progress.emit(ProgressEvent("srs", "", "item", _t.time(), _t.time() - t0,
                                             f"{rid} {fills[rid].get('title', '')}"))
         body = {"purpose": overview["purpose"], "scope_summary": overview["scope_summary"],
                 "fills": fills}
@@ -765,12 +766,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                               schema=items_plan_schema(req_ids))
             data = []
             for spec in plan:
+                t0 = _t.time()
                 body = _call_json("items", _items_body_payload(state, spec), log, progress,
                                   validate=_items_body_validator(spec), schema=items_body_schema(),
                                   stream_items=False)
                 data.append({**spec, "body_markdown": body["body_markdown"]})
                 if progress is not None:
-                    progress.emit(ProgressEvent("items", "", "item", _t.time(), None,
+                    progress.emit(ProgressEvent("items", "", "item", _t.time(), _t.time() - t0,
                                                 f"{spec['spec_id']} {spec.get('title', '')}"))
         if persist:
             persist("items", data, state)

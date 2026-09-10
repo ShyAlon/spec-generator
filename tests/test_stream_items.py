@@ -1,6 +1,7 @@
 """Per-item progress: scanner correctness + the streamed invoke path keeps the
 output contract byte-identical while emitting one event per completed item."""
 import json
+import re
 
 from spec_generator.progress import ProgressBus, stderr_printer
 from spec_generator.stream_items import ItemReporter, extract_array_items, item_label
@@ -66,7 +67,7 @@ def test_printer_renders_item_lines(capsys):
     bus.subscribe(stderr_printer())
     ItemReporter(bus, "needs").feed('[{"need_id": "N-1", "statement": "alpha"}]')
     out = capsys.readouterr().err
-    assert "     - N-1 alpha" in out
+    assert re.search(r"     - \[\d{2}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2}\] N-1 alpha", out)
 
 
 def test_invoke_streams_and_preserves_output_contract(monkeypatch):

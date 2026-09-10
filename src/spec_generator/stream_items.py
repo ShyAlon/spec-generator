@@ -146,6 +146,7 @@ class ItemReporter:
         self._bus = bus
         self._stage = stage
         self._reported = 0
+        self._last = time.time()  # an item's start is the previous item's end
 
     def feed(self, accumulated: str) -> None:
         if self._bus is None:
@@ -153,5 +154,7 @@ class ItemReporter:
         items = extract_array_items(accumulated)
         for raw in items[self._reported:]:
             self._reported += 1
-            self._bus.emit(ProgressEvent(self._stage, "", "item", time.time(),
-                                         None, item_label(raw, self._reported)))
+            now = time.time()
+            self._bus.emit(ProgressEvent(self._stage, "", "item", now,
+                                         now - self._last, item_label(raw, self._reported)))
+            self._last = now
