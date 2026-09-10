@@ -15,6 +15,7 @@ from spec_generator.errors import UserFacingError
 from spec_generator.graph import build_graph
 from spec_generator.telemetry import UsageLog
 from test_progress import INTENT, PAYLOADS, FakeModel
+from vmodel_contracts import CONTRACT_VERSION
 
 
 def _run_once(box, monkeypatch, db):
@@ -38,7 +39,7 @@ def test_from_items_reruns_downstream_only(monkeypatch, tmp_path):
     after = {k: v.calls for k, v in box.items()}
     assert after["needs"] == 1 and after["srs"] == 1 and after["architecture"] == 1  # preserved
     assert after["items"] == 2 and after["tests"] == 2 and after["review"] == 2      # re-fired
-    assert "bundle" in r and r["bundle"]["items"][0]["spec_id"] == "SPEC-api"
+    assert "bundle" in r and r["bundle"]["items"][0]["spec_id"] == "SPEC-1"
 
 
 def test_review_loop_runs_fresh_after_rewind(monkeypatch, tmp_path):
@@ -80,7 +81,7 @@ def test_cli_from_items_end_to_end(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
     intent_file = tmp_path / "intent_model.json"
-    intent_file.write_text(json.dumps(dict(INTENT, contract_version="0.8.0")))
+    intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
     outdir = tmp_path / "bundle"
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir)])
     main()
@@ -91,4 +92,4 @@ def test_cli_from_items_end_to_end(monkeypatch, tmp_path, capsys):
     assert "Re-running from stage 'items'" in err
     assert "preserved: needs, srs, architecture" in err
     assert box["items"].calls == 2 and box["srs"].calls == 1
-    assert json.loads((outdir / "items.json").read_text())[0]["spec_id"] == "SPEC-api"
+    assert json.loads((outdir / "items.json").read_text())[0]["spec_id"] == "SPEC-1"

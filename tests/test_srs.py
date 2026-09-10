@@ -107,6 +107,6 @@ def test_tests_stage_owns_ids_and_links(monkeypatch):
     tests = r["bundle"]["_tests"]
     assert [(t["test_id"], t["level"], t.get("criterion_id"), t.get("spec_id")) for t in tests] == [
         ("T-1", "acceptance", "AC-1", None),
-        ("T-2", "unit", None, "SPEC-api"),
+        ("T-2", "unit", None, "SPEC-1"),
     ]
 

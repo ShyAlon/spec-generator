@@ -99,9 +99,9 @@ def test_printer_renders_item_timestamps(capsys):
     bus = ProgressBus()
     bus.subscribe(stderr_printer())
     end = time.time()
-    bus.emit(ProgressEvent("items", "", "item", end, 3.2, "SPEC-gateway Set up Kong API gateway"))
+    bus.emit(ProgressEvent("items", "", "item", end, 3.2, "SPEC-5 (gateway) Set up Kong API gateway"))
     out = capsys.readouterr().err
-    assert re.search(r"\[\d{2}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2}\] SPEC-gateway Set up Kong API gateway", out)
+    assert re.search(r"\[\d{2}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2}\] SPEC-5 \(gateway\) Set up Kong API gateway", out)
     # events without timing (retry notices) keep the old plain line
     bus.emit(ProgressEvent("srs", "", "item", end, None, "model output was not valid JSON - retrying once"))
     assert "- model output was not valid JSON - retrying once" in capsys.readouterr().err

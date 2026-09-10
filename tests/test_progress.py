@@ -27,8 +27,8 @@ PAYLOADS = {
                      "decisions": [{"title": "t", "decision": "x", "rationale": "y",
                                     "driver": "simplicity",
                                     "options_considered": [{"option": "z", "reason": "heavier"}]}]},
-    "items": [{"spec_id": "SPEC-api", "kind": "api_surface", "title": "API",
-               "body_markdown": "# API", "requirement_ids": ["R-1"]}],
+    "items": [{"slug": "api", "kind": "api_surface", "title": "API",
+               "body_markdown": "# API", "requirement_ids": ["R-1"]}],  # code numbers it SPEC-1
     "tests": {"fills": {"T-1": {"description": "criterion holds",
                                 "runner": "http", "definition": {"url": "/"}},
                         "T-2": {"description": "spec renders",

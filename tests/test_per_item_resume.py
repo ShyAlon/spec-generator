@@ -18,10 +18,10 @@ from spec_generator.progress import ProgressBus, stderr_printer
 from spec_generator.telemetry import UsageLog
 from test_progress import INTENT, PAYLOADS
 
-PLAN = [{"spec_id": "SPEC-api", "kind": "api_surface", "title": "API",
+PLAN = [{"slug": "api", "kind": "api_surface", "title": "API",
          "requirement_ids": ["R-1"], "depends_on": []},
-        {"spec_id": "SPEC-web", "kind": "ui_flow", "title": "Web",
-         "requirement_ids": ["R-1"], "depends_on": ["SPEC-api"]}]
+        {"slug": "web", "kind": "ui_flow", "title": "Web",
+         "requirement_ids": ["R-1"], "depends_on": ["api"]}]
 
 
 def _routing(calls, fail_after_bodies=None, bus_events=None):
@@ -77,15 +77,15 @@ def test_crash_mid_items_reruns_only_the_missing_bodies(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
     saved = partials.load("items")
-    assert saved and [d["spec_id"] for d in saved] == ["SPEC-api"]  # first body survived the crash
+    assert saved and [d["spec_id"] for d in saved] == ["SPEC-1"]  # first body survived the crash
 
     calls2 = []
     g2, _ = _build(monkeypatch, calls2, tmp_path, "run2", partials=partials)
     r = g2.invoke({"intent_model": dict(INTENT)}, {"configurable": "ignored"}) \
         if False else g2.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s2"}})
     bodies = [sc for st, sc in calls2 if st == "items" and sc.get("type") != "array"]
-    assert len(bodies) == 1  # SPEC-web only - SPEC-api was preserved, not re-bought
-    assert [i["spec_id"] for i in r["items"]] == ["SPEC-api", "SPEC-web"]
+    assert len(bodies) == 1  # SPEC-2 only - SPEC-1 was preserved, not re-bought
+    assert [i["spec_id"] for i in r["items"]] == ["SPEC-1", "SPEC-2"]
     assert partials.load("items") is None  # partial cleared on stage completion
 
 
@@ -121,7 +121,7 @@ def test_micro_call_emits_start_and_completion_lines(monkeypatch, tmp_path):
     started = [e for e in events if e.status == "item_started"]
     done = [e for e in events if e.status == "item" and e.elapsed_s is not None]
     assert any(e.detail.startswith("R-1") for e in started)      # srs fill
-    assert any(e.detail.startswith("SPEC-api") for e in started)  # items body
+    assert any(e.detail.startswith("SPEC-1 (api)") for e in started)  # items body: numbered + slug
     assert any(e.detail.startswith("R-1") for e in done)
     # a start line always precedes its completion (same stage, same id)
     for s in started:
@@ -165,8 +165,8 @@ def test_printer_writes_start_then_completion(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: _routing(calls)(stage, kw.get("schema") or {}))
     _invoke("items", "{}", UsageLog("s"), progress=bus, stream_items=False,
-            item_label="SPEC-api API")
+            item_label="SPEC-1 (api) API")
     out = capsys.readouterr().err
     import re
-    assert re.search(r"\[\d{2}:\d{2}:\d{2}\] SPEC-api API", out)               # start line
-    assert re.search(r"\[\d{2}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2}\] SPEC-api API", out)  # completion
+    assert re.search(r"\[\d{2}:\d{2}:\d{2}\] SPEC-1 \(api\) API", out)         # start line
+    assert re.search(r"\[\d{2}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2}\] SPEC-1 \(api\) API", out)  # completion

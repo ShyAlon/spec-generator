@@ -75,7 +75,7 @@ def test_incremental_bundle_on_disk_and_atomic(tmp_path, queue_models):
     for f in ("needs.json", "needs.md", "srs.json", "srs.md",
               "architecture.json", "architecture.md", "items.json", "tests.json"):
         assert (tmp_path / f).exists(), f
-    assert (tmp_path / "specs" / "SPEC-api.md").exists()
+    assert (tmp_path / "specs" / "SPEC-1.md").exists()
     assert "Driver:" in (tmp_path / "architecture.md").read_text()  # rendered, not raw JSON
     assert not list(tmp_path.glob("*.tmp")) and not list((tmp_path / "specs").glob("*.tmp"))
 
@@ -93,7 +93,7 @@ def test_late_failure_leaves_completed_stages_on_disk(tmp_path, monkeypatch):
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver(), persist=persist)
     with pytest.raises(RuntimeError):
         g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "p3"}})
-    for f in ("needs.json", "srs.json", "architecture.json", "items.json", "specs/SPEC-api.md"):
+    for f in ("needs.json", "srs.json", "architecture.json", "items.json", "specs/SPEC-1.md"):
         assert (tmp_path / f).exists(), f
     assert not (tmp_path / "tests.json").exists()  # the failed stage wrote nothing
 

@@ -22,10 +22,10 @@ def _reqs():
 
 
 def test_clean_set_has_no_violations():
-    items = [ItemSpec(spec_id="SPEC-booking", kind=SpecItemKind.API_SURFACE, title="Booking API",
+    items = [ItemSpec(spec_id="SPEC-1", kind=SpecItemKind.API_SURFACE, title="Booking API",
                       body_markdown="...", requirement_ids=["R-1"])]
     tests = [AcceptanceTest(test_id="T-1", level=VModelLevel.ACCEPTANCE, criterion_id="AC-1",
-                            spec_id="SPEC-booking", description="booking works", runner="http",
+                            spec_id="SPEC-1", description="booking works", runner="http",
                             definition={"method": "POST", "url": "/bookings", "expect": 201})]
     assert validate_traceability(_needs(), _reqs(), items, tests) == []
 
@@ -43,15 +43,16 @@ def test_unknown_need_reference_is_caught():
 
 
 def test_milestones_respect_dependencies():
-    a = ItemSpec(spec_id="SPEC-model", kind=SpecItemKind.DATA_MODEL, title="Model", body_markdown=".", requirement_ids=["R-1"])
-    b = ItemSpec(spec_id="SPEC-api", kind=SpecItemKind.API_SURFACE, title="API", body_markdown=".", requirement_ids=["R-1"], depends_on=["SPEC-model"])
+    a = ItemSpec(spec_id="SPEC-1", kind=SpecItemKind.DATA_MODEL, title="Model", body_markdown=".", requirement_ids=["R-1"])
+    b = ItemSpec(spec_id="SPEC-2", kind=SpecItemKind.API_SURFACE, title="API", body_markdown=".", requirement_ids=["R-1"], depends_on=["SPEC-1"])
     ms = order_milestones([b, a], [])
-    assert ms[0].spec_ids == ["SPEC-model"] and ms[1].spec_ids == ["SPEC-api"]
+    assert ms[0].spec_ids == ["SPEC-1"] and ms[1].spec_ids == ["SPEC-2"]
 
 
 def test_traceability_links_requirement_to_test():
-    items = [ItemSpec(spec_id="SPEC-x", kind=SpecItemKind.API_SURFACE, title="X", body_markdown=".", requirement_ids=["R-1"])]
+    items = [ItemSpec(spec_id="SPEC-1", kind=SpecItemKind.API_SURFACE, title="X", body_markdown=".", requirement_ids=["R-1"])]
     tests = [AcceptanceTest(test_id="T-1", level=VModelLevel.ACCEPTANCE, criterion_id="AC-1",
                             description="d", runner="http", definition={})]
     [entry] = build_traceability(_reqs(), items, tests)
-    assert entry.spec_ids == ["SPEC-x"] and entry.test_ids == ["T-1"]
+    assert entry.spec_ids == ["SPEC-1"] and entry.test_ids == ["T-1"]
+

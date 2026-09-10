@@ -58,10 +58,11 @@ def test_merge_rejects_missing_unknown_and_duplicate_fills():
 
 
 def test_test_skeleton_links_and_continuous_ids():
-    slots = build_test_skeleton(CONTRACT_SRS, PAYLOADS["items"])
+    assigned = [dict(PAYLOADS["items"][0], spec_id="SPEC-1")]  # post-numbering shape
+    slots = build_test_skeleton(CONTRACT_SRS, assigned)
     assert slots == [
         {"test_id": "T-1", "level": "acceptance", "criterion_id": "AC-1", "spec_id": None},
-        {"test_id": "T-2", "level": "unit", "criterion_id": None, "spec_id": "SPEC-api"}]
+        {"test_id": "T-2", "level": "unit", "criterion_id": None, "spec_id": "SPEC-1"}]
     merged = merge_test_fills(slots, {"fills": [
         {"test_id": "T-2", "description": "d2", "runner": "pytest", "definition": {"path": "x"}},
         {"test_id": "T-1", "description": "d1", "runner": "http", "definition": {"url": "/"}}]})

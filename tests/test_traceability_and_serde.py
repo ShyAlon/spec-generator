@@ -91,19 +91,24 @@ def test_uncovered_requirement_named_in_retry_feedback(monkeypatch):
 
 def test_items_validator_units():
     v = _items_validator(["R-1", "R-2"])
-    good = [{"spec_id": "SPEC-a", "kind": "api_surface", "title": "A", "body_markdown": "b",
+    good = [{"slug": "a", "kind": "api_surface", "title": "A", "body_markdown": "b",
              "requirement_ids": ["R-1"]},
-            {"spec_id": "SPEC-b", "kind": "data_model", "title": "B", "body_markdown": "b",
-             "requirement_ids": ["R-2"], "depends_on": ["SPEC-a"]}]
-    assert v(good) is None
+            {"slug": "b", "kind": "data_model", "title": "B", "body_markdown": "b",
+             "requirement_ids": ["R-2"], "depends_on": ["a"]}]
+    out = v(good)
+    # code-owned numbering: slugs become SPEC-1..N in plan order, deps translate
+    assert [i["spec_id"] for i in out] == ["SPEC-1", "SPEC-2"]
+    assert out[1]["depends_on"] == ["SPEC-1"] and out[0]["slug"] == "a"
     with pytest.raises(ModelStructureError, match="covered by no item spec: \\['R-2'\\]"):
         v(good[:1])
     with pytest.raises(ModelStructureError, match="duplicate spec ids"):
         v([good[0], dict(good[0], requirement_ids=["R-2"])])
     with pytest.raises(ModelStructureError, match="depends on unknown specs"):
-        v([good[0], dict(good[1], depends_on=["SPEC-nope"])])
+        v([good[0], dict(good[1], depends_on=["nope"])])
     with pytest.raises(ModelStructureError, match="claims unknown requirements \\['R-99'\\]"):
         v([dict(good[0], requirement_ids=["R-1", "R-99"]), good[1]])
+    with pytest.raises(ModelStructureError, match="invalid slug"):
+        v([dict(good[0], slug="SPEC-a")])  # model must not invent SPEC-ids
 
 
 def test_prompt_view_strips_pipeline_owned_recursively():

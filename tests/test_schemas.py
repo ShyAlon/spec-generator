@@ -203,7 +203,7 @@ def test_schema_conformant_payloads_pass_full_contract_validation():
     from test_progress import CONTRACT_SRS, INTENT, PAYLOADS
     from vmodel_contracts import (AcceptanceTest, ArchitectureOverview, ItemSpec,
                                   SRSDocument, StakeholderNeedsSet)
-    from spec_generator.graph import srs_document_data
+    from spec_generator.graph import _assign_spec_ids, srs_document_data
     from spec_generator.render import render_srs
     from spec_generator.schemas import srs_fill_schema, test_fill_schema
     from spec_generator.skeleton import (assign_architecture_ids, build_srs_skeleton,
@@ -224,11 +224,11 @@ def test_schema_conformant_payloads_pass_full_contract_validation():
     ArchitectureOverview.model_validate(
         {**assign_architecture_ids(arch), "session_id": INTENT["session_id"]})
 
-    items = _project(PAYLOADS["items"], for_stage("items"))
+    items = _assign_spec_ids(_project(PAYLOADS["items"], for_stage("items")))
     for i in items:
         ItemSpec.model_validate(i)
 
-    test_slots = build_test_skeleton(CONTRACT_SRS, PAYLOADS["items"])
+    test_slots = build_test_skeleton(CONTRACT_SRS, items)
     tfills = _project(PAYLOADS["tests"], test_fill_schema(test_slots))
     tests = merge_test_fills(test_slots, tfills)
     assert tests and all(AcceptanceTest.model_validate(t) for t in tests) is not None

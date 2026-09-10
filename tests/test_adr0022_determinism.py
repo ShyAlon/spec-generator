@@ -62,7 +62,8 @@ def test_micro_call_prompts_are_small_and_id_clean():
             "intent_fields": ["problem_statement"]}
     for payload in (_srs_overview_payload(state), _srs_slot_payload(state, slot),
                     _items_plan_payload(state, ["R-1"]),
-                    _items_body_payload(state, {"spec_id": "SPEC-api", "kind": "api_surface",
+                    _items_body_payload(state, {"spec_id": "SPEC-1", "slug": "api",
+                                                "kind": "api_surface",
                                                 "title": "API", "requirement_ids": ["R-1"],
                                                 "depends_on": []})):
         assert "20260909-094216-e900" not in payload
@@ -91,7 +92,7 @@ def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
                            "priority": "must", "acceptance": ["spec exists"]}
             elif self.stage == "items":
                 if self.schema.get("type") == "array":
-                    out = [{"spec_id": "SPEC-api", "kind": "api_surface", "title": "API",
+                    out = [{"slug": "api", "kind": "api_surface", "title": "API",
                             "requirement_ids": ["R-1"], "depends_on": []}]
                 else:
                     out = {"body_markdown": "# API"}
@@ -110,4 +111,4 @@ def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
     assert [s for s, _, _ in calls].count("srs") == 2
     assert [s for s, _, _ in calls].count("items") == 2
     assert r["srs"]["functional"][0]["requirement_id"] == "R-1"  # code-owned
-    assert r["items"][0]["spec_id"] == "SPEC-api"
+    assert r["items"][0]["spec_id"] == "SPEC-1" and r["items"][0]["slug"] == "api"  # code-owned numbering

@@ -240,14 +240,14 @@ def test_tools_opt_in_full_pipeline_green(monkeypatch):
         "srs": [[{"name": "link_requirement_to_need",
                   "args": {"requirement_id": "R-1", "need_id": "N-1"}, "id": "c1"}], []],
         "tests": [[{"name": "add_test",
-                    "args": {"level": "module", "spec_id": "SPEC-api",
+                    "args": {"level": "module", "spec_id": "SPEC-1",
                              "description": "end-to-end module flow", "runner": "http",
                              "definition": {"url": "/api/x", "expect_status": 200}}, "id": "c2"}], []]})
     srs = r["bundle"]["_srs"]
     assert [q["requirement_id"] for q in srs["functional"]] == ["R-1"]
     assert srs["functional"][0]["need_ids"] == ["N-1"]  # dedup: link was already implied
     tests = r["bundle"]["_tests"]
-    assert any(t["test_id"] == "T-3" and t["level"] == "module" and t["spec_id"] == "SPEC-api"
+    assert any(t["test_id"] == "T-3" and t["level"] == "module" and t["spec_id"] == "SPEC-1"
                for t in tests), "add_test proposal adopted as-is"
 
 

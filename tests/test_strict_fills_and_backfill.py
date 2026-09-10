@@ -97,7 +97,7 @@ def test_backfill_writes_completed_stages_without_rerunning(monkeypatch, tmp_pat
     for f in ("needs.json", "needs.md", "srs.json", "srs.md",
               "architecture.json", "architecture.md", "items.json", "tests.json"):
         assert (outdir / f).exists(), f
-    assert (outdir / "specs" / "SPEC-api.md").exists()
+    assert (outdir / "specs" / "SPEC-1.md").exists()
     assert {k: v.calls for k, v in box.items()} == calls_at_completion  # nothing re-ran
 
 
