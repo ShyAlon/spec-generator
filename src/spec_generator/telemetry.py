@@ -10,10 +10,10 @@ from typing import Callable
 
 from vmodel_contracts import StageTokenUsage
 
-PRICE_TABLE_VERSION = "2026-09-08"
+PRICE_TABLE_VERSION = "2026-09-10"
 PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
-    "deepseek-chat": (0.27, 1.10),
-    "deepseek-reasoner": (0.55, 2.19),
+    "deepseek-flash": (0.30, 1.20),       # V4.1 Flash peak; off-peak $0.15/$0.60
+    "deepseek-v4-pro": (1.32, 3.96),      # peak; off-peak $0.66/$1.98; retires to Flash 2026-09-14
     "claude-sonnet-5": (2.00, 10.00),
     "claude-haiku-4.5": (1.00, 5.00),
     "gpt-5": (1.25, 10.00),
@@ -56,3 +56,4 @@ class UsageLog:
 
     def total_usd(self) -> float:
         return sum(r.cost_usd for r in self.records)
+

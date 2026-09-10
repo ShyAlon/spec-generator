@@ -151,7 +151,14 @@ requirements are the free competitors' product:
 ```bash
 export DEEPSEEK_API_KEY=...
 for s in NEEDS SRS REVIEW; do
-  export SPEC_GENERATOR_MODEL_$s=deepseek:deepseek-chat
+  export SPEC_GENERATOR_MODEL_$s=deepseek:deepseek-flash
 done
 ```
+`deepseek-flash` is the current DeepSeek V4.1 Flash API name. The retired
+`deepseek-v4-flash` alias routes to it temporarily. Current pricing per 1M
+tokens: cache-miss input $0.15 off-peak / $0.30 peak; output $0.60 / $1.20
+(cache hits $0.003 / $0.006). Override the shared switcher without editing
+code via `DEEPSEEK_MODEL=<model> vmodel-spec-app/scripts/switch-model.sh deepseek`.
+
+
 
