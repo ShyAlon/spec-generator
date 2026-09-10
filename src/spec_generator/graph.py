@@ -960,8 +960,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                           + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
                           + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                             "return one STRICT JSON object {fills: {...}} with EXACTLY these keys, one per slot: "
-                          + json.dumps(missing_ids) + ". Each fill is {description, runner, definition}. runner and "
-                            "definition describe how to test THE FOUNDER'S PRODUCT - never this pipeline.", log, progress,
+                          + json.dumps(missing_ids) + ". Each fill is {description, runner, definition}; definition is "
+                            "{preconditions: [string], steps: [string], expected_outcomes: [string], cleanup: [string], "
+                            "cases: [{name, inputs: [string], expected_outcomes: [string]}], execution: {url?, method?, "
+                            "body_json?, expected_status?, command?, expected_exit?, expected_stdout_contains?, selector?}}. "
+                            "Include all six outer fields; use [] or {} when inapplicable. runner and definition describe how "
+                            "to test THE FOUNDER'S PRODUCT - "
+                            "never this pipeline.", log, progress,
                               validate=_validate_new, schema=test_fill_schema(missing),
                               on_item=(_keep if partials else None))
                 fills = {**done, **(out.get("fills") or {})}
@@ -989,8 +994,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                           + "\n\nTEST SLOT (fill its prose):\n" + json.dumps(sl)
                           + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                             "return one STRICT JSON object {fills: {...}} with EXACTLY this one key: "
-                          + json.dumps([tid]) + ". The fill is {description, runner, definition}. runner and "
-                            "definition describe how to test THE FOUNDER'S PRODUCT - never this pipeline.", log, progress,
+                          + json.dumps([tid]) + ". The fill is {description, runner, definition}; definition is "
+                            "{preconditions: [string], steps: [string], expected_outcomes: [string], cleanup: [string], "
+                            "cases: [{name, inputs: [string], expected_outcomes: [string]}], execution: {url?, method?, "
+                            "body_json?, expected_status?, command?, expected_exit?, expected_stdout_contains?, selector?}}. "
+                            "Include all six outer fields; use [] or {} when inapplicable. runner and definition describe how "
+                            "to test THE FOUNDER'S PRODUCT - "
+                            "never this pipeline.", log, progress,
                               validate=_validate_one, schema=test_fill_schema([sl]), stream_items=False,
                               item_label=f"{tid} ({sl['level']}: {link})")
                     done[tid] = (out.get("fills") or {})[tid]

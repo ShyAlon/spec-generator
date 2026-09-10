@@ -49,7 +49,7 @@ def _routing(calls, fail_after_bodies=None, bus_events=None):
                 wanted = self.schema["properties"]["fills"]["required"]
                 out = {"fills": {tid: PAYLOADS["tests"]["fills"].get(
                     tid, {"description": f"{tid} holds", "runner": "pytest",
-                          "definition": {"path": "x"}}) for tid in wanted}}
+                          "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}}) for tid in wanted}}
             else:
                 out = PAYLOADS[self.stage]
             yield AIMessage(content=json.dumps(out))

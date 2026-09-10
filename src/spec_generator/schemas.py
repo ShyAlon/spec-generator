@@ -90,6 +90,7 @@ from vmodel_contracts import (
     SpecItemKind,
     SRSDocument,
     StakeholderNeedsSet,
+    TestDefinition,
 )
 
 
@@ -147,13 +148,18 @@ def srs_fill_schema(slots: list[dict]) -> dict:
             "additionalProperties": False}
 
 
+def _test_definition_schema() -> dict:
+    """Grammar-safe shape derived from the shared TestDefinition contract."""
+    return _grammar_safe(TestDefinition.model_json_schema())
+
+
 def test_fill_schema(slots: list[dict]) -> dict:
     """Same per-skeleton tightening for the tests stage: every test slot id is
     a required property of the fills object."""
     fill = {"type": "object",
             "properties": {"description": {"type": "string"},
                            "runner": {"type": "string"},
-                           "definition": {"type": "object"}},
+                           "definition": _test_definition_schema()},
             "required": ["description", "runner", "definition"],
             "additionalProperties": False}
     ids = [sl["test_id"] for sl in slots]
@@ -272,7 +278,7 @@ def _raw_stage_schema(stage: str) -> dict:
                 "properties": {"test_id": {"type": "string"},
                                "description": {"type": "string"},
                                "runner": {"type": "string"},
-                               "definition": {"type": "object"}},
+                               "definition": _test_definition_schema()},
                 "required": ["test_id", "description", "runner", "definition"],
                 "additionalProperties": False}
         return {"type": "object",

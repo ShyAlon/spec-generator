@@ -98,7 +98,7 @@ class TestAddTest:
         tb = self._tb()
         out = tb.call("add_test", {"level": "module", "spec_id": "SPEC-1",
                                    "description": "upload then report flow", "runner": "http",
-                                   "definition": {"url": "/api/report", "expect_status": 200}})
+                                   "definition": {"preconditions": [], "steps": ["GET /api/report"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}})
         assert out["test_id"] == "T-3"
         slot = [s for s in tb.slots if s["test_id"] == "T-3"][0]
         assert slot["level"] == "module" and slot["criterion_id"] is None
@@ -117,10 +117,10 @@ class TestAddTest:
     def test_seed_adopted_as_fill(self):
         tb = self._tb()
         tb.call("add_test", {"level": "system", "spec_id": "SPEC-1", "description": "full flow",
-                             "runner": "http", "definition": {"url": "/api/x", "expect_status": 200}})
+                             "runner": "http", "definition": {"preconditions": [], "steps": ["GET /api/x"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}})
         doc = merge_test_fills(tb.slots, {"fills": [
-            {"test_id": "T-1", "description": "d", "runner": "http", "definition": {"url": "/u", "expect_status": 200}},
-            {"test_id": "T-2", "description": "d", "runner": "http", "definition": {"url": "/u", "expect_status": 200}}]})
+            {"test_id": "T-1", "description": "d", "runner": "http", "definition": {"preconditions": [], "steps": ["GET /u"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}},
+            {"test_id": "T-2", "description": "d", "runner": "http", "definition": {"preconditions": [], "steps": ["GET /u"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}]})
         assert len(doc) == 3
         added = doc[2]
         assert added["test_id"] == "T-3" and added["description"] == "full flow"
@@ -242,7 +242,7 @@ def test_tools_opt_in_full_pipeline_green(monkeypatch):
         "tests": [[{"name": "add_test",
                     "args": {"level": "module", "spec_id": "SPEC-1",
                              "description": "end-to-end module flow", "runner": "http",
-                             "definition": {"url": "/api/x", "expect_status": 200}}, "id": "c2"}], []]})
+                             "definition": {"preconditions": [], "steps": ["GET /api/x"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}, "id": "c2"}], []]})
     srs = r["bundle"]["_srs"]
     assert [q["requirement_id"] for q in srs["functional"]] == ["R-1"]
     assert srs["functional"][0]["need_ids"] == ["N-1"]  # dedup: link was already implied

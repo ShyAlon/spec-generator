@@ -26,7 +26,7 @@ def test_clean_set_has_no_violations():
                       body_markdown="...", requirement_ids=["R-1"])]
     tests = [AcceptanceTest(test_id="T-1", level=VModelLevel.ACCEPTANCE, criterion_id="AC-1",
                             spec_id="SPEC-1", description="booking works", runner="http",
-                            definition={"method": "POST", "url": "/bookings", "expect": 201})]
+                            definition={"preconditions": [], "steps": ["POST /bookings"], "expected_outcomes": ["HTTP 201"], "cleanup": [], "cases": [], "execution": {}})]
     assert validate_traceability(_needs(), _reqs(), items, tests) == []
 
 
@@ -52,7 +52,7 @@ def test_milestones_respect_dependencies():
 def test_traceability_links_requirement_to_test():
     items = [ItemSpec(spec_id="SPEC-1", kind=SpecItemKind.API_SURFACE, title="X", body_markdown=".", requirement_ids=["R-1"])]
     tests = [AcceptanceTest(test_id="T-1", level=VModelLevel.ACCEPTANCE, criterion_id="AC-1",
-                            description="d", runner="http", definition={})]
+                            description="d", runner="http", definition={"preconditions": [], "steps": ["run"], "expected_outcomes": ["pass"], "cleanup": [], "cases": [], "execution": {}})]
     [entry] = build_traceability(_reqs(), items, tests)
     assert entry.spec_ids == ["SPEC-1"] and entry.test_ids == ["T-1"]
 

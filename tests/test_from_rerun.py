@@ -109,7 +109,7 @@ def test_from_warns_before_discarding_preserved_partials(monkeypatch, tmp_path, 
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir)])
     main()
     (outdir / "tests_fills.partial.json").write_text(json.dumps(
-        {"T-1": {"description": "d", "runner": "r", "definition": {"path": "x"}}}))
+        {"T-1": {"description": "d", "runner": "r", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}}}))
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--from", "items"])
     main()
     err = capsys.readouterr().err

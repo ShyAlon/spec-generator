@@ -30,9 +30,9 @@ PAYLOADS = {
     "items": [{"slug": "api", "kind": "api_surface", "title": "API",
                "body_markdown": "# API", "requirement_ids": ["R-1"]}],  # code numbers it SPEC-1
     "tests": {"fills": {"T-1": {"description": "criterion holds",
-                                "runner": "http", "definition": {"url": "/"}},
+                                "runner": "http", "definition": {"preconditions": [], "steps": ["GET /"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}},
                         "T-2": {"description": "spec renders",
-                                "runner": "pytest", "definition": {"path": "x"}}}},
+                                "runner": "pytest", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}}}},
     "review": [],
 }
 

@@ -232,3 +232,20 @@ def test_schema_conformant_payloads_pass_full_contract_validation():
     tfills = _project(PAYLOADS["tests"], test_fill_schema(test_slots))
     tests = merge_test_fills(test_slots, tfills)
     assert tests and all(AcceptanceTest.model_validate(t) for t in tests) is not None
+
+
+def test_test_definition_grammar_is_canonical_but_content_stays_free():
+    from spec_generator.schemas import test_fill_schema
+
+    definition = test_fill_schema([{"test_id": "T-1"}])["properties"]["fills"]["properties"]["T-1"]["properties"]["definition"]
+    assert set(definition["properties"]) == {
+        "preconditions", "steps", "expected_outcomes", "cleanup", "cases", "execution"
+    }
+    assert set(definition["required"]) == set(definition["properties"])
+    assert definition["additionalProperties"] is False
+    case = definition["properties"]["cases"]["items"]
+    assert set(case["properties"]) == {"name", "inputs", "expected_outcomes"}
+    assert set(case["required"]) == set(case["properties"])
+    assert case["additionalProperties"] is False
+    # Free strings retain runner/domain detail; only the container is fixed.
+    assert definition["properties"]["steps"]["items"] == {"type": "string"}
