@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -327,6 +328,96 @@ def _default_outdir(intent_path: Path, session_id: str) -> Path:
     return Path(f"artifacts-{stamp:%Y-%m-%d_%H-%M-%S}")
 
 
+_ONLY_STAGE_INPUTS = {
+    "srs": ("needs",),
+    "architecture": ("srs",),
+    "items": ("srs", "architecture"),
+    "tests": ("srs", "architecture", "items"),
+    "review": ("srs", "architecture", "items", "tests"),
+}
+_ARTIFACT_FILES = {"needs": "needs.json", "srs": "srs.json", "architecture": "architecture.json",
+                   "items": "items.json", "tests": "tests.json"}
+
+
+def _stage_outdir(source: Path, stage: str) -> Path:
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    return source.with_name(f"{source.name}-{stage}-{stamp}")
+
+
+def _load_stage_state(source: Path, intent: dict, stage: str) -> dict:
+    """Load the immutable upstream artifact set for one stage iteration."""
+    if stage not in _ONLY_STAGE_INPUTS:
+        raise UserFacingError(
+            f"--only-stage: unknown stage {stage!r}.",
+            "only authoring/review stages can run alone.",
+            f"valid stages: {', '.join(_ONLY_STAGE_INPUTS)}.",
+        )
+    state = {"intent_model": intent}
+    missing = []
+    for key in _ONLY_STAGE_INPUTS[stage]:
+        path = source / _ARTIFACT_FILES[key]
+        if not path.is_file():
+            missing.append(str(path))
+            continue
+        state[key] = json.loads(path.read_text())
+    if missing:
+        raise UserFacingError(
+            f"cannot run only stage '{stage}': required upstream artifacts are missing.",
+            "the source run is incomplete or the wrong directory was selected.",
+            "missing: " + ", ".join(missing),
+        )
+    return state
+
+
+def _prepare_stage_iteration(source: Path, outdir: Path) -> None:
+    """Clone human artifacts into a new directory, never runtime/checkpoint state."""
+    if source.resolve() == outdir.resolve():
+        raise UserFacingError(
+            "--only-stage refuses to write into the source artifacts directory.",
+            "stage iteration must be non-destructive.",
+            "choose a new --out directory or omit --out for an automatic one.",
+        )
+    if outdir.exists():
+        raise UserFacingError(
+            f"stage iteration output already exists: {outdir}.",
+            "reusing it could mix two experiments.",
+            "choose a fresh --out directory.",
+        )
+    ignored = shutil.ignore_patterns("checkpoints.sqlite*", "*.partial.json", "usage.jsonl",
+                                     "llm-calls.jsonl", "run.log")
+    shutil.copytree(source, outdir, ignore=ignored)
+    (outdir / "specs").mkdir(exist_ok=True)
+
+
+def _run_only_stage(args, intent: dict, sid: str) -> None:
+    source = args.source_artifacts.resolve()
+    if not source.is_dir():
+        raise UserFacingError(
+            f"source artifacts directory not found: {source}.",
+            "--only-stage reads upstream artifacts from a completed run.",
+            "pass --source-artifacts <artifacts-...>.",
+        )
+    outdir = (args.out.resolve() if args.out is not None else _stage_outdir(source, args.only_stage))
+    state = _load_stage_state(source, intent, args.only_stage)
+    _prepare_stage_iteration(source, outdir)
+    loaded = [*(_ONLY_STAGE_INPUTS[args.only_stage])]
+    print(f"Stage iteration: {args.only_stage}", file=sys.stderr)
+    print(f"Loaded immutable source: {source}", file=sys.stderr)
+    print(f"Loaded upstream: {', '.join(loaded) or 'intent only'}", file=sys.stderr)
+    print(f"Recomputing ONLY: {args.only_stage}; downstream artifacts are copied for comparison, not regenerated.",
+          file=sys.stderr)
+    print(f"New output: {outdir} (source will not be modified)", file=sys.stderr)
+    log = UsageLog(sid, sink=jsonl_sink(outdir / "usage.jsonl"))
+    bus = ProgressBus(); bus.subscribe(stderr_printer())
+    persist = _make_persist(intent, outdir)
+    graph = build_graph(log, progress=bus, persist=persist, partials=_make_partials(outdir),
+                        only_stage=args.only_stage)
+    result = graph.invoke(state, {"configurable": {"thread_id": sid + "-" + args.only_stage}})
+    if args.only_stage == "review":
+        _atomic_write(outdir / "review-fixes.json", json.dumps(result.get("review_fixes") or [], indent=2))
+    print(f"Stage '{args.only_stage}' written to {outdir}. Source unchanged.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("intent_model", type=Path)
@@ -338,7 +429,17 @@ def main() -> None:
                     help="rewind the checkpoint: re-run STAGE and everything after it under the "
                          "current code, earlier stages preserved (stages: needs, srs, architecture, "
                          "items, tests, review, assemble)")
+    ap.add_argument("--only-stage", choices=tuple(_ONLY_STAGE_INPUTS), default=None,
+                    help="run exactly one stage from an existing completed artifact set; never mutates source")
+    ap.add_argument("--source-artifacts", type=Path, default=None,
+                    help="completed artifacts directory supplying upstream inputs for --only-stage")
     args = ap.parse_args()
+    if bool(args.only_stage) != bool(args.source_artifacts):
+        ap.error("--only-stage and --source-artifacts must be used together")
+    if args.only_stage and args.from_stage:
+        ap.error("--only-stage cannot be combined with --from")
+    if args.only_stage and args.review:
+        ap.error("--only-stage cannot be combined with --review")
 
     if not args.intent_model.exists():
         raise UserFacingError(
@@ -373,6 +474,9 @@ def main() -> None:
             "otherwise re-run the interview (minutes on a local model) to regenerate the intent model.",
         ) from e
     sid = intent["session_id"]
+    if args.only_stage:
+        _run_only_stage(args, intent, sid)
+        return
     outdir = args.out if args.out is not None else _default_outdir(args.intent_model, sid)
     outdir.mkdir(parents=True, exist_ok=True)
     (outdir / "specs").mkdir(exist_ok=True)
@@ -469,5 +573,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     run_cli(lambda: run_with_system_awake(main))
+
 
 

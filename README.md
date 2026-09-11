@@ -180,3 +180,23 @@ legacy unscoped fixes deliberately take the full safe fallback.
 With `VMODEL_LLM_LOG`, call records include attempt/retry reason, prompt byte
 count/hash, TTFT, and Ollama-native prompt/eval token counts and durations when
 Ollama supplies them. This separates sleep, prefill, and decode time.
+
+
+## Iterate on one stage without rerunning the pipeline
+
+Use `--only-stage` with a completed source artifacts directory to test current
+code/prompts against the exact upstream artifacts from that run. The source is
+never modified. A new artifacts directory is created with the source bundle
+copied for side-by-side comparison; runtime files and checkpoints are not
+copied. Only the named stage is executed.
+
+```bash
+python -m spec_generator.cli /path/to/intent_model.json \
+  --only-stage architecture \
+  --source-artifacts artifacts-2026-09-10_20-55-21
+```
+
+Valid stages are `srs`, `architecture`, `items`, `tests`, and `review`. Pass
+`--out artifacts-my-experiment` for a stable experiment name. `--from` remains
+the in-place checkpoint rewind that recomputes the named stage and everything
+downstream; `--only-stage` is the non-destructive one-stage experiment path.

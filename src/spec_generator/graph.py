@@ -725,7 +725,8 @@ def _compact_test_context(state: GenState, slot: dict) -> dict:
 
 
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
-                review: bool = False, persist=None, partials=None):
+                review: bool = False, persist=None, partials=None,
+                only_stage: str | None = None):
     """persist(stage, data, state): optional side-effect hook fired after each
     authoring stage completes - the CLI uses it to write the bundle
     incrementally, so a late failure leaves all completed work on disk.
@@ -1196,6 +1197,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             lambda st: f"stage 6/6, over {_req_count(st)} requirements, {len(st['items'])} specs, {len(st['tests'])} tests")(node_review))
     g.add_node("apply_fixes", _wrap("apply_fixes", "Applying review fixes")(node_apply_fixes))
     g.add_node("assemble", _wrap("assemble", "Assembling + validating bundle", "deterministic")(node_assemble))
+    if only_stage:
+        if only_stage not in ("srs", "architecture", "items", "tests", "review"):
+            raise ValueError(f"unsupported only_stage: {only_stage}")
+        g.set_entry_point(only_stage)
+        g.add_edge(only_stage, END)
+        return g.compile(checkpointer=checkpointer or MemorySaver(serde=checkpoint_serde()))
+
     g.set_entry_point("needs")
     g.add_edge("needs", "srs")
     if review:
@@ -1230,5 +1238,6 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     g.add_edge("apply_fixes", "items")
     g.add_edge("assemble", END)
     return g.compile(checkpointer=checkpointer or MemorySaver(serde=checkpoint_serde()))
+
 
 

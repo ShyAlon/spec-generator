@@ -150,3 +150,53 @@ def test_explicit_output_dir_is_unchanged(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(chosen)])
     main()
     assert (chosen / "tests.json").exists()
+
+
+def test_only_stage_loads_exact_upstream_and_refuses_missing(tmp_path):
+    from spec_generator.cli import _load_stage_state
+    intent = {"session_id": "s"}
+    (tmp_path / "srs.json").write_text(json.dumps({"functional": []}))
+    (tmp_path / "architecture.json").write_text(json.dumps({"components": []}))
+    state = _load_stage_state(tmp_path, intent, "items")
+    assert state == {"intent_model": intent, "srs": {"functional": []},
+                     "architecture": {"components": []}}
+    with pytest.raises(UserFacingError) as err:
+        _load_stage_state(tmp_path, intent, "tests")
+    assert "items.json" in err.value.render()
+
+
+def test_only_stage_clones_to_new_dir_without_runtime_state(tmp_path):
+    from spec_generator.cli import _prepare_stage_iteration
+    source = tmp_path / "artifacts-source"; source.mkdir()
+    (source / "srs.json").write_text("{}")
+    (source / "checkpoints.sqlite").write_text("do not clone")
+    (source / "tests_fills.partial.json").write_text("{}")
+    (source / "llm-calls.jsonl").write_text("old")
+    out = tmp_path / "artifacts-experiment"
+    _prepare_stage_iteration(source, out)
+    assert (out / "srs.json").exists() and (out / "specs").is_dir()
+    assert not (out / "checkpoints.sqlite").exists()
+    assert not (out / "tests_fills.partial.json").exists()
+    assert not (out / "llm-calls.jsonl").exists()
+    with pytest.raises(UserFacingError):
+        _prepare_stage_iteration(source, source)
+
+
+def test_only_stage_graph_ends_after_named_node(monkeypatch):
+    from spec_generator.graph import build_graph
+    from spec_generator.telemetry import UsageLog
+    from test_progress import FakeModel, PAYLOADS
+    box = {}
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    state = {"intent_model": dict(INTENT), "needs": PAYLOADS["needs"],
+             "srs": {"purpose": "p", "scope_summary": "s", "functional": [{
+                 "requirement_id": "R-1", "need_ids": ["N-1"], "title": "Spec file",
+                 "statement": "system shall emit a spec", "priority": "must",
+                 "acceptance": [{"criterion_id": "AC-1", "statement": "spec exists"}],
+             }], "non_functional": []},
+             "architecture": PAYLOADS["architecture"]}
+    result = build_graph(UsageLog("s"), only_stage="items").invoke(
+        state, {"configurable": {"thread_id": "only-items"}})
+    assert "items" in result
+    assert set(box) == {"items"}

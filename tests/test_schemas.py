@@ -31,7 +31,10 @@ def test_srs_schema_is_prose_fills_only():
 def test_items_and_review_shapes():
     assert for_stage("items")["type"] == "array"
     assert for_stage("items")["items"]["type"] == "object"
-    assert for_stage("review") == {"type": "array", "items": {"type": "string"}}
+    review = for_stage("review")
+    assert review["type"] == "array" and review["items"]["type"] == "object"
+    assert review["items"]["required"] == ["scope", "target_ids", "fix"]
+    assert review["items"]["properties"]["scope"]["enum"] == ["requirement", "spec", "test", "systemic"]
 
 
 def test_tests_schema_is_prose_fills_only():
@@ -249,3 +252,4 @@ def test_test_definition_grammar_is_canonical_but_content_stays_free():
     assert case["additionalProperties"] is False
     # Free strings retain runner/domain detail; only the container is fixed.
     assert definition["properties"]["steps"]["items"] == {"type": "string"}
+
