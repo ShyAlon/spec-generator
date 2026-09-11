@@ -11,3 +11,10 @@ gate_*.json
 usage.jsonl
 checkpoints.sqlite*
 .env
+
+# Generated spec runs and diagnostics
+artifacts-*/
+run.log
+llm-calls.jsonl
+usage_summary.json
+*.partial.json
