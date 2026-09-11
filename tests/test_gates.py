@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """ADR-0019 founder review gates (opt-in --review): pause after SRS and
 architecture; accept / edit (contract-validated) / feedback (stage re-runs) /
 reject. The non-review graph is untouched (test_progress.py covers it)."""
@@ -38,7 +39,7 @@ def _interrupt_payload(g, cfg):
 def test_gates_pause_after_srs_and_architecture_then_complete(monkeypatch):
     g, _ = _review_graph(monkeypatch)
     cfg = {"configurable": {"thread_id": "g1"}}
-    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     payload = _interrupt_payload(g, cfg)
     assert payload["gate"] == "srs" and payload["artifact"]["functional"]
     g.invoke(Command(resume={"action": "accept"}), cfg)
@@ -52,7 +53,7 @@ def test_gates_pause_after_srs_and_architecture_then_complete(monkeypatch):
 def test_gate_feedback_reruns_the_stage_with_the_feedback(monkeypatch):
     g, box = _review_graph(monkeypatch)
     cfg = {"configurable": {"thread_id": "g2"}}
-    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     assert _interrupt_payload(g, cfg)["gate"] == "srs"
     before = box["srs"].calls
     g.invoke(Command(resume={"action": "regenerate", "feedback": "the SRS misses offline mode"}), cfg)
@@ -72,7 +73,7 @@ def test_gate_feedback_reruns_the_stage_with_the_feedback(monkeypatch):
 def test_gate_edit_lands_via_update_state(monkeypatch):
     g, _ = _review_graph(monkeypatch)
     cfg = {"configurable": {"thread_id": "g3"}}
-    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     edited = json.loads(json.dumps(_interrupt_payload(g, cfg)["artifact"]))
     edited["functional"][0]["title"] = "Hand-edited title"
     g.update_state(cfg, {"srs": edited})
@@ -133,7 +134,7 @@ def test_cli_resume_does_not_repay_completed_stages(tmp_path, monkeypatch):
 
     g, box = _review_graph(monkeypatch)
     cfg = {"configurable": {"thread_id": "resume1"}}
-    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     assert _interrupt_payload(g, cfg)["gate"] == "srs"
     assert box["needs"].calls == 1 and box["srs"].calls == 1
 
@@ -159,7 +160,7 @@ def test_gate_render_failure_on_stale_checkpoint_restarts_once(tmp_path, monkeyp
 
     g, box = _review_graph(monkeypatch)
     cfg = {"configurable": {"thread_id": "stale1"}}
-    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     assert _interrupt_payload(g, cfg)["gate"] == "srs"
 
     real_render = __import__("spec_generator.cli", fromlist=["_render_gate"])._render_gate
@@ -218,7 +219,7 @@ def test_heal_restart_end_to_end_sqlite_skeleton_mode(tmp_path, monkeypatch, cap
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(conn),
                     progress=ProgressBus(), review=True)
     cfg = {"configurable": {"thread_id": "heal-e2e"}}
-    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     assert _interrupt_payload(g, cfg)["gate"] == "srs"
     g.update_state(cfg, {"srs": json.loads(json.dumps(POISONED_SRS))})
 
@@ -257,7 +258,7 @@ def test_heal_second_failure_reraises_with_full_detail(tmp_path, monkeypatch):
 
     g, box = _review_graph(monkeypatch)
     cfg = {"configurable": {"thread_id": "heal-twice"}}
-    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     g.update_state(cfg, {"srs": json.loads(json.dumps(POISONED_SRS))})
 
     import spec_generator.cli as cli_mod

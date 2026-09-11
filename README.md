@@ -200,3 +200,31 @@ Valid stages are `srs`, `architecture`, `items`, `tests`, and `review`. Pass
 `--out artifacts-my-experiment` for a stable experiment name. `--from` remains
 the in-place checkpoint rewind that recomputes the named stage and everything
 downstream; `--only-stage` is the non-destructive one-stage experiment path.
+
+## Ground architecture in a SystemBaseline
+
+Architecture generation always requires `--system-baseline`. This prevents a
+model from inventing a familiar stack from the product archetype.
+
+For an existing system, pass a checked, versioned baseline containing every
+repository, its languages and entry points, existing artifacts/contracts,
+runtime and persistence, integrations, and immutable decisions. The
+architecture must cite exact baseline refs. Any departure is rejected unless
+an ADR is tagged `migration` with evidence and affected repositories.
+
+For a new product, explicitly declare that no baseline exists:
+
+```bash
+cp examples/system-baseline.greenfield.json my-product-baseline.json
+# edit baseline_id and system_name
+python -m spec_generator.cli intent_model.json \
+  --system-baseline my-product-baseline.json
+```
+
+An isolated architecture experiment also takes the baseline explicitly:
+
+```bash
+python -m spec_generator.cli intent_model.json \
+  --only-stage architecture --source-artifacts artifacts-source \
+  --system-baseline ../vmodel-spec-app/system-baseline.json
+```

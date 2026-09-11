@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """2026-09-09 third live failure (issues 1, 2, 4):
 1. Items stage invented requirement ids (R-001..R-005) and left all ten real
    requirements uncovered - references are now an ENUM of the real ids in the
@@ -38,7 +39,7 @@ def test_items_grammar_reaches_the_model_build(monkeypatch, tmp_path):
 
     monkeypatch.setattr(model_config, "build_chat_model", build)
     g = build_graph(UsageLog("s"))
-    g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     refs = seen["items"]["items"]["properties"]["requirement_ids"]["items"]
     assert refs == {"enum": ["R-1"]}
 
@@ -62,7 +63,7 @@ def test_unknown_requirement_id_retried_with_named_feedback(monkeypatch, tmp_pat
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: box.setdefault(stage, InventingItems(stage) if stage == "items" else FakeModel(stage)))
     g = build_graph(UsageLog("s"))
-    r = g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
+    r = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert "bundle" in r
     assert box["items"].calls == 2
     retry_feedback = seen_messages[1][-1].content
@@ -83,7 +84,7 @@ def test_uncovered_requirement_named_in_retry_feedback(monkeypatch):
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: box.setdefault(stage, LazyItems(stage) if stage == "items" else FakeModel(stage)))
     g = build_graph(UsageLog("s"))
-    r = g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
+    r = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert box["items"].calls == 2
     # the retry recovered: no coverage surprise survives into the punch list
     assert not any("covered by no item spec" in v for v in r["violations"])
@@ -170,7 +171,7 @@ def test_checkpoint_state_is_plain_json_after_assemble(monkeypatch):
     types are exactly str (mode='json' dumps)."""
     monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FakeModel(stage))
     g = build_graph(UsageLog("s"))
-    r = g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
+    r = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert type(r["bundle"]["items"][0]["kind"]) is str
     assert type(r["bundle"]["_srs"]["functional"][0]["priority"]) is str
     json.dumps(r["bundle"])  # would raise on any non-JSON residue

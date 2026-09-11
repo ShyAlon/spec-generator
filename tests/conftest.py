@@ -14,3 +14,11 @@ def _bulk_mode_default(monkeypatch):
 def _reset_llm_call_budget(monkeypatch):
     """Each test is one run: the run-wide LLM call budget starts clean."""
     monkeypatch.setattr(mc, "_CALLS_USED", 0)
+
+
+SYSTEM_BASELINE = {
+    "contract_version": "0.12.0", "baseline_id": "test-baseline", "system_name": "Test system", "mode": "existing",
+    "repositories": [{"contract_version": "0.12.0", "name": "spec-generator", "languages": ["Python", "ts"],
+        "module_entry_points": ["spec_generator.cli"], "existing_artifacts": [],
+        "existing_contracts": [], "runtime": ["Python"], "persistence": [],
+        "integrations": [], "immutable_decisions": []}], "immutable_decisions": []}

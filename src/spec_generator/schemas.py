@@ -259,10 +259,14 @@ def _raw_stage_schema(stage: str) -> dict:
     if stage == "architecture":
         # ADR-0020: bulk proposal, code disposes - ADR ids are assigned by the
         # pipeline, so decision_id leaves the schema.
-        sch = _body_schema(ArchitectureOverview, drop=("session_id",))
+        sch = _body_schema(ArchitectureOverview, drop=("session_id", "baseline_id"))
+        sch["required"] = sorted(set(sch.get("required", [])) | {"stack_baseline_refs"})
+        comp = sch["$defs"]["ComponentSpec"]
+        comp["required"] = sorted(set(comp.get("required", [])) | {"baseline_refs", "migration", "migration_adr_title"})
         dec = sch["$defs"]["ArchitectureDecision"]
         dec["properties"].pop("decision_id", None)
         dec["required"] = [r for r in dec.get("required", []) if r != "decision_id"]
+        dec["required"] = sorted(set(dec["required"]) | {"baseline_refs", "migration", "evidence", "affected_repositories"})
         # ADR-0021: the contract keeps driver nullable ONLY for pre-0.8.0
         # migrated artifacts; the model must always emit a real driver, so the
         # grammar narrows it to the closed enum.

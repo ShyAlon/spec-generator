@@ -19,6 +19,7 @@ from vmodel_contracts import (
     AcceptanceTest,
     ArchitectureOverview,
     IntentModel,
+    SystemBaseline,
     ItemSpec,
     PunchListItem,
     RequirementSet,
@@ -45,6 +46,7 @@ REVIEW_PASSES = 2  # independent review rounds; fixes applied by re-running the 
 
 class GenState(TypedDict, total=False):
     intent_model: dict
+    system_baseline: dict
     needs: dict
     srs: dict
     requirements: dict
@@ -366,6 +368,81 @@ def _legacy_arch_fill(payload: dict) -> dict:
         decisions.append(dd)
     out["decisions"] = decisions
     return out
+
+
+def baseline_reference_index(baseline: SystemBaseline) -> set[str]:
+    """Canonical, mechanically checkable references available to the model."""
+    refs = {f"repo:{r.name}" for r in baseline.repositories}
+    refs.update(f"decision:system:{i}" for i, _ in enumerate(baseline.immutable_decisions, 1))
+    fields = (("entry", "package_entry_points"), ("module", "module_entry_points"),
+              ("artifact", "existing_artifacts"), ("contract", "existing_contracts"),
+              ("runtime", "runtime"), ("persistence", "persistence"),
+              ("integration", "integrations"), ("decision", "immutable_decisions"))
+    for r in baseline.repositories:
+        for prefix, field in fields:
+            refs.update(f"{prefix}:{r.name}:{i}" for i, _ in enumerate(getattr(r, field), 1))
+    return refs
+
+
+def _check_baseline_reconciliation(arch: ArchitectureOverview, baseline: SystemBaseline) -> None:
+    if arch.baseline_id != baseline.baseline_id:
+        raise ModelStructureError(f"architecture baseline_id must be {baseline.baseline_id!r}, got {arch.baseline_id!r}")
+    allowed = baseline_reference_index(baseline)
+    repo_names = {r.name for r in baseline.repositories}
+    def check_refs(label: str, refs: list[str]) -> None:
+        unknown = sorted(set(refs) - allowed)
+        if unknown:
+            raise ModelStructureError(f"{label}: unknown baseline refs: {', '.join(unknown)}")
+    migration_list = [d for d in arch.decisions if d.migration]
+    migration_adrs = {d.title: d for d in migration_list}
+    if len(migration_adrs) != len(migration_list):
+        raise ModelStructureError("migration ADR titles must be unique")
+    if baseline.mode.value == "existing":
+        if set(arch.stack_baseline_refs) != set(arch.stack):
+            raise ModelStructureError("stack_baseline_refs must contain exactly every stack key")
+        baseline_vocab = " ".join(
+            v for r in baseline.repositories for field in (
+                "languages", "runtime", "persistence", "integrations", "immutable_decisions")
+            for v in getattr(r, field)).lower()
+        departing_stack = {k for k, refs in arch.stack_baseline_refs.items() if not refs}
+        for key, refs in arch.stack_baseline_refs.items():
+            check_refs(f"stack.{key}", refs)
+            if not refs:
+                matching = [d for d in migration_list
+                            if key.lower() in (d.title + " " + d.decision).lower()
+                            or str(arch.stack[key]).lower() in (d.title + " " + d.decision).lower()]
+                if not matching:
+                    raise ModelStructureError(f"stack.{key}: departure requires an ADR tagged migration that names the stack key or value")
+        for key, value in arch.stack.items():
+            if key not in departing_stack and str(value).lower() not in baseline_vocab:
+                raise ModelStructureError(f"stack.{key}: value {value!r} is not present in the cited baseline facts")
+        for c in arch.components:
+            check_refs(f"component {c.name}", c.baseline_refs)
+            if c.migration:
+                if c.migration_adr_title not in migration_adrs:
+                    raise ModelStructureError(f"component {c.name}: migration must cite an ADR tagged migration")
+            else:
+                if c.migration_adr_title is not None:
+                    raise ModelStructureError(f"component {c.name}: migration_adr_title requires migration=true")
+                if not c.baseline_refs:
+                    raise ModelStructureError(f"component {c.name}: existing component requires baseline refs")
+    else:
+        if any(arch.stack_baseline_refs.values()) or any(c.baseline_refs for c in arch.components):
+            raise ModelStructureError("greenfield architecture cannot cite nonexistent baseline refs or migration ADRs")
+        if any(c.migration or c.migration_adr_title for c in arch.components) or migration_adrs:
+            raise ModelStructureError("greenfield architecture is new design, not a migration")
+    for d in arch.decisions:
+        check_refs(f"{d.decision_id} {d.title}", d.baseline_refs)
+        if d.migration:
+            if not d.evidence:
+                raise ModelStructureError(f"{d.decision_id} {d.title}: migration requires evidence")
+            if not d.affected_repositories:
+                raise ModelStructureError(f"{d.decision_id} {d.title}: migration requires affected_repositories")
+            unknown_repos = sorted(set(d.affected_repositories) - repo_names)
+            if unknown_repos:
+                raise ModelStructureError(f"{d.decision_id} {d.title}: unknown affected repositories: {', '.join(unknown_repos)}")
+        elif d.evidence or d.affected_repositories:
+            raise ModelStructureError(f"{d.decision_id} {d.title}: evidence/affected_repositories only belong on migration ADRs")
 
 
 def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict) -> None:
@@ -890,7 +967,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 "gate_feedback": _clear_feedback(state, "srs")}
 
     def node_architecture(state: GenState) -> dict:
-        payload = (STAGE_PROMPTS["architecture"] + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+        baseline = SystemBaseline.model_validate(state["system_baseline"])
+        payload = (STAGE_PROMPTS["architecture"]
+                   + "\n\nSYSTEM BASELINE (source of truth):\n" + json.dumps(_prompt_view(state["system_baseline"]))
+                   + "\n\nVALID BASELINE REFS (use exact strings):\n" + json.dumps(sorted(baseline_reference_index(baseline)))
+                   + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
                    + _tech_constraint_block(state["intent_model"]))
         fb = _gate_feedback(state, "architecture")
         if fb:
@@ -899,12 +980,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         def _validate_arch(d):
             merged = assign_architecture_ids(_strip_pipeline_owned(d))  # ADR-0020: code assigns ADR-n
             arch = ArchitectureOverview.model_validate(
-                {**merged, "session_id": state["intent_model"]["session_id"]})
+                {**merged, "session_id": state["intent_model"]["session_id"],
+                 "baseline_id": baseline.baseline_id})
             _check_decision_drivers(arch, state["intent_model"])  # ADR-0021
+            _check_baseline_reconciliation(arch, baseline)
             return merged
 
         data = _call_json("architecture", payload, log, progress, validate=_validate_arch)
         data.setdefault("session_id", state["intent_model"]["session_id"])
+        data["baseline_id"] = baseline.baseline_id
         if persist:
             persist("architecture", data, state)
         return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}

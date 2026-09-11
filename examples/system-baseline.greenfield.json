@@ -1,0 +1,9 @@
+{
+  "contract_version": "0.12.0",
+  "baseline_version": "1.0",
+  "baseline_id": "replace-with-product-name-v1",
+  "system_name": "Replace with product name",
+  "mode": "greenfield",
+  "repositories": [],
+  "immutable_decisions": []
+}

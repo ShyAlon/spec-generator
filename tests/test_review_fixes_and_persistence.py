@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """2026-09-09 live failure + ask: (1) the review-fix application path re-fired
 the srs stage against the retired full-document validator while the grammar
 constrained the model to fills ('functional: Field required; fills: Extra
@@ -40,7 +41,7 @@ def queue_models(monkeypatch):
 def test_review_fixes_refire_the_fill_stage(queue_models):
     QueueModel.QUEUES["review"] = [FIXES, []]  # round 1 flags, round 2 clean
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver())
-    r = g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "rf1"}})
+    r = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "rf1"}})
     assert "bundle" in r
     srs = queue_models["srs"]
     assert srs.calls == 2  # initial author + one fix application
@@ -55,7 +56,7 @@ def test_review_fixes_refire_the_fill_stage(queue_models):
 
 def test_clean_review_never_pays_the_fix_stage(queue_models):
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver())
-    g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "rf2"}})
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "rf2"}})
     assert queue_models["srs"].calls == 1
     assert queue_models["review"].calls == 1  # clean: stops before pass 2
 
@@ -64,14 +65,14 @@ def test_persist_hook_fires_per_stage_in_order(queue_models):
     fired = []
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver(),
                     persist=lambda stage, data, state: fired.append(stage))
-    g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "p1"}})
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "p1"}})
     assert fired == ["needs", "srs", "architecture", "items", "tests"]
 
 
 def test_incremental_bundle_on_disk_and_atomic(tmp_path, queue_models):
     persist = _make_persist(dict(INTENT), tmp_path)
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver(), persist=persist)
-    g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "p2"}})
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "p2"}})
     for f in ("needs.json", "needs.md", "srs.json", "srs.md",
               "architecture.json", "architecture.md", "items.json", "tests.json"):
         assert (tmp_path / f).exists(), f
@@ -92,7 +93,7 @@ def test_late_failure_leaves_completed_stages_on_disk(tmp_path, monkeypatch):
     persist = _make_persist(dict(INTENT), tmp_path)
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver(), persist=persist)
     with pytest.raises(RuntimeError):
-        g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "p3"}})
+        g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "p3"}})
     for f in ("needs.json", "srs.json", "architecture.json", "items.json", "specs/SPEC-1.md"):
         assert (tmp_path / f).exists(), f
     assert not (tmp_path / "tests.json").exists()  # the failed stage wrote nothing

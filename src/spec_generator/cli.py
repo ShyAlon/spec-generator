@@ -26,7 +26,7 @@ from pathlib import Path
 from vmodel_contracts import (
     run_with_system_awake,
     AcceptanceTest, ArchitectureOverview, ItemSpec, PunchListItem,
-    RequirementSet, SpecManifest, SRSDocument, StakeholderNeedsSet,
+    RequirementSet, SpecManifest, SRSDocument, StakeholderNeedsSet, SystemBaseline,
 )
 
 from .errors import UserFacingError, run_cli
@@ -328,6 +328,26 @@ def _default_outdir(intent_path: Path, session_id: str) -> Path:
     return Path(f"artifacts-{stamp:%Y-%m-%d_%H-%M-%S}")
 
 
+def _load_system_baseline(path: Path) -> dict:
+    if not path.is_file():
+        raise UserFacingError(
+            f"system baseline file not found: {path}.",
+            "architecture generation requires an explicit existing or greenfield baseline.",
+            "pass --system-baseline <file>; copy examples/system-baseline.greenfield.json for a new product.",
+        )
+    try:
+        raw = json.loads(path.read_text())
+        from vmodel_contracts import check_compatible
+        check_compatible(raw)
+        return SystemBaseline.model_validate(raw).model_dump(mode="json")
+    except Exception as e:
+        raise UserFacingError(
+            f"system baseline is invalid: {path}.",
+            f"validation detail: {type(e).__name__}: {str(e)[:400]}",
+            "fix the file against vmodel-contracts SystemBaseline; use mode=greenfield with empty repositories for a new product.",
+        ) from e
+
+
 _ONLY_STAGE_INPUTS = {
     "srs": ("needs",),
     "architecture": ("srs",),
@@ -344,7 +364,7 @@ def _stage_outdir(source: Path, stage: str) -> Path:
     return source.with_name(f"{source.name}-{stage}-{stamp}")
 
 
-def _load_stage_state(source: Path, intent: dict, stage: str) -> dict:
+def _load_stage_state(source: Path, intent: dict, baseline: dict, stage: str) -> dict:
     """Load the immutable upstream artifact set for one stage iteration."""
     if stage not in _ONLY_STAGE_INPUTS:
         raise UserFacingError(
@@ -352,7 +372,7 @@ def _load_stage_state(source: Path, intent: dict, stage: str) -> dict:
             "only authoring/review stages can run alone.",
             f"valid stages: {', '.join(_ONLY_STAGE_INPUTS)}.",
         )
-    state = {"intent_model": intent}
+    state = {"intent_model": intent, "system_baseline": baseline}
     missing = []
     for key in _ONLY_STAGE_INPUTS[stage]:
         path = source / _ARTIFACT_FILES[key]
@@ -398,11 +418,14 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
             "pass --source-artifacts <artifacts-...>.",
         )
     outdir = (args.out.resolve() if args.out is not None else _stage_outdir(source, args.only_stage))
-    state = _load_stage_state(source, intent, args.only_stage)
+    baseline = _load_system_baseline(args.system_baseline)
+    state = _load_stage_state(source, intent, baseline, args.only_stage)
     _prepare_stage_iteration(source, outdir)
+    _atomic_write(outdir / "system-baseline.json", json.dumps(baseline, indent=2))
     loaded = [*(_ONLY_STAGE_INPUTS[args.only_stage])]
     print(f"Stage iteration: {args.only_stage}", file=sys.stderr)
     print(f"Loaded immutable source: {source}", file=sys.stderr)
+    print(f"System baseline: {args.system_baseline.resolve()} ({baseline['mode']}, {len(baseline['repositories'])} repos)", file=sys.stderr)
     print(f"Loaded upstream: {', '.join(loaded) or 'intent only'}", file=sys.stderr)
     print(f"Recomputing ONLY: {args.only_stage}; downstream artifacts are copied for comparison, not regenerated.",
           file=sys.stderr)
@@ -433,6 +456,8 @@ def main() -> None:
                     help="run exactly one stage from an existing completed artifact set; never mutates source")
     ap.add_argument("--source-artifacts", type=Path, default=None,
                     help="completed artifacts directory supplying upstream inputs for --only-stage")
+    ap.add_argument("--system-baseline", type=Path, default=None,
+                    help="versioned SystemBaseline JSON; existing repo manifest or explicit greenfield declaration")
     args = ap.parse_args()
     if bool(args.only_stage) != bool(args.source_artifacts):
         ap.error("--only-stage and --source-artifacts must be used together")
@@ -473,6 +498,13 @@ def main() -> None:
             f"{args.intent_model} (it validates against the current schema first and refuses on real drift); "
             "otherwise re-run the interview (minutes on a local model) to regenerate the intent model.",
         ) from e
+    if args.system_baseline is None:
+        raise UserFacingError(
+            "--system-baseline is required.",
+            "architecture must distinguish an existing system from an explicit greenfield product.",
+            "pass a checked SystemBaseline JSON; for a new product copy examples/system-baseline.greenfield.json.",
+        )
+    baseline = _load_system_baseline(args.system_baseline)
     sid = intent["session_id"]
     if args.only_stage:
         _run_only_stage(args, intent, sid)
@@ -480,6 +512,7 @@ def main() -> None:
     outdir = args.out if args.out is not None else _default_outdir(args.intent_model, sid)
     outdir.mkdir(parents=True, exist_ok=True)
     (outdir / "specs").mkdir(exist_ok=True)
+    _atomic_write(outdir / "system-baseline.json", json.dumps(baseline, indent=2))
 
     log = UsageLog(sid, sink=jsonl_sink(outdir / "usage.jsonl"))
     bus = ProgressBus()
@@ -534,7 +567,8 @@ def main() -> None:
     if args.review:
         result = _run_with_gates(graph, cfg, intent, outdir, resume=resume)
     else:
-        result = graph.invoke(None, cfg) if resume else graph.invoke({"intent_model": intent}, cfg)
+        result = graph.invoke(None, cfg) if resume else graph.invoke(
+            {"intent_model": intent, "system_baseline": baseline}, cfg)
 
     b = result["bundle"]
     try:

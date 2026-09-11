@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """2026-09-09 second live failure, three threads:
 1. 'R-5: slot not filled' slipped through the generic fills grammar - the
    grammars are now per-skeleton with every slot id a required property.
@@ -50,7 +51,7 @@ def test_strict_schema_reaches_the_model_build(monkeypatch, tmp_path):
     monkeypatch.setattr(model_config, "build_chat_model", build)
     db = str(tmp_path / "cp.sqlite")
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
-    g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert seen["srs"]["properties"]["fills"]["required"] == ["R-1"]
     assert seen["tests"]["properties"]["fills"]["required"] == ["T-1", "T-2"]
 
@@ -85,7 +86,7 @@ def test_backfill_writes_completed_stages_without_rerunning(monkeypatch, tmp_pat
     db = str(tmp_path / "cp.sqlite")
     cfg = {"configurable": {"thread_id": "s"}}
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
-    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     calls_at_completion = {k: v.calls for k, v in box.items()}
 
     outdir = tmp_path / "bundle"

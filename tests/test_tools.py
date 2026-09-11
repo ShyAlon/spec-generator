@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """ADR-0020 typed structural tools: model proposes, code disposes."""
 import copy
 
@@ -229,7 +230,7 @@ def _run_graph_with_tools(monkeypatch, scripted):
         return FakeModel(stage)
 
     monkeypatch.setattr(model_config, "build_chat_model", build)
-    return build_graph(UsageLog("s")).invoke({"intent_model": INTENT},
+    return build_graph(UsageLog("s")).invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE},
                                              {"configurable": {"thread_id": "tools"}})
 
 

@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """Progress events + crash-resume for the generation pipeline."""
 import json
 import sqlite3
@@ -23,10 +24,13 @@ PAYLOADS = {
                               "statement": "system shall emit a spec", "priority": "must",
                               "acceptance": ["spec exists"]}}},
     "architecture": {"session_id": "s", "stack": {"language": "ts"},
-                     "components": [{"name": "api", "responsibility": "serve"}],
+                     "stack_baseline_refs": {"language": ["repo:spec-generator"]},
+                     "components": [{"name": "api", "responsibility": "serve", "baseline_refs": ["repo:spec-generator"], "migration": False, "migration_adr_title": None}],
                      "decisions": [{"title": "t", "decision": "x", "rationale": "y",
                                     "driver": "simplicity",
-                                    "options_considered": [{"option": "z", "reason": "heavier"}]}]},
+                                    "options_considered": [{"option": "z", "reason": "heavier"}],
+                                    "baseline_refs": ["repo:spec-generator"], "migration": False,
+                                    "evidence": [], "affected_repositories": []}]},
     "items": [{"slug": "api", "kind": "api_surface", "title": "API",
                "body_markdown": "# API", "requirement_ids": ["R-1"]}],  # code numbers it SPEC-1
     "tests": {"fills": {"T-1": {"description": "criterion holds",
@@ -83,7 +87,7 @@ def test_full_pipeline_progress_events(fake_models):
     events = []
     bus.subscribe(events.append)
     g = build_graph(UsageLog("s"), progress=bus)
-    r = g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": "s"}})
+    r = g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert "bundle" in r
     seq = [(e.stage, e.status) for e in events]
     for stage in ("needs", "srs", "architecture", "items", "tests", "review", "assemble"):
@@ -109,7 +113,7 @@ def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
     cfg = {"configurable": {"thread_id": "s"}}
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
     with pytest.raises(RuntimeError):
-        g.invoke({"intent_model": INTENT}, cfg)
+        g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, cfg)
 
     # "fix" and rerun: healthy models, same db
     fake_models["architecture"] = FakeModel("architecture")
@@ -130,7 +134,7 @@ def test_stage_start_lines_carry_input_counts(fake_models):
     events = []
     bus.subscribe(events.append)
     g = build_graph(UsageLog("s"), progress=bus)
-    g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": "s"}})
+    g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     started = {e.stage: e for e in events if e.status == "started"}
 
     n_sn = len(INTENT["stakeholder_needs"])

@@ -113,12 +113,17 @@ def render_architecture(arch: ArchitectureOverview) -> str:
     lines = ["# Architecture overview\n"]
     if arch.stack:
         lines.append("## Stack")
-        lines += [f"- **{k}**: {v}" for k, v in arch.stack.items()]
+        for k, v in arch.stack.items():
+            refs = ", ".join(arch.stack_baseline_refs.get(k, []))
+            trace = f" (baseline: {refs})" if refs else " (migration: see ADRs)"
+            lines.append(f"- **{k}**: {v}{trace}")
     if arch.components:
         lines.append("\n## Components")
         for c in arch.components:
             refs = f" (realizes {', '.join(c.requirement_ids)})" if c.requirement_ids else ""
-            lines.append(f"- **{c.name}**{refs}: {c.responsibility}")
+            baseline = f" [baseline: {', '.join(c.baseline_refs)}]" if c.baseline_refs else ""
+            migration = f" [migration: {c.migration_adr_title}]" if c.migration_adr_title else ""
+            lines.append(f"- **{c.name}**{refs}: {c.responsibility}{baseline}{migration}")
     if arch.decisions:
         lines.append("\n## Decisions (ADRs)")
         for d in arch.decisions:
@@ -131,6 +136,11 @@ def render_architecture(arch: ArchitectureOverview) -> str:
             else:
                 lines.append("  Driver: (not recorded - pre-0.8.0 artifact)")
             lines.append(f"  Why: {d.rationale}")
+            if d.baseline_refs:
+                lines.append(f"  Baseline: {', '.join(d.baseline_refs)}")
+            if d.migration:
+                lines.append(f"  Migration: yes; affected repos: {', '.join(d.affected_repositories)}")
+                lines.append(f"  Evidence: {'; '.join(d.evidence)}")
             if d.options_considered:
                 considered = "; ".join(f"{o.option} - rejected: {o.reason}" for o in d.options_considered)
                 lines.append(f"  Considered: {considered}")

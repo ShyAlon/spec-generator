@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """ADR-0022: the model owns prose; code owns everything enumerable.
 
 The determinism harness has two levers:
@@ -105,7 +106,7 @@ def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
 
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: RoutingModel(stage, kw.get("schema") or {}))
-    r = build_graph(UsageLog("s")).invoke({"intent_model": dict(INTENT)},
+    r = build_graph(UsageLog("s")).invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
                                            {"configurable": {"thread_id": "s"}})
     # toy payloads trip the ungrounded-vocabulary guard by design; what matters
     # here is that no STRUCTURAL violation survives (coverage, unknown ids)

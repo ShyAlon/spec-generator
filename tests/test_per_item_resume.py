@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """2026-09-10: Ctrl+C at T-34 of 36 reran the whole stage. Now each completed
 item inside a looped authoring stage (srs fills, items bodies, tests fills)
 is preserved the moment it closes and skipped on rerun - same doctrine as
@@ -75,14 +76,14 @@ def test_crash_mid_items_reruns_only_the_missing_bodies(monkeypatch, tmp_path):
     calls1 = []
     g, _ = _build(monkeypatch, calls1, tmp_path, "run1", fail_after_bodies=1, partials=partials)
     with pytest.raises(RuntimeError):
-        g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
+        g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     saved = partials.load("items")
     assert saved and [d["spec_id"] for d in saved] == ["SPEC-1"]  # first body survived the crash
 
     calls2 = []
     g2, _ = _build(monkeypatch, calls2, tmp_path, "run2", partials=partials)
-    r = g2.invoke({"intent_model": dict(INTENT)}, {"configurable": "ignored"}) \
-        if False else g2.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s2"}})
+    r = g2.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": "ignored"}) \
+        if False else g2.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s2"}})
     bodies = [sc for st, sc in calls2 if st == "items" and sc.get("type") != "array"]
     assert len(bodies) == 1  # SPEC-2 only - SPEC-1 was preserved, not re-bought
     assert [i["spec_id"] for i in r["items"]] == ["SPEC-1", "SPEC-2"]
@@ -94,7 +95,7 @@ def test_crash_mid_tests_asks_only_for_missing_fills(monkeypatch, tmp_path):
     partials.save("tests_fills", {"T-1": PAYLOADS["tests"]["fills"]["T-1"]})  # T-1 of T-1..T-2 done
     calls = []
     g, _ = _build(monkeypatch, calls, tmp_path, "run", partials=partials)
-    r = g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
+    r = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     tests_calls = [sc for st, sc in calls if st == "tests"]
     wanted = [tuple(sc["properties"]["fills"]["required"]) for sc in tests_calls]
     assert sorted(t for (t,) in wanted) == ["T-2", "T-3"]  # one micro-call per missing slot; T-1 preserved
@@ -107,7 +108,7 @@ def test_plan_phase_prints_one_plan_line_not_fake_item_lines(monkeypatch, tmp_pa
     _, events = _build(monkeypatch, calls, tmp_path, "run", partials=_make_partials(tmp_path))[0:2] \
         if False else (None, None)
     g, events = _build(monkeypatch, calls, tmp_path, "run", partials=_make_partials(tmp_path))
-    g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     items_events = [e for e in events if e.stage == "items" and e.status == "item"]
     assert any(e.detail == "plan: 2 specs to write" for e in items_events)
     spec_lines = [e.detail for e in items_events if e.detail.startswith("SPEC-")]
@@ -117,7 +118,7 @@ def test_plan_phase_prints_one_plan_line_not_fake_item_lines(monkeypatch, tmp_pa
 def test_micro_call_emits_start_and_completion_lines(monkeypatch, tmp_path):
     calls = []
     g, events = _build(monkeypatch, calls, tmp_path, "run", partials=_make_partials(tmp_path))
-    g.invoke({"intent_model": dict(INTENT)}, {"configurable": {"thread_id": "s"}})
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     started = [e for e in events if e.status == "item_started"]
     done = [e for e in events if e.status == "item" and e.elapsed_s is not None]
     assert any(e.detail.startswith("R-1") for e in started)      # srs fill

@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """--from <stage>: rewind a checkpoint so a stage and everything after it
 re-runs under the CURRENT code (his 2026-09-09 need: the completed run held
 pre-fix items with invented requirement ids; a plain resume re-reported the
@@ -23,7 +24,7 @@ def _run_once(box, monkeypatch, db):
                         lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
     cfg = {"configurable": {"thread_id": "s"}}
-    g.invoke({"intent_model": dict(INTENT)}, cfg)
+    g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     return g, cfg
 
 
@@ -82,14 +83,15 @@ def test_cli_from_items_end_to_end(monkeypatch, tmp_path, capsys):
                         lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
     intent_file = tmp_path / "intent_model.json"
     intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
+    baseline_file = tmp_path / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
     outdir = tmp_path / "bundle"
-    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir)])
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--system-baseline", str(baseline_file)])
     main()
     err = capsys.readouterr().err
     assert f"Bundle dir: {outdir.resolve()}" in err  # he watches folders mid-run - name where progress lands
     assert "*.partial.json" in err
     assert box["items"].calls == 1
-    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--from", "items"])
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--from", "items", "--system-baseline", str(baseline_file)])
     main()
     err = capsys.readouterr().err
     assert "Re-running from stage 'items'" in err
@@ -105,12 +107,13 @@ def test_from_warns_before_discarding_preserved_partials(monkeypatch, tmp_path, 
                         lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
     intent_file = tmp_path / "intent_model.json"
     intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
+    baseline_file = tmp_path / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
     outdir = tmp_path / "bundle"
-    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir)])
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--system-baseline", str(baseline_file)])
     main()
     (outdir / "tests_fills.partial.json").write_text(json.dumps(
         {"T-1": {"description": "d", "runner": "r", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}}}))
-    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--from", "items"])
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--from", "items", "--system-baseline", str(baseline_file)])
     main()
     err = capsys.readouterr().err
     assert "warning: --from items discards 1 preserved item(s) (tests_fills)" in err
@@ -127,14 +130,15 @@ def test_default_output_dir_is_human_readable_and_stable(monkeypatch, tmp_path, 
     intent_file = tmp_path / "intent_model.json"
     intent = dict(INTENT, session_id="20260910-164100-ab12", contract_version=CONTRACT_VERSION)
     intent_file.write_text(json.dumps(intent))
+    baseline_file = tmp_path / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
 
-    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file)])
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "--system-baseline", str(baseline_file)])
     main()
     outdir = tmp_path / "artifacts-2026-09-10_16-41-00"
     assert (outdir / "tests.json").exists()
     first_counts = {k: v.calls for k, v in box.items()}
 
-    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file)])
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "--system-baseline", str(baseline_file)])
     main()
     assert {k: v.calls for k, v in box.items()} == first_counts
     assert "Checkpoint found - resuming" in capsys.readouterr().err
@@ -146,8 +150,9 @@ def test_explicit_output_dir_is_unchanged(monkeypatch, tmp_path):
                         lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
     intent_file = tmp_path / "intent_model.json"
     intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
+    baseline_file = tmp_path / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
     chosen = tmp_path / "my-output"
-    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(chosen)])
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(chosen), "--system-baseline", str(baseline_file)])
     main()
     assert (chosen / "tests.json").exists()
 
@@ -157,11 +162,11 @@ def test_only_stage_loads_exact_upstream_and_refuses_missing(tmp_path):
     intent = {"session_id": "s"}
     (tmp_path / "srs.json").write_text(json.dumps({"functional": []}))
     (tmp_path / "architecture.json").write_text(json.dumps({"components": []}))
-    state = _load_stage_state(tmp_path, intent, "items")
-    assert state == {"intent_model": intent, "srs": {"functional": []},
-                     "architecture": {"components": []}}
+    state = _load_stage_state(tmp_path, intent, SYSTEM_BASELINE, "items")
+    assert state == {"intent_model": intent, "system_baseline": SYSTEM_BASELINE,
+                     "srs": {"functional": []}, "architecture": {"components": []}}
     with pytest.raises(UserFacingError) as err:
-        _load_stage_state(tmp_path, intent, "tests")
+        _load_stage_state(tmp_path, intent, SYSTEM_BASELINE, "tests")
     assert "items.json" in err.value.render()
 
 
@@ -189,7 +194,7 @@ def test_only_stage_graph_ends_after_named_node(monkeypatch):
     box = {}
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
-    state = {"intent_model": dict(INTENT), "needs": PAYLOADS["needs"],
+    state = {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE, "needs": PAYLOADS["needs"],
              "srs": {"purpose": "p", "scope_summary": "s", "functional": [{
                  "requirement_id": "R-1", "need_ids": ["N-1"], "title": "Spec file",
                  "statement": "system shall emit a spec", "priority": "must",

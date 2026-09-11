@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """ADR-0020 skeletons: code owns ids, kinds, ordering, and trace links; the
 model's prose fills are merged onto them, and unusable structure is a named,
 retryable error (ModelStructureError), never a silent remap."""
@@ -100,7 +101,7 @@ def _run_until_stage_error(monkeypatch, bad_stage, bad_payload):
     monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
     g = build_graph(UsageLog("s"))
     with pytest.raises(UserFacingError) as ei:
-        g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": "merged-" + bad_stage}})
+        g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "merged-" + bad_stage}})
     return ei.value
 
 

@@ -1,3 +1,4 @@
+from conftest import SYSTEM_BASELINE
 """SRS redesign: standalone artifact, deterministic carry, guards, reference doctrine."""
 import json
 
@@ -29,7 +30,7 @@ def _run(monkeypatch, srs_body, thread="srs1"):
             return AIMessage(content=json.dumps(payloads[self.stage]))
     monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
     g = build_graph(UsageLog("s"))
-    return g.invoke({"intent_model": INTENT}, {"configurable": {"thread_id": thread}})
+    return g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": thread}})
 
 
 SRS = {"session_id": "s", "intent_model_ref": "s", "purpose": "p", "scope_summary": "sc",
@@ -60,7 +61,7 @@ def test_structure_carried_deterministically(monkeypatch):
             return AIMessage(content=json.dumps(payloads[self.stage]))
     monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
     g = build_graph(UsageLog("s"))
-    r = g.invoke({"intent_model": intent}, {"configurable": {"thread_id": "carry"}})
+    r = g.invoke({"intent_model": intent, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "carry"}})
     srs = r["bundle"]["_srs"]
     # the LLM was never asked for these - they come from the intent model
     assert srs["definitions"] == {"TMS": "transport mgmt"}
