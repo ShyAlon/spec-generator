@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 from vmodel_contracts import (
+    run_with_system_awake,
     AcceptanceTest, ArchitectureOverview, ItemSpec, PunchListItem,
     RequirementSet, SpecManifest, SRSDocument, StakeholderNeedsSet,
 )
@@ -467,5 +468,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    run_cli(main)
+    run_cli(lambda: run_with_system_awake(main))
+
 
