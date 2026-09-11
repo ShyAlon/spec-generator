@@ -162,3 +162,21 @@ code via `DEEPSEEK_MODEL=<model> vmodel-spec-app/scripts/switch-model.sh deepsee
 
 
 
+
+
+
+## Speed and diagnostics
+
+Per-item SRS, spec, and test fills remain serial on local Ollama so a single-GPU
+Mac does not contend or swap. Test micro-calls send only their linked criterion
+or spec, minimal architecture context, and an ID glossary instead of replaying
+the full SRS and every spec body. SRS slot calls keep their shared intent prefix
+first.
+
+Review output is typed (`scope`, `target_ids`, `fix`). Scoped fixes re-author
+only the named requirements and their dependent specs/tests; `systemic` and
+legacy unscoped fixes deliberately take the full safe fallback.
+
+With `VMODEL_LLM_LOG`, call records include attempt/retry reason, prompt byte
+count/hash, TTFT, and Ollama-native prompt/eval token counts and durations when
+Ollama supplies them. This separates sleep, prefill, and decode time.

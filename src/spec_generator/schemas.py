@@ -286,7 +286,11 @@ def _raw_stage_schema(stage: str) -> dict:
                 "required": ["fills"],
                 "additionalProperties": False}
     if stage == "review":
-        return {"type": "array", "items": {"type": "string"}}
+        return {"type": "array", "items": {"type": "object", "properties": {
+            "scope": {"enum": ["requirement", "spec", "test", "systemic"]},
+            "target_ids": {"type": "array", "items": {"type": "string"}},
+            "fix": {"type": "string"}},
+            "required": ["scope", "target_ids", "fix"], "additionalProperties": False}}
     raise KeyError(f"no output schema for stage {stage!r}")
 
 
@@ -294,6 +298,11 @@ def for_stage(stage: str) -> dict:
     """The schema handed to Ollama for a stage: contracts-derived, then reduced
     to the grammar-safe subset (see module docstring)."""
     if stage == "review":
-        return {"type": "array", "items": {"type": "string"}}
+        return {"type": "array", "items": {"type": "object", "properties": {
+            "scope": {"enum": ["requirement", "spec", "test", "systemic"]},
+            "target_ids": {"type": "array", "items": {"type": "string"}},
+            "fix": {"type": "string"}},
+            "required": ["scope", "target_ids", "fix"], "additionalProperties": False}}
     return _grammar_safe(_raw_stage_schema(stage))
+
 

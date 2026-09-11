@@ -8,6 +8,7 @@ no model.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re as _re
@@ -234,8 +235,24 @@ def _provider_error_detail(exc) -> dict:
 
 
 def _usage_of(resp) -> dict:
-    usage = getattr(resp, "usage_metadata", None) or {}
-    return {k: usage[k] for k in ("input_tokens", "output_tokens", "total_tokens") if k in usage}
+    """Normalize LangChain usage and Ollama-native eval metadata."""
+    usage = dict(getattr(resp, "usage_metadata", None) or {})
+    meta = getattr(resp, "response_metadata", None) or {}
+    aliases = {"prompt_eval_count": "input_tokens", "eval_count": "output_tokens"}
+    for source, target in aliases.items():
+        if meta.get(source) is not None and target not in usage:
+            usage[target] = meta[source]
+    if "total_tokens" not in usage and ("input_tokens" in usage or "output_tokens" in usage):
+        usage["total_tokens"] = int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+    for key in ("prompt_eval_count", "eval_count", "prompt_eval_duration", "eval_duration"):
+        if meta.get(key) is not None:
+            usage[key] = meta[key]
+    return usage
+
+
+def _prompt_metrics(messages) -> dict:
+    raw = "\n".join(str(getattr(m, "content", "")) for m in messages).encode()
+    return {"prompt_bytes": len(raw), "prompt_sha256": hashlib.sha256(raw).hexdigest()[:16]}
 
 
 def _guard_enter(stage: str) -> None:
@@ -391,7 +408,8 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
         stop_heartbeat()
 
 
-def stream_checked(chat_model, messages, stage: str, item: str | None = None):
+def stream_checked(chat_model, messages, stage: str, item: str | None = None,
+                   attempt: int = 1, retry_reason: str | None = None):
     """Stream the same call invoke_checked would make, under the guardrails:
     the whole call has a wall-clock budget, and a MID-STREAM stall limit (a
     stream that goes quiet between chunks is hung). Silence BEFORE the first
@@ -411,7 +429,9 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None):
     _guard_enter(stage)
     call_timeout, stall_timeout, _ = _guard_limits()
     base = {"provider": cfg.provider, "model": cfg.model, "stage": stage,
-            **({"item": item} if item else {})}
+            "attempt": attempt, **_prompt_metrics(messages),
+            **({"item": item} if item else {}),
+            **({"retry_reason": retry_reason} if retry_reason else {})}
     q: queue.Queue = queue.Queue()
 
     def _pump() -> None:
@@ -459,9 +479,12 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None):
                 yield payload
             elif kind == "done":
                 _check_truncated(last, stage, cfg)
+                usage = _usage_of(last)
+                durations = {k: usage.get(k) for k in ("prompt_eval_duration", "eval_duration")
+                             if usage.get(k) is not None}
                 _log_llm({"event": "llm_call_end", **base, "latency_s": round(time.monotonic() - t0, 2),
                           **({"ttft_s": ttft_s} if ttft_s is not None else {}),
-                          "usage": _usage_of(last)})
+                          "usage": usage, **durations})
                 return
             else:
                 _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
@@ -565,4 +588,5 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
             timeout=_guard_limits()[0], max_tokens=_max_tokens_limit(cfg.max_tokens),
                              api_key=_env(_API_KEY_ENV["anthropic"]) or "")
     raise ValueError(cfg.provider)
+
 

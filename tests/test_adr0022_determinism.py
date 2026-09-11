@@ -116,3 +116,31 @@ def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
     assert [s for s, _, _ in calls].count("tests") == 2  # one call per slot
     assert r["srs"]["functional"][0]["requirement_id"] == "R-1"  # code-owned
     assert r["items"][0]["spec_id"] == "SPEC-1" and r["items"][0]["slug"] == "api"  # code-owned numbering
+
+
+def test_compact_test_context_excludes_unlinked_artifact_bodies():
+    from spec_generator.graph import _compact_test_context
+    state = {
+        "srs": {"functional": [{"requirement_id": "R-1", "acceptance": [
+            {"criterion_id": "AC-1", "statement": "linked"},
+            {"criterion_id": "AC-2", "statement": "unlinked secret"},
+        ]}], "non_functional": []},
+        "items": [{"spec_id": "SPEC-1", "body_markdown": "large body one"},
+                  {"spec_id": "SPEC-2", "body_markdown": "large body two"}],
+        "architecture": {"stack": ["Python"], "components": [{"name": "api"}]},
+    }
+    compact = _compact_test_context(state, {"criterion_id": "AC-1"})
+    encoded = json.dumps(compact)
+    assert "linked" in encoded and "unlinked secret" not in encoded
+    assert "large body" not in encoded
+    assert compact["id_glossary"]["specs"] == ["SPEC-1", "SPEC-2"]
+
+
+def test_srs_slot_puts_shared_intent_before_varying_slot():
+    payload = _srs_slot_payload({
+        "intent_model": {"problem_statement": "p", "core_value_proposition": "v",
+                         "in_scope": [], "out_of_scope": [], "constraints": []},
+        "needs": {"needs": [{"need_id": "N-1", "statement": "need"}]},
+        "srs": {},
+    }, {"requirement_id": "R-1", "need_ids": ["N-1"]})
+    assert payload.index("INTENT (shared context)") < payload.index("THE SLOT")

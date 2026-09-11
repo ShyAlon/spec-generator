@@ -390,3 +390,24 @@ def test_ollama_keep_alive_pinned(monkeypatch):
     monkeypatch.setenv("VMODEL_OLLAMA_KEEP_ALIVE", "1h")
     m = mc.build_chat_model("srs")
     assert m.keep_alive == "1h"
+
+
+def test_ollama_native_metrics_and_prompt_fingerprint_are_logged(tmp_path, monkeypatch):
+    log = tmp_path / "native.jsonl"
+    monkeypatch.setenv("VMODEL_LLM_LOG", str(log))
+
+    class M:
+        def stream(self, messages):
+            yield type("C", (), {"content": "{}", "usage_metadata": {}, "response_metadata": {
+                "prompt_eval_count": 700, "eval_count": 80,
+                "prompt_eval_duration": 2_000_000_000, "eval_duration": 4_000_000_000,
+            }})()
+
+    list(mc.stream_checked(M(), [type("Msg", (), {"content": "hello"})()], "tests",
+                           item="T-1", attempt=2, retry_reason="contract"))
+    end = _read_log(log)[-1]
+    assert end["usage"]["input_tokens"] == 700 and end["usage"]["output_tokens"] == 80
+    assert end["prompt_eval_duration"] == 2_000_000_000
+    assert end["eval_duration"] == 4_000_000_000
+    assert end["prompt_bytes"] == 5 and len(end["prompt_sha256"]) == 16
+    assert end["attempt"] == 2 and end["retry_reason"] == "contract"

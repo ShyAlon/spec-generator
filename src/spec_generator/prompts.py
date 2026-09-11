@@ -95,7 +95,7 @@ STAGE_PROMPTS = {
                   "language. Reference requirements by id; never restate their text.",
     "review": "Review pass {n}: find gaps, contradictions, orphan requirements, uncheckable criteria, "
               "solution language in the SRS, downstream text that restates requirements. "
-              "Return a JSON list of concrete fixes, or [].",
+              "Return a JSON list of typed fixes {scope, target_ids, fix}, or []. scope is requirement|spec|test|systemic. Use exact R-/SPEC-/T- ids for a scoped fix; use systemic with [] only when no safe target exists.",
 }
 
 
@@ -119,3 +119,4 @@ TOOL_PROMPTS = {
              "the V, call no tools and say so briefly.\n\n"
              "SKELETON:\n{skeleton}\n\nSRS:\n{srs}\n\nITEMS:\n{items}",
 }
+

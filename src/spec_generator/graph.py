@@ -53,7 +53,7 @@ class GenState(TypedDict, total=False):
     items: list[dict]
     tests: list[dict]
     review_round: int
-    review_fixes: list[str]
+    review_fixes: list[dict]
     bundle: dict
     violations: list[str]
     gate_feedback: dict[str, str]  # stage -> founder feedback from a review gate (ADR-0019)
@@ -62,7 +62,7 @@ class GenState(TypedDict, total=False):
 def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
             feedback: str | None = None, schema: dict | None = None,
             stream_items: bool = True, item_label: str | None = None,
-            on_item=None) -> str:
+            on_item=None, attempt: int = 1, retry_reason: str | None = None) -> str:
     """One model call per stage, STREAMED so the console can show each item as
     its JSON closes (same prompt, same parameters, same completion - progress
     is observability only, never a change to what is generated).
@@ -90,7 +90,8 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
         messages.append(HumanMessage(content=feedback))
     chunks: list[str] = []
     usage: dict = {}
-    for chunk in model_config.stream_checked(model, messages, stage, item=item_label):
+    for chunk in model_config.stream_checked(model, messages, stage, item=item_label,
+                                             attempt=attempt, retry_reason=retry_reason):
         text = chunk.content if isinstance(chunk.content, str) else "".join(
             b.get("text", "") for b in chunk.content if isinstance(b, dict))
         chunks.append(text)
@@ -178,7 +179,8 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
     last_raw = ""
     for attempt in (1, 2):
         raw = _invoke(stage, payload, log, progress, feedback=fb, schema=schema,
-                      stream_items=stream_items, item_label=item_label, on_item=on_item)
+                      stream_items=stream_items, item_label=item_label, on_item=on_item,
+                      attempt=attempt, retry_reason=("contract" if fb else None))
         last_raw = raw
         contract_err = None
         try:
@@ -505,9 +507,10 @@ def _srs_slot_payload(state: GenState, slot: dict, feedback: str | None = None) 
     intent = state["intent_model"]
     slim = {k: intent.get(k) for k in
             ("problem_statement", "core_value_proposition", "in_scope", "out_of_scope", "constraints")}
-    payload = (STAGE_PROMPTS["srs_slot"] + "\n\nTHE SLOT (fill exactly this one):\n" + json.dumps(slot)
-               + "\n\nTHE NEED BEHIND IT:\n" + json.dumps(_prompt_view(need))
-               + "\n\nINTENT (context):\n" + json.dumps(_prompt_view(slim)))
+    payload = (STAGE_PROMPTS["srs_slot"]
+               + "\n\nINTENT (shared context):\n" + json.dumps(_prompt_view(slim))
+               + "\n\nTHE SLOT (fill exactly this one):\n" + json.dumps(slot)
+               + "\n\nTHE NEED BEHIND IT:\n" + json.dumps(_prompt_view(need)))
     if feedback:
         payload += "\n\n" + feedback
     prev = None
@@ -671,6 +674,56 @@ def _clear_feedback(state: GenState, stage: str) -> dict:
     return {k: v for k, v in (state.get("gate_feedback") or {}).items() if k != stage}
 
 
+def _normalized_review_fixes(value) -> list[dict]:
+    out = []
+    for fix in value or []:
+        if isinstance(fix, str):
+            out.append({"scope": "systemic", "target_ids": [], "fix": fix})
+        elif isinstance(fix, dict) and str(fix.get("fix") or "").strip():
+            scope = fix.get("scope") if fix.get("scope") in ("requirement", "spec", "test", "systemic") else "systemic"
+            ids = [str(x) for x in (fix.get("target_ids") or []) if str(x)]
+            if scope != "systemic" and not ids:
+                scope = "systemic"
+            out.append({"scope": scope, "target_ids": ids, "fix": str(fix["fix"])})
+    return out
+
+
+def _fix_targets(fixes: list[dict], scope: str) -> set[str] | None:
+    fixes = _normalized_review_fixes(fixes)
+    if any(f["scope"] == "systemic" for f in fixes):
+        return None
+    return {x for f in fixes if f["scope"] == scope for x in f["target_ids"]}
+
+
+def _affected_spec_ids(state: GenState, fixes: list[dict]) -> set[str] | None:
+    req_targets = _fix_targets(fixes, "requirement")
+    spec_targets = _fix_targets(fixes, "spec")
+    if req_targets is None or spec_targets is None:
+        return None
+    return set(spec_targets) | {spec["spec_id"] for spec in state.get("items") or []
+                                if set(spec.get("requirement_ids") or []) & set(req_targets)}
+
+
+def _compact_test_context(state: GenState, slot: dict) -> dict:
+    """Only the linked source plus small architecture/ID context, never full artifacts."""
+    linked = {}
+    if slot.get("criterion_id"):
+        for sec in ("functional", "non_functional"):
+            for req in state["srs"].get(sec) or []:
+                for criterion in req.get("acceptance") or []:
+                    if criterion.get("criterion_id") == slot["criterion_id"]:
+                        linked = {"requirement_id": req.get("requirement_id"), "criterion": criterion}
+    elif slot.get("spec_id"):
+        spec = next((i for i in state["items"] if i.get("spec_id") == slot["spec_id"]), {})
+        linked = {"spec": spec}
+    arch = state.get("architecture") or {}
+    minimal_arch = {k: arch.get(k) for k in ("stack", "components", "non_functionals") if arch.get(k)}
+    glossary = {"requirements": [r.get("requirement_id") for sec in ("functional", "non_functional")
+                                  for r in state["srs"].get(sec) or []],
+                "specs": [i.get("spec_id") for i in state["items"]]}
+    return {"linked_source": linked, "architecture": minimal_arch, "id_glossary": glossary}
+
+
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
                 review: bool = False, persist=None, partials=None):
     """persist(stage, data, state): optional side-effect hook fired after each
@@ -712,7 +765,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return sum(len(r.get("acceptance") or [])
                    for sec in ("functional", "non_functional") for r in (srs.get(sec) or []))
 
-    def _run_srs_fill_stage(state: GenState, feedback: str | None = None) -> dict:
+    def _run_srs_fill_stage(state: GenState, feedback: str | None = None,
+                            only: set[str] | None = None) -> dict:
         """The ADR-0020 SRS fill stage, two harness shapes (ADR-0022):
         - default: one micro-call for purpose/scope + one per requirement slot
           (a bad fill fails one cheap call, never a long composite payload);
@@ -724,7 +778,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         from .schemas import srs_overview_schema, srs_slot_fill_schema
 
         slots = build_srs_skeleton(state["needs"])
-        if model_config.bulk_fills_enabled():
+        if model_config.bulk_fills_enabled() and only is None:
             extra = ""
             if feedback:
                 extra = "\n\n" + feedback
@@ -733,16 +787,24 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     json.dumps(_prompt_view(state["srs"]))
             payload, _validate, schema = _srs_fill_call(state, extra)
             return _call_json("srs", payload, log, progress, validate=_validate, schema=schema)
-        overview = _call_json("srs", _srs_overview_payload(state, feedback), log, progress,
-                              validate=_overview_validator(), schema=srs_overview_schema(),
-                              stream_items=False)
-        done = (partials.load("srs_fills") or {}) if partials else {}
+        previous = state.get("srs") or {}
+        overview = ({"purpose": previous.get("purpose"), "scope_summary": previous.get("scope_summary")}
+                    if only is not None else _call_json(
+                        "srs", _srs_overview_payload(state, feedback), log, progress,
+                        validate=_overview_validator(), schema=srs_overview_schema(), stream_items=False))
+        done = {r["requirement_id"]: {k: r.get(k) for k in ("title", "statement", "priority", "acceptance")}
+                for sec in ("functional", "non_functional") for r in previous.get(sec) or []}
+        if partials:
+            done.update(partials.load("srs_fills") or {})
         need_hint = {n.get("need_id"): (n.get("statement") or "")[:50]
                      for n in state["needs"].get("needs") or []}
         fills = {}
         for slot in slots:
             rid = slot["requirement_id"]
-            if rid in done:  # per-item resume: preserved from the crashed run
+            if only is not None and rid not in only:
+                fills[rid] = done[rid]
+                continue
+            if only is None and rid in done:  # per-item resume: preserved from the crashed run
                 fills[rid] = done[rid]
                 continue
             hint = need_hint.get((slot.get("need_ids") or [""])[0], "")
@@ -861,7 +923,20 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         from .progress import ProgressEvent
         from .schemas import items_body_schema, items_plan_schema, items_schema
 
-        if model_config.bulk_fills_enabled():
+        fixes = _normalized_review_fixes(state.get("review_fixes"))
+        affected = _affected_spec_ids(state, fixes) if fixes else set()
+        selective = bool(fixes) and affected is not None
+        if selective and state.get("items"):
+            plan = [{k: v for k, v in spec.items() if k != "body_markdown"} for spec in state["items"]]
+            data = []
+            for spec, prior in zip(plan, state["items"]):
+                if spec["spec_id"] not in affected:
+                    data.append(prior); continue
+                body = _call_json("items", _items_body_payload(state, spec), log, progress,
+                                  validate=_items_body_validator(spec), schema=items_body_schema(),
+                                  stream_items=False, item_label=f"{spec['spec_id']} surgical review fix")
+                data.append({**spec, "body_markdown": body["body_markdown"]})
+        elif model_config.bulk_fills_enabled():
             data = _call_json("items", _items_payload(state, req_ids), log, progress,
                               validate=_items_validator(req_ids), schema=items_schema(req_ids))
         else:
@@ -928,10 +1003,26 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
         # Per-item resume: each fill is preserved the moment its JSON closes
         # (streamed), so a Ctrl+C at T-34/36 reruns only T-35 and T-36.
-        done = (partials.load("tests_fills") or {}) if partials else {}
-        missing = [sl for sl in slots if sl["test_id"] not in done]
+        done = {t["test_id"]: {k: t.get(k) for k in ("description", "runner", "definition")}
+                for t in state.get("tests") or []}
+        if partials:
+            done.update(partials.load("tests_fills") or {})
+        fixes = _normalized_review_fixes(state.get("review_fixes"))
+        req_targets = _fix_targets(fixes, "requirement") if fixes else set()
+        affected_specs = _affected_spec_ids(state, fixes) if fixes else set()
+        test_targets = _fix_targets(fixes, "test") if fixes else set()
+        selective = bool(fixes) and None not in (req_targets, affected_specs, test_targets)
+        if fixes and not selective:  # systemic/legacy review: full safe fallback
+            done = {}
+        affected_criteria = {c.get("criterion_id") for sec in ("functional", "non_functional")
+                             for r in state["srs"].get(sec) or [] if r.get("requirement_id") in set(req_targets or [])
+                             for c in r.get("acceptance") or []}
+        missing = [sl for sl in slots if (sl["test_id"] not in done or
+                   (selective and (sl["test_id"] in set(test_targets or []) or
+                                   sl.get("spec_id") in set(affected_specs or []) or
+                                   sl.get("criterion_id") in affected_criteria)))]
         if missing:
-            if model_config.bulk_fills_enabled():
+            if model_config.bulk_fills_enabled() and not selective:
                 # Legacy one-call path (SPEC_GENERATOR_BULK=1): one streamed
                 # call for every missing slot. Cheaper on prefill, but the
                 # call's wall time grows with the slot count - 36 fills at
@@ -989,8 +1080,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     # prefills nearly free), the varying slot LAST.
                     out = _call_json("tests",
                           STAGE_PROMPTS["tests"]
-                          + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
-                          + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
+                          + "\n\nLINKED CONTEXT + ID GLOSSARY:\n" + json.dumps(_prompt_view(_compact_test_context(state, sl)))
                           + "\n\nTEST SLOT (fill its prose):\n" + json.dumps(sl)
                           + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                             "return one STRICT JSON object {fills: {...}} with EXACTLY this one key: "
@@ -1021,7 +1111,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         fixes = _call_json("review", STAGE_PROMPTS["review"].format(n=n)
                            + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
                            + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
-                           + "\n\nTESTS:\n" + json.dumps(_prompt_view(state["tests"])), log, progress)
+                           + "\n\nTESTS:\n" + json.dumps(_prompt_view(state["tests"])), log, progress,
+                           validate=_normalized_review_fixes)
         return {"review_round": n, "review_fixes": fixes}
 
     def route_review(state: GenState) -> str:
@@ -1034,15 +1125,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     def node_apply_fixes(state: GenState) -> dict:
         # ADR-0020 shape: re-fire the FILL stage with the review fixes - the
         # skeleton slots/ids are unchanged, the model revises prose per slot.
-        data = _run_srs_fill_stage(
-            state,
-            "REVIEW FIXES - apply EVERY one to the affected fills:\n"
-            + json.dumps(state["review_fixes"]))
+        fixes = _normalized_review_fixes(state["review_fixes"])
+        req_targets = _fix_targets(fixes, "requirement")
+        if req_targets is None:
+            data = _run_srs_fill_stage(state, "REVIEW FIXES - apply EVERY one:\n" + json.dumps(fixes))
+        elif req_targets:
+            data = _run_srs_fill_stage(state, "SCOPED REVIEW FIXES:\n" + json.dumps(fixes), only=req_targets)
+        else:
+            data = state["srs"]
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
-        if persist:
+        if persist and data is not state["srs"]:
             persist("srs", data, state)
-        return {"srs": data}
+        return {"srs": data, "review_fixes": fixes}
 
     def node_assemble(state: GenState) -> dict:
         """Deterministic tail. Validate hard; ship nothing with orphan traces."""
@@ -1135,4 +1230,5 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     g.add_edge("apply_fixes", "items")
     g.add_edge("assemble", END)
     return g.compile(checkpointer=checkpointer or MemorySaver(serde=checkpoint_serde()))
+
 

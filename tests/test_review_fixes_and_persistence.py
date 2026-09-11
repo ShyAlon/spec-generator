@@ -102,3 +102,30 @@ def test_atomic_write_leaves_no_tmp(tmp_path):
     _atomic_write(tmp_path / "x.json", '{"a": 1}')
     assert (tmp_path / "x.json").read_text() == '{"a": 1}'
     assert not (tmp_path / "x.json.tmp").exists()
+
+
+def test_typed_review_targets_and_systemic_fallback():
+    from spec_generator.graph import _fix_targets, _normalized_review_fixes
+    scoped = _normalized_review_fixes([
+        {"scope": "requirement", "target_ids": ["R-1"], "fix": "tighten wording"},
+        {"scope": "test", "target_ids": ["T-2"], "fix": "add cleanup"},
+    ])
+    assert _fix_targets(scoped, "requirement") == {"R-1"}
+    assert _fix_targets(scoped, "test") == {"T-2"}
+    assert _fix_targets(scoped, "spec") == set()
+    assert _fix_targets([{"scope": "systemic", "target_ids": [], "fix": "global"}], "test") is None
+    # Legacy string answers fail safe: full fallback, never guessed targeting.
+    assert _fix_targets(_normalized_review_fixes(["legacy fix"]), "requirement") is None
+
+
+def test_dependency_closure_maps_requirement_fixes_to_specs():
+    from spec_generator.graph import _affected_spec_ids
+    state = {"items": [
+        {"spec_id": "SPEC-1", "requirement_ids": ["R-1"]},
+        {"spec_id": "SPEC-2", "requirement_ids": ["R-2"]},
+    ]}
+    fixes = [{"scope": "requirement", "target_ids": ["R-1"], "fix": "tighten"}]
+    assert _affected_spec_ids(state, fixes) == {"SPEC-1"}
+    fixes.append({"scope": "spec", "target_ids": ["SPEC-2"], "fix": "repair body"})
+    assert _affected_spec_ids(state, fixes) == {"SPEC-1", "SPEC-2"}
+    assert _affected_spec_ids(state, [{"scope": "systemic", "target_ids": [], "fix": "global"}]) is None
