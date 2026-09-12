@@ -1186,20 +1186,49 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             part["stack_keys"] = plan["stack_keys"]
             _save()
 
-        # 2. One micro-call per stack entry: value + grounding refs.
+        # 2. One micro-call per stack entry: value + grounding refs. The
+        # value-vs-cited-facts check runs HERE (per-slot, retryable), not only
+        # at assembly: an invented technology costs one retried entry call,
+        # not the whole stage (the 2026-09-12 Auth0 acceptance failure -
+        # 1282s of good calls lost to a gate that fired at the end).
+        baseline_vocab = (" ".join(
+            v for r in baseline.repositories for field in (
+                "languages", "runtime", "persistence", "integrations", "immutable_decisions")
+            for v in getattr(r, field)).lower()) if existing else ""
+
+        def _v_entry(d, key):
+            if not str(d.get("value", "")).strip():
+                raise ModelStructureError(f"stack.{key}: value must name a concrete technology")
+            entry = {"key": key, "value": str(d["value"]).strip(),
+                     "baseline_refs": [str(r) for r in d.get("baseline_refs") or []]}
+            if existing and entry["baseline_refs"] and entry["value"].lower() not in baseline_vocab:
+                raise ModelStructureError(
+                    f"stack.{key}: value {entry['value']!r} is not present in the cited baseline facts - "
+                    "pick a value from the cited facts, or declare a migration (empty baseline_refs)")
+            if not existing and entry["baseline_refs"]:
+                raise ModelStructureError(
+                    f"stack.{key}: greenfield architecture cannot cite baseline refs")
+            return entry
+
         entries = part.setdefault("stack_entries", {})
+        for key in list(entries):
+            # persisted slots must satisfy the CURRENT contract; a stale entry
+            # (e.g. Auth0 saved before this check existed) is dropped and
+            # re-asked - never silently trusted, never a rerun from zero.
+            try:
+                _v_entry(entries[key], key)
+            except ModelStructureError as e:
+                del entries[key]
+                model_config._console_line(
+                    f"     - persisted stack entry {key!r} failed the current contract ({e}) - re-asking that slot")
         for key in part["stack_keys"]:
             if key in entries:
                 continue  # per-slot resume
-            def _v_entry(d, key=key):
-                if not str(d.get("value", "")).strip():
-                    raise ModelStructureError(f"stack.{key}: value must name a concrete technology")
-                return {"key": key, "value": str(d["value"]).strip(),
-                        "baseline_refs": [str(r) for r in d.get("baseline_refs") or []]}
             entries[key] = _call_json(
                 "architecture",
                 context + f"\n\nTHE STACK KEY TO DECIDE: {key}\n\n" + ARCH_STACK_ENTRY + feedback,
-                log, progress, validate=_v_entry, schema=arch_stack_entry_schema(valid_refs),
+                log, progress, validate=lambda d, key=key: _v_entry(d, key),
+                schema=arch_stack_entry_schema(valid_refs),
                 stream_items=False, item_label=f"stack:{key}")
             _save()
 
@@ -1320,9 +1349,22 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
             comp_slots=part["component_slots"], comp_bodies=comp_bodies,
             adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
-        arch = ArchitectureOverview.model_validate(merged)
-        _check_decision_drivers(arch, state["intent_model"])  # ADR-0021
-        _check_baseline_reconciliation(arch, baseline)
+        try:
+            arch = ArchitectureOverview.model_validate(merged)
+            _check_decision_drivers(arch, state["intent_model"])  # ADR-0021
+            _check_baseline_reconciliation(arch, baseline)
+        except (ValidationError, ModelStructureError) as e:
+            # the gate failing is a KNOWN pain (a slot the per-slot checks could
+            # not see) - it gets the human-readable shape, never a raw traceback
+            # (the 2026-09-12 acceptance run dumped one on the founder).
+            from .errors import UserFacingError
+            raise UserFacingError(
+                "stage 'architecture': the assembled architecture failed the whole-architecture semantic gate.",
+                _contract_errors(e),
+                f"{model_config._rerun_guidance('architecture')} - per-slot work is preserved and any slot "
+                "that fails the current contract is re-asked, not the whole stage; if the same gate error "
+                "repeats after the re-ask, report it: a persistent gate failure is a pipeline bug, not a model limit.",
+            ) from e
         if partials:
             partials.clear("architecture")
         data = merged

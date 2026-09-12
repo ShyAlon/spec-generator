@@ -243,3 +243,77 @@ def test_raw_capture_is_opt_in_and_byte_exact(monkeypatch, tmp_path):
     assert raws and all(r["raw_chars"] == len(r["raw"]) for r in raws)
     plan = next(r for r in raws if json.loads(r["raw"]).get("stack_keys"))
     assert json.loads(plan["raw"]) == {"stack_keys": ["language", "database"]}
+
+
+def test_invented_entry_value_retries_only_that_slot(monkeypatch):
+    # the exact 2026-09-12 Auth0 acceptance case: a value invented while
+    # citing baseline refs. The per-slot check rejects it at the micro-call,
+    # the semantic retry re-asks just that entry, and the stage completes.
+    counters = {"db": 0}
+
+    class Auth0First(_MicroModel):
+        def stream(self, messages):
+            if any("THE STACK KEY TO DECIDE: database" in m.content for m in messages):
+                counters["db"] += 1
+                if counters["db"] == 1:
+                    yield AIMessage(content=json.dumps(
+                        {"value": "Auth0", "baseline_refs": ["repo:spec-generator"]}))
+                    return
+            yield from super().stream(messages)
+
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: Auth0First(stage, k.get("schema") or {}, []))
+    r = build_graph(UsageLog("s")).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+        {"configurable": {"thread_id": "auth0"}})
+    assert counters["db"] == 2  # rejected once, retried with feedback, accepted
+    db = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "database")
+    assert db["value"] == "ts" and db["baseline_refs"] == ["repo:spec-generator"]
+
+
+def test_persisted_entry_failing_current_contract_is_reasked(monkeypatch, tmp_path):
+    # the live resume situation: a stale Auth0 entry persisted before the
+    # per-slot check existed is discarded and re-asked - never trusted, and
+    # the GOOD persisted entries are not re-run.
+    partials = _make_partials(tmp_path)
+    partials.save("architecture", {
+        "stack_keys": ["language", "database"],
+        "stack_entries": {"language": {"key": "language", "value": "ts",
+                                       "baseline_refs": ["repo:spec-generator"]},
+                          "database": {"key": "database", "value": "Auth0",
+                                       "baseline_refs": ["repo:spec-generator"]}}})
+    calls = []
+    r = _run(monkeypatch, calls, partials=partials)
+    entry_calls = [c for c in calls if isinstance(c, dict) and set(c) == {"value", "baseline_refs"}]
+    assert len(entry_calls) == 1  # only the bad slot was re-asked
+    db = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "database")
+    assert db["value"] == "ts" and db["baseline_refs"] == ["repo:spec-generator"]
+
+
+def test_gate_failure_is_human_readable_not_a_traceback(monkeypatch):
+    # a slot problem the per-slot checks cannot see (here: an invented
+    # component baseline ref, provider-side enum bypassed) still fails at the
+    # whole-architecture gate - and surfaces as Error/Likely cause/Next,
+    # never as a raw ModelStructureError traceback.
+    from spec_generator.errors import UserFacingError
+
+    class BadCompRef(_MicroModel):
+        def stream(self, messages):
+            if (self.schema.get("type") == "array"
+                    and "name" in self.schema["items"].get("properties", {})):
+                yield AIMessage(content=json.dumps(
+                    [{"name": "api", "requirement_ids": ["R-1"],
+                      "baseline_refs": ["repo:nope"], "migration": False}]))
+                return
+            yield from super().stream(messages)
+
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: BadCompRef(stage, k.get("schema") or {}, []))
+    with pytest.raises(UserFacingError) as ei:
+        build_graph(UsageLog("s")).invoke(
+            {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+            {"configurable": {"thread_id": "gate"}})
+    rendered = ei.value.render()
+    assert rendered.startswith("Error: stage 'architecture'")
+    assert "Likely cause:" in rendered and "repo:nope" in rendered
+    assert "Next:" in rendered
