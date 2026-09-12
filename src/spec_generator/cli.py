@@ -515,6 +515,9 @@ def main() -> None:
             "pass a checked SystemBaseline JSON; for a new product copy examples/system-baseline.greenfield.json.",
         )
     baseline = _load_system_baseline(args.system_baseline)
+    print(f"System baseline: {args.system_baseline.resolve()} "
+          f"(id={baseline['baseline_id']}, mode={baseline['mode']}, "
+          f"{len(baseline['repositories'])} repos)", file=sys.stderr)
     sid = intent["session_id"]
     if args.only_stage:
         _run_only_stage(args, intent, sid)

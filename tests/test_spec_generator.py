@@ -67,3 +67,25 @@ def test_old_contract_intent_fails_loudly(tmp_path, capsys):
         run_cli(main)
     err = capsys.readouterr().err
     assert "0.1.0" in err and "re-run the interview" in err
+
+
+def test_greenfield_example_passes_current_compat():
+    # 2026-09-12: the shipped greenfield template carried contract_version
+    # 0.12.0 - _load_system_baseline's compat check would have REJECTED the
+    # very file the error messages tell founders to copy.
+    import json
+    from pathlib import Path
+
+    from spec_generator.cli import _load_system_baseline
+    template = Path(__file__).parent.parent / "examples" / "system-baseline.greenfield.json"
+    b = _load_system_baseline(template)
+    assert b["mode"] == "greenfield" and b["repositories"] == []
+
+
+def test_main_prints_the_chosen_baseline(capsys):
+    # the run must NAME its architecture anchor before the first model call -
+    # a baseline that silently belongs to a different system is the
+    # grounded-but-wrong failure mode (2026-09-12 review)
+    import inspect
+    src = inspect.getsource(__import__("spec_generator.cli", fromlist=["main"]).main)
+    assert "System baseline:" in src and "baseline_id" in src and "mode=" in src
