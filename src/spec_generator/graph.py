@@ -8,6 +8,7 @@ request), and a deterministic assembly tail that no LLM touches.
 from __future__ import annotations
 
 import json
+import re as _re
 from typing import TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -423,6 +424,75 @@ def _value_grounded(value: str, vocab: str) -> bool:
     return bool(tokens) and tokens <= vocab_tokens
 
 
+# A value SHAPED like an entry point (a command invocation, a script path, a
+# module:attr string) answers only an entry-point slot - never "framework",
+# "ci" or "encryption" (the 2026-09-12 regen stuffed 'python -m
+# spec_generator.cli' into all three). Deterministic kind check, ADR-0015
+# doctrine: mechanical guards over prompt discipline.
+_ENTRY_POINT_VALUE = _re.compile(
+    r"^(python3?|node|ruby|php|java|dotnet|uvicorn|gunicorn|flask|npm|npx|pip|bash|sh)\s"  # command invocation
+    r"|[\w\-./]+\.(sh|py|js|mjs|ts|rb)(\s|$)"   # script path
+    r"|[\w_][\w_.\-]*:[\w_][\w_.\-]*(\s|$)"  # module:attr (delivery_api.app:app)
+    r"|\s-m\s", _re.IGNORECASE)                    # '-m module' anywhere
+_ENTRY_POINT_KEY = _re.compile(
+    r"entry[-_ ]?point|entrypoint|command|\bcli\b|launch|start[-_ ]?up|script", _re.IGNORECASE)
+
+
+def _entry_point_shaped(value: str) -> bool:
+    return bool(_ENTRY_POINT_VALUE.search(value.strip()))
+
+
+def _entry_point_slot(key: str) -> bool:
+    return bool(_ENTRY_POINT_KEY.search(key))
+
+
+# P3 layer 2, deterministic (founder directive 2026-09-12: deterministic logic
+# over LLM judgment wherever possible). A stack value that matches a KNOWN
+# technology lexicon of one kind cannot answer a slot of another kind
+# ('Pydantic' for encryption, 'ts' for database). Values in NO lexicon (novel
+# tech) pass - a lexicon miss is never a verdict.
+_KIND_LEXICONS = {
+    "language": ("python", "typescript", "javascript", "ts", "go", "rust", "java", "ruby",
+                 "c#", "csharp", "c++", "php", "swift", "kotlin", "scala", "elixir"),
+    "framework": ("django", "flask", "fastapi", "express", "rails", "laravel", "spring",
+                  "next.js", "nextjs", "react", "vue", "angular", "svelte", "langgraph",
+                  "langchain", "nestjs", "nuxt"),
+    "database": ("postgresql", "postgres", "mysql", "sqlite", "mongodb", "mongo", "redis",
+                 "dynamodb", "cassandra", "mariadb", "elasticsearch", "clickhouse",
+                 "neo4j", "supabase"),
+    "orm": ("pydantic", "sqlalchemy", "prisma", "sequelize", "typeorm", "hibernate",
+            "alembic", "django orm", "active record"),
+    "ci": ("github actions", "gitlab ci", "jenkins", "circleci", "travis ci", "travis",
+           "azure pipelines", "buildkite", "teamcity", "woodpecker"),
+    "auth": ("auth0", "keycloak", "okta", "firebase", "cognito", "clerk", "oauth2",
+             "openid connect", "supabase", "jwt"),
+    "encryption": ("aes", "aes-256", "aes-128", "rsa", "tls", "ssl", "bcrypt", "argon2",
+                   "libsodium", "fernet", "chacha20"),
+    "queue": ("rabbitmq", "kafka", "sqs", "celery", "bullmq", "nats", "redis streams"),
+}
+_SLOT_KIND = {
+    "language": "language", "runtime": "language", "framework": "framework",
+    "web_framework": "framework", "database": "database", "persistence": "database",
+    "orm": "orm", "ci": "ci", "ci_tool": "ci", "auth": "auth",
+    "sso_integration": "auth", "authentication": "auth", "encryption": "encryption",
+    "message_queue": "queue", "queue": "queue",
+}
+
+
+def _kind_match(value: str, kind: str) -> bool:
+    v = value.lower()
+    return any(_re.search(rf"(?<![\w+.#]){_re.escape(term)}(?![\w])", v)
+               for term in _KIND_LEXICONS[kind])
+
+
+def _wrong_kind(key: str, value: str) -> str | None:
+    """Name of the lexicon kind this value belongs to when it is NOT the slot's kind."""
+    slot_kind = _SLOT_KIND.get(key)
+    if not slot_kind or _kind_match(value, slot_kind):
+        return None
+    return next((k for k in _KIND_LEXICONS if k != slot_kind and _kind_match(value, k)), None)
+
+
 def baseline_reference_index(baseline: SystemBaseline) -> set[str]:
     """Canonical, mechanically checkable references available to the model."""
     refs = {f"repo:{r.name}" for r in baseline.repositories}
@@ -521,9 +591,14 @@ def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict) -> N
             raise ModelStructureError(
                 f"{d.decision_id} '{d.title}': no driver - classify why the chosen option won "
                 f"(founder_constraint | ecosystem_maturity | community_adoption | team_fit | simplicity).")
-        if d.driver.value == "founder_constraint" and prefs:
+        if d.driver.value == "founder_constraint":
+            prefs = [p for p in prefs if p]
+            if not prefs:
+                raise ModelStructureError(
+                    f"{d.decision_id} '{d.title}': driver founder_constraint but the intent model records "
+                    "NO founder tech preferences - the claim is impossible, not merely unproven")
             text = (d.title + " " + d.decision + " " + d.rationale).lower()
-            if not any(p.lower() in text for p in prefs if p):
+            if not any(p.lower() in text for p in prefs):
                 raise ModelStructureError(
                     f"{d.decision_id} '{d.title}': driver founder_constraint but the decision cites none "
                     f"of the founder's stated preferences ({', '.join(prefs)}) - name the one that drove it.")
@@ -1253,6 +1328,26 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             if not existing and entry["baseline_refs"]:
                 raise ModelStructureError(
                     f"stack.{key}: greenfield architecture cannot cite baseline refs")
+            # P3 slot-kind fitness (2026-09-12 regen, founder-approved): a
+            # grounded name must ANSWER the slot, not merely exist. Layer 1 is
+            # deterministic: entry-point-shaped values are legal only for
+            # entry-point slots.
+            if _entry_point_shaped(value) and not _entry_point_slot(key):
+                raise ModelStructureError(
+                    f"stack.{key}: value {value!r} is an entry point (a command, script or "
+                    "module:attr), which cannot answer this slot - name the technology of the "
+                    "slot's KIND (a framework name for a framework slot, a CI tool for a ci "
+                    "slot), or declare a migration (empty baseline_refs)")
+            # Layer 2 is deterministic too (founder directive 2026-09-12): a
+            # value in a KNOWN lexicon of the wrong kind cannot answer the slot
+            # ('Pydantic' for encryption). Novel-tech values match no lexicon
+            # and pass - a lexicon miss is never a verdict; no LLM judge call.
+            wrong = _wrong_kind(key, value) if not _entry_point_slot(key) else None
+            if wrong:
+                raise ModelStructureError(
+                    f"stack.{key}: {value!r} is a {wrong}, which does not answer this "
+                    "slot - name a technology that directly answers this slot's question, "
+                    "or declare a migration (empty baseline_refs)")
             return entry
 
         entries = part.setdefault("stack_entries", {})
@@ -1351,6 +1446,32 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         "rejected": []}
                 if not body["title"] or not body["decision"] or not body["rationale"]:
                     raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
+                # P1 (2026-09-12 regen, founder-approved): a founder_constraint
+                # driver claims THE FOUNDER mandated this - that requires a
+                # founder tech preference actually on record, and the decision
+                # must name it. With no preferences recorded the claim is
+                # impossible, never merely unproven (ADR-1 'Auth0' sailed
+                # through the old check's empty-prefs hole claiming his
+                # mandate). Deterministic gate, per-ADR retry, cheap.
+                adr_text = (body["title"] + " " + body["decision"] + " " + body["rationale"]).lower()
+                founder_prefs = [str(p.get("preference", "")) for p in
+                                 (state["intent_model"].get("tech_preferences") or []) if p.get("preference")]
+                if body["driver"] == "founder_constraint":
+                    if not founder_prefs:
+                        raise ModelStructureError(
+                            f"{slot['decision_id']} '{body['title']}': driver founder_constraint, but the "
+                            "intent model records NO founder tech preferences - the founder never mandated "
+                            "this. Pick the real driver (ecosystem_maturity | community_adoption | team_fit "
+                            "| simplicity) and delete any founder-mandate language")
+                    if not any(pref.lower() in adr_text for pref in founder_prefs):
+                        raise ModelStructureError(
+                            f"{slot['decision_id']} '{body['title']}': driver founder_constraint but the "
+                            f"decision names none of the founder's stated preferences "
+                            f"({', '.join(founder_prefs)}) - name the one that drove it, or pick the real driver")
+                elif _re.search(r"mandat\w* by the founder|founder(-|\')s? (mandate|preference|requirement|decision)", adr_text):
+                    raise ModelStructureError(
+                        f"{slot['decision_id']} '{body['title']}': the text claims a founder mandate but the "
+                        "driver is not founder_constraint - delete the mandate language or justify the driver")
                 if slot["migration"]:
                     if not body["evidence"]:
                         raise ModelStructureError(f"{slot['decision_id']} {body['title']}: migration requires evidence")

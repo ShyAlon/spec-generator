@@ -108,24 +108,32 @@ class _MicroModel:
 
     DEPART_VALUES = {"database": ("PostgreSQL", "Adopt PostgreSQL"),
                      "ci_tool": ("Jenkins", "Adopt Jenkins for ci_tool"),
+                     "encryption": ("AES-256", "Adopt AES-256 for encryption"),
+                     "framework": ("LangGraph", "Adopt LangGraph for framework"),
                      "sso_integration": ("Keycloak", "Adopt Keycloak for sso_integration")}
 
     def __init__(self, stage, schema, calls, crash_on=None, depart=False,
-                 depart_key="database", adr_slugs=None):
+                 depart_key="database", adr_slugs=None, plan_keys=None):
         self.stage, self.schema, self.calls = stage, schema, calls
         self.crash_on, self.depart, self.depart_key = crash_on, depart, depart_key
         self.adr_slugs = adr_slugs
+        self.plan_keys = plan_keys
 
     def stream(self, messages):
         self.calls.append(self.schema.get("properties", self.schema.get("type")))
         props = set(self.schema.get("properties", {}))
         if props == {"stack_keys"}:
-            out = {"stack_keys": (["language", self.depart_key] if self.depart
+            out = {"stack_keys": self.plan_keys or (["language", self.depart_key] if self.depart
                                   else ["language", "database"])}
         elif props == {"value", "baseline_refs"}:
             prompt = messages[-1].content
             if (f"THE STACK KEY TO DECIDE: {self.depart_key}" in prompt and self.depart):
                 out = {"value": self.DEPART_VALUES[self.depart_key][0], "baseline_refs": []}
+            elif any(f"THE STACK KEY TO DECIDE: {k}" in m.content for k in ("database", "persistence")
+                     for m in messages):
+                # kind-correct default: the slot-kind gate (P3) rejects a language
+                # value for a database slot
+                out = {"value": "PostgreSQL 14", "baseline_refs": ["persistence:spec-generator:1"]}
             else:
                 out = {"value": "ts", "baseline_refs": ["repo:spec-generator"]}
         elif props == {"responsibility"}:
@@ -269,7 +277,7 @@ def test_invented_entry_value_retries_only_that_slot(monkeypatch):
         {"configurable": {"thread_id": "auth0"}})
     assert counters["db"] == 2  # rejected once, retried with feedback, accepted
     db = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "database")
-    assert db["value"] == "ts" and db["baseline_refs"] == ["repo:spec-generator"]
+    assert db["value"] == "PostgreSQL 14" and db["baseline_refs"] == ["persistence:spec-generator:1"]
 
 
 def test_persisted_entry_failing_current_contract_is_reasked(monkeypatch, tmp_path):
@@ -288,7 +296,7 @@ def test_persisted_entry_failing_current_contract_is_reasked(monkeypatch, tmp_pa
     entry_calls = [c for c in calls if isinstance(c, dict) and set(c) == {"value", "baseline_refs"}]
     assert len(entry_calls) == 1  # only the bad slot was re-asked
     db = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "database")
-    assert db["value"] == "ts" and db["baseline_refs"] == ["repo:spec-generator"]
+    assert db["value"] == "PostgreSQL 14" and db["baseline_refs"] == ["persistence:spec-generator:1"]
 
 
 def test_gate_failure_is_human_readable_not_a_traceback(monkeypatch):
@@ -416,7 +424,11 @@ def test_verbatim_fact_text_is_grounded_not_rejected(monkeypatch):
 
     class LiveAnswer(_MicroModel):
         def stream(self, messages):
-            if any("THE STACK KEY TO DECIDE: database" in m.content for m in messages):
+            props = set(self.schema.get("properties", {}))
+            if props == {"stack_keys"}:  # the live run's plan included module_entry_points
+                yield AIMessage(content=json.dumps({"stack_keys": ["language", "module_entry_points"]}))
+                return
+            if any("THE STACK KEY TO DECIDE: module_entry_points" in m.content for m in messages):
                 yield AIMessage(content=json.dumps(
                     {"value": "python -m spec_generator.cli",
                      "baseline_refs": ["module:spec-generator:1"]}))
@@ -428,7 +440,144 @@ def test_verbatim_fact_text_is_grounded_not_rejected(monkeypatch):
     r = build_graph(UsageLog("s")).invoke(
         {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
         {"configurable": {"thread_id": "verbatim"}})
-    db = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "database")
+    db = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "module_entry_points")
     assert db["value"] == "python -m spec_generator.cli"
     assert db["baseline_refs"] == ["module:spec-generator:1"]
     assert db["migration_adr_id"] is None  # grounded, not a departure
+
+
+def test_entry_point_shape_cannot_answer_a_technology_slot():
+    # deterministic P3 layer 1 (2026-09-12 regen: 'python -m spec_generator.cli'
+    # stuffed into framework + ci): shape rules, no model judgment needed
+    from spec_generator.graph import _entry_point_shaped, _entry_point_slot
+    assert _entry_point_shaped("python -m spec_generator.cli")
+    assert _entry_point_shaped("Python -m spec_generator.cli")   # capital-P paraphrase
+    assert _entry_point_shaped("scripts/batch-specs.sh")
+    assert _entry_point_shaped("delivery_api.app:app via uvicorn")
+    assert not _entry_point_shaped("LangGraph")
+    assert not _entry_point_shaped("PostgreSQL 16")
+    assert _entry_point_slot("module_entry_points")
+    assert _entry_point_slot("package_entry_points")
+    assert not _entry_point_slot("framework")
+
+    class EntryPointAnswer(_MicroModel):
+        def stream(self, messages):
+            props = set(self.schema.get("properties", {}))
+            if props == {"value", "baseline_refs"} and any(
+                    "THE STACK KEY TO DECIDE: framework" in m.content for m in messages):
+                if any("cannot answer this slot" in m.content for m in messages):
+                    yield AIMessage(content=json.dumps({"value": "LangGraph", "baseline_refs": []}))
+                else:
+                    yield AIMessage(content=json.dumps(
+                        {"value": "python -m spec_generator.cli",
+                         "baseline_refs": ["module:spec-generator:1"]}))
+                return
+            yield from super().stream(messages)
+
+    calls = []
+    _run(monkeypatch := __import__("pytest").MonkeyPatch(), calls)
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: EntryPointAnswer(stage, k.get("schema") or {}, calls,
+                                                            plan_keys=["language", "framework"],
+                                                            depart_key="framework", depart=True))
+    r = build_graph(UsageLog("s")).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+        {"configurable": {"thread_id": "shape"}})
+    fw = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "framework")
+    assert fw["value"] == "LangGraph"          # the command never lands in a framework slot
+    assert fw["migration_adr_id"] is not None  # a departure, honestly labeled
+    monkeypatch.undo()
+
+
+def test_wrong_kind_value_rejected_deterministically():
+    # P3 layer 2, deterministic (the regen's encryption='Pydantic'): a value in a
+    # KNOWN lexicon of the wrong kind cannot answer the slot. No model call.
+    class PydanticAnswer(_MicroModel):
+        def stream(self, messages):
+            props = set(self.schema.get("properties", {}))
+            if props == {"value", "baseline_refs"} and any(
+                    "THE STACK KEY TO DECIDE: encryption" in m.content for m in messages):
+                if any("does not answer this" in m.content for m in messages):
+                    yield AIMessage(content=json.dumps({"value": "AES-256", "baseline_refs": []}))
+                else:
+                    yield AIMessage(content=json.dumps(
+                        {"value": "ts", "baseline_refs": ["repo:spec-generator"]}))
+                return
+            yield from super().stream(messages)
+
+    monkeypatch = __import__("pytest").MonkeyPatch()
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: PydanticAnswer(
+                            stage, k.get("schema") or {}, [],
+                            plan_keys=["language", "encryption"], depart_key="encryption", depart=True))
+    r = build_graph(UsageLog("s")).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+        {"configurable": {"thread_id": "wrongkind"}})
+    enc = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "encryption")
+    assert enc["value"] == "AES-256"           # the wrong-kind candidate was rejected
+    assert enc["migration_adr_id"] is not None
+    monkeypatch.undo()
+
+
+def test_founder_constraint_driver_needs_a_recorded_preference():
+    # P1 (the regen's ADR-1 'Auth0'): founder_constraint with NO founder tech
+    # preferences on record is impossible, not merely unproven - per-ADR retry
+    class OverclaimingAdr(_MicroModel):
+        def stream(self, messages):
+            props = set(self.schema.get("properties", {}))
+            if "driver" in props:
+                migration = any('"migration": true' in m.content for m in messages)
+                driver = "founder_constraint"
+                rat = "the founder mandated it"
+                if any("never mandated" in m.content for m in messages):
+                    driver, rat = "ecosystem_maturity", "mature ecosystem"
+                yield AIMessage(content=json.dumps(
+                    {"title": "Adopt PostgreSQL", "decision": "Use PostgreSQL",
+                     "rationale": rat, "driver": driver,
+                     "options_considered": [], "baseline_refs": [],
+                     "evidence": ["R-9 requires shared state"] if migration else [],
+                     "affected_repositories": ["spec-generator"] if migration else []}))
+                return
+            yield from super().stream(messages)
+
+    monkeypatch = __import__("pytest").MonkeyPatch()
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: OverclaimingAdr(stage, k.get("schema") or {}, [], depart=True))
+    r = build_graph(UsageLog("s")).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},  # INTENT: no tech_preferences
+        {"configurable": {"thread_id": "overclaim"}})
+    drivers = [d["driver"] for d in r["architecture"]["decisions"]]
+    assert "founder_constraint" not in drivers
+    assert "ecosystem_maturity" in drivers
+    monkeypatch.undo()
+
+
+def test_mandate_language_under_another_driver_is_rejected():
+    # P1 consistency: claiming the founder's mandate in prose while the driver
+    # says something else is the same lie with a quieter label
+    class QuietlyOverclaimingAdr(_MicroModel):
+        def stream(self, messages):
+            props = set(self.schema.get("properties", {}))
+            if "driver" in props:
+                migration = any('"migration": true' in m.content for m in messages)
+                if any("claims a founder mandate" in m.content for m in messages):
+                    rat = "mature ecosystem"
+                else:
+                    rat = "chosen because it is mandated by the founder"
+                yield AIMessage(content=json.dumps(
+                    {"title": "Adopt PostgreSQL", "decision": "Use PostgreSQL",
+                     "rationale": rat, "driver": "simplicity",
+                     "options_considered": [], "baseline_refs": [],
+                     "evidence": ["R-9 requires shared state"] if migration else [],
+                     "affected_repositories": ["spec-generator"] if migration else []}))
+                return
+            yield from super().stream(messages)
+
+    monkeypatch = __import__("pytest").MonkeyPatch()
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: QuietlyOverclaimingAdr(stage, k.get("schema") or {}, [], depart=True))
+    r = build_graph(UsageLog("s")).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+        {"configurable": {"thread_id": "quiet-overclaim"}})
+    assert all("founder" not in d["rationale"] for d in r["architecture"]["decisions"])
+    monkeypatch.undo()

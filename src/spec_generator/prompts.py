@@ -130,6 +130,11 @@ When you cite baseline facts (answer a), the value must be the fact's VERBATIM t
 composition of cited fact texts: if the baseline fact is 'python -m spec_generator.cli',
 the value is exactly that string - not a paraphrase, not a description, never an invented
 name.
+The value must ANSWER the slot's question with the right KIND of thing: a framework name
+for a framework slot, a CI tool for a ci slot, an encryption standard for an encryption
+slot. A checker rejects wrong-kind answers (a validation library is not an encryption
+standard; a command like 'python -m x' is not a framework or a CI tool). Entry-point-shaped
+values (commands, script paths, module:attr) are legal ONLY for entry-point slots.
 An empty value is NEVER a legal answer - a blank decides nothing. If no baseline fact fits,
 your job is to PROPOSE: pick the concrete technology the SRS and the founder's constraints
 imply. The value must be specific (a named product, framework or tool), never a category
@@ -162,7 +167,14 @@ STRICT JSON array of {slug} objects - slugs only, no other fields ([] when there
 optional decisions)."""
 
 ARCH_ADR_BODY = """Write ONE architecture decision record against its fixed slot: title, the
-decision itself, the rationale (load-bearing - why this option won), driver (exactly one of
+decision itself, the rationale, its driver, the rejected options.
+DRIVER DISCIPLINE (hard rule, checked mechanically): founder_constraint is legal ONLY when
+the founder's stated tech preferences in the context actually mandate this decision - name
+the preference in the text. When no founder preference is on record, the founder mandated
+nothing: pick the real driver (ecosystem_maturity | community_adoption | team_fit |
+simplicity) and never write founder-mandate language ('mandated by the founder', 'the
+founder's preference') under another driver.
+The rationale is load-bearing - why this option won. driver is exactly one of
 founder_constraint - the founder mandated/confined it, cite the preference; ecosystem_maturity;
 community_adoption; team_fit; simplicity), options_considered (the real leading alternatives
 you rejected, each with one sentence on why it lost - not strawmen; empty only when a founder

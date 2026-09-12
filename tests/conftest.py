@@ -20,5 +20,5 @@ SYSTEM_BASELINE = {
     "contract_version": "0.13.0", "baseline_id": "test-baseline", "system_name": "Test system", "mode": "existing",
     "repositories": [{"contract_version": "0.13.0", "name": "spec-generator", "languages": ["Python", "ts"],
         "module_entry_points": ["python -m spec_generator.cli"], "existing_artifacts": [],
-        "existing_contracts": [], "runtime": ["Python"], "persistence": [],
+        "existing_contracts": [], "runtime": ["Python"], "persistence": ["PostgreSQL 14"],
         "integrations": [], "immutable_decisions": []}], "immutable_decisions": []}
