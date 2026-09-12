@@ -1197,10 +1197,22 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             for v in getattr(r, field)).lower()) if existing else ""
 
         def _v_entry(d, key):
-            if not str(d.get("value", "")).strip():
-                raise ModelStructureError(f"stack.{key}: value must name a concrete technology")
-            entry = {"key": key, "value": str(d["value"]).strip(),
-                     "baseline_refs": [str(r) for r in d.get("baseline_refs") or []]}
+            value = str(d.get("value", "")).strip()
+            refs = [str(r) for r in d.get("baseline_refs") or []]
+            if not value:
+                # targeted feedback, not a generic contract failure (the
+                # 2026-09-12 sso_integration blank: the model saw no legal
+                # move when the baseline held no fact for the key)
+                if refs:
+                    raise ModelStructureError(
+                        f"stack.{key}: value must name a concrete technology "
+                        "(you cited baseline facts but named no value)")
+                raise ModelStructureError(
+                    f"stack.{key}: an empty value decides nothing - if no baseline fact fits "
+                    "this key, name a concrete technology anyway with baseline_refs []; it "
+                    "becomes a proposed migration automatically and the pipeline generates "
+                    "the authorizing ADR itself")
+            entry = {"key": key, "value": value, "baseline_refs": refs}
             if existing and entry["baseline_refs"] and entry["value"].lower() not in baseline_vocab:
                 raise ModelStructureError(
                     f"stack.{key}: value {entry['value']!r} is not present in the cited baseline facts - "

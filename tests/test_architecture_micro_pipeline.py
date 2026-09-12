@@ -107,7 +107,8 @@ class _MicroModel:
     emit a departure, exercising assembly wiring + per-slot resume."""
 
     DEPART_VALUES = {"database": ("PostgreSQL", "Adopt PostgreSQL"),
-                     "ci_tool": ("Jenkins", "Adopt Jenkins for ci_tool")}
+                     "ci_tool": ("Jenkins", "Adopt Jenkins for ci_tool"),
+                     "sso_integration": ("Keycloak", "Adopt Keycloak for sso_integration")}
 
     def __init__(self, stage, schema, calls, crash_on=None, depart=False,
                  depart_key="database", adr_slugs=None):
@@ -317,3 +318,36 @@ def test_gate_failure_is_human_readable_not_a_traceback(monkeypatch):
     assert rendered.startswith("Error: stage 'architecture'")
     assert "Likely cause:" in rendered and "repo:nope" in rendered
     assert "Next:" in rendered
+
+
+def test_empty_answer_gets_targeted_proposal_feedback(monkeypatch):
+    # the exact 2026-09-12 sso_integration failure: {"value": "", "baseline_refs": []}
+    # on BOTH attempts. The blank is now rejected with feedback that NAMES the
+    # legal move - propose a concrete technology; it becomes a migration
+    # automatically, with the pipeline generating the authorizing ADR.
+    seen = {"n": 0, "retry_feedback": None}
+
+    class BlankFirst(_MicroModel):
+        def stream(self, messages):
+            if any("THE STACK KEY TO DECIDE: sso_integration" in m.content for m in messages):
+                seen["n"] += 1
+                if seen["n"] == 1:
+                    yield AIMessage(content=json.dumps({"value": "", "baseline_refs": []}))
+                    return
+                seen["retry_feedback"] = messages[-1].content
+                yield AIMessage(content=json.dumps({"value": "Keycloak", "baseline_refs": []}))
+                return
+            yield from super().stream(messages)
+
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: BlankFirst(stage, k.get("schema") or {}, [],
+                                                      depart=True, depart_key="sso_integration"))
+    r = build_graph(UsageLog("s")).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+        {"configurable": {"thread_id": "blank"}})
+    assert seen["n"] == 2  # blank rejected, retried once with feedback, accepted
+    assert "empty value decides nothing" in seen["retry_feedback"]
+    assert "proposed migration" in seen["retry_feedback"]
+    sso = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "sso_integration")
+    assert sso["value"] == "Keycloak" and sso["baseline_refs"] == []
+    assert sso["migration_adr_id"] == "ADR-1"  # pipeline-generated migration slot

@@ -120,13 +120,19 @@ FORMAT CONTRACT (final instruction - overrides anything above that conflicts): r
 STRICT JSON object {stack_keys: [strings]} - only the keys, 3 to 12 of them, no duplicates."""
 
 ARCH_STACK_ENTRY = """Decide ONE stack entry: the chosen technology for the given key, and the
-baseline refs that ground it (existing mode: cite every ref that records this choice; empty
-refs means this DEPARTS from the baseline and will need a migration ADR). The value must be a
-concrete technology as recorded in the baseline facts, or - for a departure - the specific
-replacement. In greenfield mode refs stay empty.
+baseline refs that ground it. Exactly TWO legal answers:
+(a) the technology is recorded in the baseline facts - name it and cite every ref that
+records it;
+(b) it is NOT - name a concrete technology ANYWAY with baseline_refs []: that is a proposed
+migration, and the pipeline generates the authorizing decision record itself. Choosing (b) is
+normal and expected whenever the baseline records no fact for this key.
+An empty value is NEVER a legal answer - a blank decides nothing. If no baseline fact fits,
+your job is to PROPOSE: pick the concrete technology the SRS and the founder's constraints
+imply. The value must be specific (a named product, framework or tool), never a category
+word, never "". In greenfield mode refs stay empty.
 FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
-STRICT JSON object {value: string, baseline_refs: [refs]} - baseline_refs uses only exact
-strings from the VALID BASELINE REFS list, nothing else."""
+STRICT JSON object {value: string, baseline_refs: [refs]} - value non-empty, baseline_refs
+uses only exact strings from the VALID BASELINE REFS list, nothing else."""
 
 ARCH_COMPONENT_PLAN = """List the software components of this architecture. For each: a short
 unique name, the requirement ids (R-n) it realizes, the baseline refs proving where it already
