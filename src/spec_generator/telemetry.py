@@ -1,25 +1,15 @@
-"""Same discipline as interview-engine: every call logged against the
-versioned price table. Kept as a tiny local copy of the contract types rather
-than a shared non-contract module - the only shared artifact is
-vmodel-contracts (ADR-0002). If this grows, it graduates INTO the contracts
-package as telemetry helpers."""
+"""Every call logged against the versioned price table - THE shared one in
+vmodel-contracts (one table for every repo, 2026-09-12; the local copy had
+silently zeroed unpriced remote models where interview-engine crashed).
+Names re-exported so existing imports keep working."""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable
 
 from vmodel_contracts import StageTokenUsage
-
-PRICE_TABLE_VERSION = "2026-09-10"
-PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
-    "deepseek-flash": (0.30, 1.20),       # V4.1 Flash peak; off-peak $0.15/$0.60
-    "deepseek-v4-pro": (1.32, 3.96),      # peak; off-peak $0.66/$1.98; retires to Flash 2026-09-14
-    "claude-sonnet-5": (2.00, 10.00),
-    "claude-haiku-4.5": (1.00, 5.00),
-    "gpt-5": (1.25, 10.00),
-    "gpt-5-mini": (0.25, 2.00),
-    "gpt-5-nano": (0.05, 0.40),
-}
+from vmodel_contracts import (PRICE_TABLE_VERSION, PRICES_USD_PER_MTOK,
+                              price_for)
 
 Sink = Callable[[StageTokenUsage], None]
 
@@ -38,10 +28,7 @@ class UsageLog:
         self.sink = sink
 
     def record(self, stage: str, provider: str, model: str, usage: dict) -> StageTokenUsage:
-        if provider == "ollama":
-            pin, pout = 0.0, 0.0  # local compute: $0 marginal, logged for the record
-        else:
-            pin, pout = PRICES_USD_PER_MTOK.get(model, (0.0, 0.0))
+        pin, pout = price_for(model, provider)  # local $0; unpriced remote fails loudly
         rec = StageTokenUsage(
             session_id=self.session_id, stage=stage, provider=provider, model=model,
             prompt_tokens=int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0),
