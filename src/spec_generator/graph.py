@@ -1151,6 +1151,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                               arch_nfr_schema, arch_stack_entry_schema,
                               arch_stack_plan_schema)
 
+        if "system_baseline" not in state:
+            # a KNOWN pain (old checkpoint, flag never merged) - human-readable,
+            # never a raw KeyError traceback (the founder's standing rule)
+            from .errors import UserFacingError
+            raise UserFacingError(
+                "stage 'architecture': this run has no system baseline in its state.",
+                "the checkpoint predates the system-baseline feature and no --system-baseline was merged in.",
+                "rerun the same command with --system-baseline <baseline.json> - the CLI merges it into the resumed state.")
         baseline = SystemBaseline.model_validate(state["system_baseline"])
         sid = state["intent_model"]["session_id"]
         valid_refs = sorted(baseline_reference_index(baseline))

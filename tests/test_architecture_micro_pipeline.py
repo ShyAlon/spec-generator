@@ -351,3 +351,49 @@ def test_empty_answer_gets_targeted_proposal_feedback(monkeypatch):
     sso = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "sso_integration")
     assert sso["value"] == "Keycloak" and sso["baseline_refs"] == []
     assert sso["migration_adr_id"] == "ADR-1"  # pipeline-generated migration slot
+
+
+def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monkeypatch, tmp_path):
+    # the 2026-09-12 --from architecture crash (KeyError 'system_baseline'):
+    # the original run's checkpoint predates the baseline feature and the CLI
+    # never injected the --system-baseline flag into resumed state. Now: the
+    # stage fails human-readably when absent, and the CLI merges the flag
+    # value into the resumed checkpoint so the regen completes.
+    import sqlite3
+    import sys
+
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    from spec_generator import cli
+    from spec_generator.errors import UserFacingError
+    from spec_generator.graph import checkpoint_serde
+
+    intent = {**INTENT, "contract_version": "0.13.0"}
+    intent_path = tmp_path / "intent.json"
+    intent_path.write_text(json.dumps(intent))
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(json.dumps(SYSTEM_BASELINE))
+    outdir = tmp_path / "artifacts"
+    outdir.mkdir()
+    sid = INTENT["session_id"]
+    monkeypatch.setenv("SPEC_GENERATOR_FROM", "")
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: _MicroModel(stage, k.get("schema") or {}, []))
+
+    # 1. an OLD checkpoint: state without system_baseline (pre-baseline
+    # feature). needs+srs complete; architecture stops human-readably.
+    conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
+    g = build_graph(UsageLog(sid), checkpointer=SqliteSaver(conn, serde=checkpoint_serde()))
+    with pytest.raises(UserFacingError, match="no system baseline"):
+        g.invoke({"intent_model": dict(intent)}, {"configurable": {"thread_id": sid}})
+
+    # 2. the fixed CLI path: --from architecture + --system-baseline merges the
+    # flag into the resumed checkpoint and the full regen completes.
+    monkeypatch.setattr(sys, "argv", ["prog", str(intent_path),
+                                      "--system-baseline", str(baseline_path),
+                                      "-o", str(outdir), "--from", "architecture"])
+    cli.main()
+    arch = json.loads((outdir / "architecture.json").read_text())
+    assert arch["stack_entries"]  # regenerated under the current code
+    assert arch["baseline_id"] == SYSTEM_BASELINE["baseline_id"]
+    assert (outdir / "manifest.json").exists()  # downstream bundle assembled

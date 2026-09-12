@@ -551,6 +551,17 @@ def main() -> None:
         if written:
             print(f"Artifacts for already-completed stages written to the bundle dir ({', '.join(written)}).",
                   file=sys.stderr)
+    if resume and prior.get("system_baseline") != baseline:
+        # --system-baseline is authoritative for THIS invocation. Old
+        # checkpoints predate the baseline feature entirely (the 2026-09-12
+        # --from architecture KeyError 'system_baseline'): merge the flag
+        # value into the resumed state so baseline-consuming stages see it.
+        graph.update_state(cfg, {"system_baseline": baseline})
+        if prior.get("system_baseline") is None:
+            print("System baseline merged into the resumed run (its checkpoint predates the baseline feature).",
+                  file=sys.stderr)
+        else:
+            print("System baseline updated from --system-baseline for this run.", file=sys.stderr)
     if args.from_stage:
         _invalidate_from(graph, cfg, args.from_stage, args.review)
         for key in _PARTIAL_DOWNSTREAM.get(args.from_stage, ()):
