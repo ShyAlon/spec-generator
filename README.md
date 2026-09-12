@@ -24,7 +24,7 @@ resumable. Batch-API eligible stages are marked in `model_config.py`.
 ## Bundle layout (Spec Kit-compatible)
 
 ```
-artifacts-2026-09-10_16-41-00/   # default: timestamp comes from the session id
+../artifacts/artifacts-2026-09-10_16-41-00/   # default: workspace-sibling artifacts/ folder, name from the session id
   AGENTS.md            # build order, decided architecture, guardrails
   manifest.json        # machine-readable index - read this first
   needs.md  srs.md  architecture.md   # srs.md: the standalone, solution-agnostic SRS
@@ -50,7 +50,7 @@ export DEEPSEEK_API_KEY=...
 python -m spec_generator.cli out/<session>/intent_model.json
 ```
 
-By default the output directory is `artifacts-YYYY-MM-DD_HH-MM-SS`, derived from the interview session id. That makes it readable and sortable while ensuring the same command resumes into the same checkpoint directory. Pass `-o <path>` to choose a directory explicitly; explicit paths are unchanged.
+By default the output directory is `<workspace>/artifacts/artifacts-YYYY-MM-DD_HH-MM-SS`: the `artifacts` folder SIBLING of the repo checkouts (shared convention, `vmodel_contracts.runtime.artifacts_root`), with the run directory named from the interview session id. Generated output stays out of the git trees; the session-derived name keeps it readable, sortable, and resumable into the same checkpoint directory. `VMODEL_ARTIFACTS_DIR` (environment or the shared `../.env`) overrides the root; pass `-o <path>` to choose a directory explicitly. Explicit `-o` paths are unchanged - a run created with the old in-repo default must be resumed with its explicit `-o` path.
 
 Live per-stage progress lines (`-> Drafting architecture overview (stage 3/6)...`)
 come from structured `ProgressEvent`s (progress.py) - the same stream the UI

@@ -24,10 +24,10 @@ from datetime import datetime
 from pathlib import Path
 
 from vmodel_contracts import (
-    run_with_system_awake,
-    AcceptanceTest, ArchitectureOverview, ItemSpec, PunchListItem,
+    run_with_system_awake, AcceptanceTest, ArchitectureOverview, ItemSpec, PunchListItem,
     RequirementSet, SpecManifest, SRSDocument, StakeholderNeedsSet, SystemBaseline,
 )
+from vmodel_contracts.runtime import artifacts_root
 
 from .errors import UserFacingError, run_cli
 from .graph import build_graph, checkpoint_serde, srs_document_data, _legacy_arch_fill
@@ -318,15 +318,23 @@ def _default_outdir(intent_path: Path, session_id: str) -> Path:
     the same directory instead of inventing a fresh timestamp. Hand-authored
     ids fall back to the intent file's mtime, which is likewise stable for the
     file being run.
+
+    The directory lands in the artifacts SIBLING folder (<workspace>/artifacts/
+    when run from a repo checkout inside the workspace - shared convention in
+    vmodel_contracts.runtime.artifacts_root), keeping generated output out of
+    the git trees. VMODEL_ARTIFACTS_DIR (env or the shared .env) overrides the
+    root; -o overrides the whole path.
     """
     import re
+
+    from . import model_config
 
     match = re.match(r"^(\d{8})-(\d{6})(?:-|$)", session_id)
     if match:
         stamp = datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
     else:
         stamp = datetime.fromtimestamp(intent_path.stat().st_mtime)
-    return Path(f"artifacts-{stamp:%Y-%m-%d_%H-%M-%S}")
+    return artifacts_root(model_config._env("VMODEL_ARTIFACTS_DIR")) / f"artifacts-{stamp:%Y-%m-%d_%H-%M-%S}"
 
 
 def _load_system_baseline(path: Path) -> dict:
@@ -446,7 +454,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("intent_model", type=Path)
     ap.add_argument("-o", "--out", type=Path, default=None,
-                    help="artifact directory (default: artifacts-YYYY-MM-DD_HH-MM-SS, from the session id)")
+                    help="artifact directory (default: <workspace>/artifacts/artifacts-YYYY-MM-DD_HH-MM-SS, "
+                         "from the session id; VMODEL_ARTIFACTS_DIR overrides the root)")
     ap.add_argument("--review", action="store_true",
                     help="opt-in founder review gates after the SRS and architecture stages (ADR-0019)")
     ap.add_argument("--from", dest="from_stage", metavar="STAGE", default=None,

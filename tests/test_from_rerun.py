@@ -122,19 +122,24 @@ def test_from_warns_before_discarding_preserved_partials(monkeypatch, tmp_path, 
 
 def test_default_output_dir_is_human_readable_and_stable(monkeypatch, tmp_path, capsys):
     """Default derives from the session timestamp: rerunning the same intent
-    resumes the same checkpoint rather than creating a fresh directory."""
+    resumes the same checkpoint rather than creating a fresh directory. The
+    directory lives in the workspace-SIBLING artifacts/ folder (2026-09-12
+    founder decision: generated output stays out of the git trees)."""
     box = {}
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
-    monkeypatch.chdir(tmp_path)
-    intent_file = tmp_path / "intent_model.json"
+    repo = tmp_path / "require" / "spec-generator"; repo.mkdir(parents=True)
+    monkeypatch.chdir(repo)
+    monkeypatch.delenv("VMODEL_ARTIFACTS_DIR", raising=False)
+    monkeypatch.setattr(model_config, "_DOTENV", {})
+    intent_file = repo / "intent_model.json"
     intent = dict(INTENT, session_id="20260910-164100-ab12", contract_version=CONTRACT_VERSION)
     intent_file.write_text(json.dumps(intent))
-    baseline_file = tmp_path / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
+    baseline_file = repo / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
 
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "--system-baseline", str(baseline_file)])
     main()
-    outdir = tmp_path / "artifacts-2026-09-10_16-41-00"
+    outdir = tmp_path / "require" / "artifacts" / "artifacts-2026-09-10_16-41-00"
     assert (outdir / "tests.json").exists()
     first_counts = {k: v.calls for k, v in box.items()}
 
@@ -205,3 +210,27 @@ def test_only_stage_graph_ends_after_named_node(monkeypatch):
         state, {"configurable": {"thread_id": "only-items"}})
     assert "items" in result
     assert set(box) == {"items"}
+
+
+def test_default_outdir_lands_in_workspace_sibling_artifacts(tmp_path, monkeypatch):
+    # 2026-09-12 founder decision: generated output lives OUTSIDE the git
+    # trees, in the workspace-sibling artifacts/ folder (shared convention,
+    # vmodel_contracts.runtime.artifacts_root).
+    from spec_generator import cli, model_config
+
+    repo = tmp_path / "require" / "spec-generator"; repo.mkdir(parents=True)
+    monkeypatch.chdir(repo)
+    monkeypatch.delenv("VMODEL_ARTIFACTS_DIR", raising=False)
+    monkeypatch.setattr(model_config, "_DOTENV", {})  # isolate from any real ../.env
+    intent = repo / "intent.json"; intent.write_text("{}")
+    out = cli._default_outdir(intent, "20260910-164100-abc")
+    assert out == (tmp_path / "require" / "artifacts" / "artifacts-2026-09-10_16-41-00").resolve()
+
+
+def test_default_outdir_env_override_and_explicit_resume_note(tmp_path, monkeypatch):
+    from spec_generator import cli
+
+    monkeypatch.setenv("VMODEL_ARTIFACTS_DIR", str(tmp_path / "custom"))
+    intent = tmp_path / "intent.json"; intent.write_text("{}")
+    out = cli._default_outdir(intent, "20260910-164100-abc")
+    assert out == (tmp_path / "custom" / "artifacts-2026-09-10_16-41-00").resolve()
