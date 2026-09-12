@@ -142,14 +142,14 @@ refs. Reference requirement ids; never restate their text.
 FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
 STRICT JSON object {responsibility: string}."""
 
-ARCH_ADR_PLAN = """Plan the architecture decision records (ADRs). Some decisions are FORCED:
-every departure listed under REQUIRED AUTHORIZATIONS must be authorized by exactly one ADR
-with migration=true whose authorizes entry names it. Also plan the load-bearing design
-decisions (migration=false) - no arbitrary choices, but no strawmen either. One short slug per
-decision. The pipeline assigns ADR numbers in order.
+ARCH_ADR_PLAN = """Plan the OPTIONAL architecture decision records (ADRs): the load-bearing
+design choices that are NOT already forced. Forced migration decisions are pipeline-planned
+and listed under PIPELINE-REQUIRED MIGRATION ADRS - never re-propose them. No arbitrary
+choices, but no strawmen either. One short slug per decision. The pipeline assigns ADR numbers
+in order, required migration ADRs first.
 FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
-STRICT JSON array of {slug, migration, authorizes} - authorizes entries only from the REQUIRED
-AUTHORIZATIONS list ([] when there are none), migration=true only for authorizing ADRs."""
+STRICT JSON array of {slug} objects - slugs only, no other fields ([] when there are no
+optional decisions)."""
 
 ARCH_ADR_BODY = """Write ONE architecture decision record against its fixed slot: title, the
 decision itself, the rationale (load-bearing - why this option won), driver (exactly one of

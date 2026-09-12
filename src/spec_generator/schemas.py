@@ -290,17 +290,15 @@ def arch_component_body_schema() -> dict:
             "additionalProperties": False}
 
 
-def arch_adr_plan_schema(authorizable: list[str]) -> dict:
-    """Plan call C: the decision slots. `authorizes` entries are enum-
-    constrained to the REQUIRED AUTHORIZATIONS code computed (departing stack
-    keys + migrating components), so an ADR can only authorize a real,
-    declared departure - the link the parallel maps used to fake."""
+def arch_adr_plan_schema() -> dict:
+    """Plan call C: OPTIONAL design-decision slots only. Migration ADRs are
+    pipeline-generated from the declared departures (the 2026-09-12 live phi4
+    failure: the model planned a ci_tool-absence slot with migration=false and
+    authorizes=[] and left stack:ci_tool unauthorized) - the model cannot miss
+    or mis-set a mechanical obligation it is never asked for."""
     slot = {"type": "object",
-            "properties": {"slug": {"type": "string"},
-                           "migration": {"type": "boolean"},
-                           "authorizes": {"type": "array",
-                                          "items": _enum_or_str(authorizable)}},
-            "required": ["slug", "migration", "authorizes"],
+            "properties": {"slug": {"type": "string"}},
+            "required": ["slug"],
             "additionalProperties": False}
     return {"type": "array", "items": slot}
 

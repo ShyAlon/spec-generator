@@ -45,8 +45,8 @@ def _arch_answer(schema):
                 "affected_repositories": []}
     if schema.get("type") == "array":
         item_props = set(schema["items"].get("properties", {}))
-        if "authorizes" in item_props:
-            return [{"slug": "t", "migration": False, "authorizes": []}]
+        if "slug" in item_props:
+            return [{"slug": "t"}]
         return [{"name": "api", "requirement_ids": ["R-1"],
                  "baseline_refs": ["repo:spec-generator"], "migration": False}]
     raise AssertionError(f"unexpected architecture schema: {schema}")

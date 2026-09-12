@@ -18,9 +18,9 @@ from langchain_core.messages import AIMessage
 from spec_generator import model_config
 from spec_generator.cli import _make_partials
 from spec_generator.errors import UserFacingError
-from spec_generator.graph import (build_graph, _legacy_arch_fill,
-                                  _validate_adr_plan, _validate_component_plan,
-                                  _validate_stack_plan)
+from spec_generator.graph import (build_graph, _legacy_arch_fill, _merge_adr_slots,
+                                  _required_adr_slots, _validate_adr_plan,
+                                  _validate_component_plan, _validate_stack_plan)
 from spec_generator.schemas import (arch_adr_plan_schema, arch_stack_entry_schema,
                                     arch_stack_plan_schema)
 from spec_generator.skeleton import ModelStructureError
@@ -32,14 +32,16 @@ def test_no_micro_schema_has_two_fields_that_must_agree():
     # the phi4 mistake is not representable: there is no stack_baseline_refs
     # anywhere a model writes, and every object is additionalProperties:false
     for sch in (arch_stack_plan_schema(), arch_stack_entry_schema(["repo:x"]),
-                arch_adr_plan_schema(["stack:db"])):
-        assert "stack" not in json.dumps(sch).lower().replace("stack_keys", "").replace("stack:db", "")
+                arch_adr_plan_schema()):
+        assert "stack" not in json.dumps(sch).lower().replace("stack_keys", "")
     entry = arch_stack_entry_schema(["repo:x"])
     assert entry["additionalProperties"] is False
     assert set(entry["properties"]) == {"value", "baseline_refs"}
     assert entry["properties"]["baseline_refs"]["items"] == {"enum": ["repo:x"]}
-    plan = arch_adr_plan_schema(["stack:db"])
-    assert plan["items"]["properties"]["authorizes"]["items"] == {"enum": ["stack:db"]}
+    plan = arch_adr_plan_schema()
+    # the model cannot miss or mis-set a migration ADR: the plan schema has
+    # no migration/authorizes fields at all - they are pipeline-owned
+    assert set(plan["items"]["properties"]) == {"slug"}
 
 
 def test_old_shape_whole_architecture_answer_fails_loudly():
@@ -49,22 +51,33 @@ def test_old_shape_whole_architecture_answer_fails_loudly():
         _validate_stack_plan(PAYLOADS["architecture"])
 
 
-def test_adr_plan_coverage_is_enforced_against_declared_departures():
-    ok = _validate_adr_plan([{"slug": "keep", "migration": False, "authorizes": []},
-                             {"slug": "pg", "migration": True, "authorizes": ["stack:db"]}],
-                            ["stack:db"], True)
-    assert [s["decision_id"] for s in ok] == ["ADR-1", "ADR-2"]  # code-assigned
-    with pytest.raises(ModelStructureError, match="authorized by no migration ADR"):
-        _validate_adr_plan([{"slug": "keep", "migration": False, "authorizes": []}],
-                           ["stack:db"], True)
-    with pytest.raises(ModelStructureError, match="undeclared departures"):
-        _validate_adr_plan([{"slug": "pg", "migration": True, "authorizes": ["stack:cache"]}],
-                           ["stack:db"], True)
-    with pytest.raises(ModelStructureError, match="must authorize"):
-        _validate_adr_plan([{"slug": "pg", "migration": True, "authorizes": []}], [], True)
-    with pytest.raises(ModelStructureError, match="not a migration"):
-        _validate_adr_plan([{"slug": "pg", "migration": True, "authorizes": ["stack:db"]}],
-                           ["stack:db"], False)  # greenfield
+def test_required_migration_slots_are_code_generated_not_model_planned():
+    # the 2026-09-12 live phi4 failure, at the validator level: a departure
+    # (stack:ci_tool) existed and the model's plan forgot to authorize it.
+    # Required slots are now pipeline-owned, one per declared departure.
+    required = _required_adr_slots(["stack:ci_tool", "component:billing"])
+    assert required == [{"slug": "migrate-stack-ci-tool", "migration": True,
+                         "authorizes": ["stack:ci_tool"]},
+                        {"slug": "migrate-component-billing", "migration": True,
+                         "authorizes": ["component:billing"]}]
+    merged = _merge_adr_slots(required, [{"slug": "design-x", "migration": False,
+                                          "authorizes": []}])
+    assert [s["decision_id"] for s in merged] == ["ADR-1", "ADR-2", "ADR-3"]
+    assert merged[0]["authorizes"] == ["stack:ci_tool"]  # required first; ids code-owned
+
+
+def test_adr_plan_model_slots_cannot_touch_pipeline_owned_fields():
+    taken = [s["slug"] for s in _required_adr_slots(["stack:ci_tool"])]
+    ok = _validate_adr_plan([{"slug": "design-x"}], taken)
+    assert ok == [{"slug": "design-x", "migration": False, "authorizes": []}]
+    # the exact 2026-09-12 phi4 answer shape now fails loudly, with the fix named
+    with pytest.raises(ModelStructureError, match="pipeline-owned"):
+        _validate_adr_plan([{"slug": "ci_tool-absence", "migration": False, "authorizes": []}],
+                           taken)
+    with pytest.raises(ModelStructureError, match="collide"):
+        _validate_adr_plan([{"slug": "migrate-stack-ci-tool"}], taken)
+    with pytest.raises(ModelStructureError, match="duplicate ADR slugs"):
+        _validate_adr_plan([{"slug": "x"}, {"slug": "x"}], [])
 
 
 def test_component_plan_rejects_duplicates_and_uncovered_requirements():
@@ -93,19 +106,25 @@ class _MicroModel:
     """Answers each micro-call from its schema; can be told to crash or to
     emit a departure, exercising assembly wiring + per-slot resume."""
 
-    def __init__(self, stage, schema, calls, crash_on=None, depart=False):
+    DEPART_VALUES = {"database": ("PostgreSQL", "Adopt PostgreSQL"),
+                     "ci_tool": ("Jenkins", "Adopt Jenkins for ci_tool")}
+
+    def __init__(self, stage, schema, calls, crash_on=None, depart=False,
+                 depart_key="database", adr_slugs=None):
         self.stage, self.schema, self.calls = stage, schema, calls
-        self.crash_on, self.depart = crash_on, depart
+        self.crash_on, self.depart, self.depart_key = crash_on, depart, depart_key
+        self.adr_slugs = adr_slugs
 
     def stream(self, messages):
         self.calls.append(self.schema.get("properties", self.schema.get("type")))
         props = set(self.schema.get("properties", {}))
         if props == {"stack_keys"}:
-            out = {"stack_keys": ["language", "database"]}
+            out = {"stack_keys": (["language", self.depart_key] if self.depart
+                                  else ["language", "database"])}
         elif props == {"value", "baseline_refs"}:
             prompt = messages[-1].content
-            if "THE STACK KEY TO DECIDE: database" in prompt and self.depart:
-                out = {"value": "PostgreSQL", "baseline_refs": []}
+            if (f"THE STACK KEY TO DECIDE: {self.depart_key}" in prompt and self.depart):
+                out = {"value": self.DEPART_VALUES[self.depart_key][0], "baseline_refs": []}
             else:
                 out = {"value": "ts", "baseline_refs": ["repo:spec-generator"]}
         elif props == {"responsibility"}:
@@ -115,9 +134,9 @@ class _MicroModel:
         elif "driver" in props:
             prompt = messages[-1].content
             migration = '"migration": true' in prompt
-            out = {"title": "Adopt PostgreSQL" if migration else "t",
-                   "decision": "Adopt PostgreSQL database" if migration else "x",
-                   "rationale": "shared transactional state", "driver": "simplicity",
+            out = {"title": self.DEPART_VALUES[self.depart_key][1] if migration else "t",
+                   "decision": "Adopt the replacement", "rationale": "shared transactional state",
+                   "driver": "simplicity",
                    "options_considered": [], "baseline_refs": [],
                    "evidence": ["R-9 requires shared state"] if migration else [],
                    "affected_repositories": ["spec-generator"] if migration else []}
@@ -125,9 +144,8 @@ class _MicroModel:
             out = PAYLOADS[self.stage]
         elif self.schema.get("type") == "array":
             item_props = set(self.schema["items"].get("properties", {}))
-            if "authorizes" in item_props:
-                out = ([{"slug": "pg", "migration": True, "authorizes": ["stack:database"]}]
-                       if self.depart else [{"slug": "t", "migration": False, "authorizes": []}])
+            if "slug" in item_props:
+                out = self.adr_slugs if self.adr_slugs is not None else [{"slug": "t"}]
             else:
                 out = [{"name": "api", "requirement_ids": ["R-1"],
                         "baseline_refs": ["repo:spec-generator"], "migration": False}]
@@ -156,6 +174,25 @@ def test_departure_is_wired_to_its_authorizing_adr_in_code(monkeypatch):
     assert db["baseline_refs"] == [] and db["migration_adr_id"] == "ADR-1"
     assert arch["decisions"][0]["migration"] is True
     assert arch["decisions"][0]["affected_repositories"] == ["spec-generator"]
+
+
+def test_ci_tool_departure_is_authorized_without_model_cooperation(monkeypatch):
+    # the exact 2026-09-12 live failure, end to end: stack:ci_tool departed
+    # from the baseline and the model's ADR plan authorized NOTHING (its
+    # ci_tool-absence slot had migration:false). The pipeline now generates
+    # the migration slot itself; the model only authors the body prose.
+    r = _run(monkeypatch, [], depart=True, depart_key="ci_tool",
+             adr_slugs=[{"slug": "ci_tool-absence"}])
+    arch = r["architecture"]
+    ci = next(e for e in arch["stack_entries"] if e["key"] == "ci_tool")
+    assert ci["baseline_refs"] == [] and ci["migration_adr_id"] == "ADR-1"
+    first = arch["decisions"][0]
+    assert first["decision_id"] == "ADR-1" and first["migration"] is True
+    assert first["title"] == "Adopt Jenkins for ci_tool"  # names the departure
+    assert first["evidence"] and first["affected_repositories"] == ["spec-generator"]
+    # the model's optional slot survives as a plain non-migration ADR after it
+    assert arch["decisions"][1]["decision_id"] == "ADR-2"
+    assert arch["decisions"][1]["migration"] is False
 
 
 def test_per_slot_resume_skips_completed_entries(monkeypatch, tmp_path):

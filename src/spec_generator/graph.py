@@ -541,11 +541,32 @@ def _validate_component_plan(d, req_ids: list[str]) -> list[dict]:
     return slots
 
 
-def _validate_adr_plan(d, authorizable: list[str], existing: bool) -> list[dict]:
-    """Plan call C result: decision slots with pipeline-assigned ADR ids.
-    Every declared departure is authorized by exactly the migration slots;
-    nothing migrates that was not declared (the link the parallel maps faked
-    is now enum-constrained and code-checked)."""
+def _required_adr_slots(authorizable: list[str]) -> list[dict]:
+    """Required migration ADR slots are pipeline-GENERATED, one per declared
+    departure (the 2026-09-12 live phi4 failure: the model planned a
+    ci_tool-absence slot with migration:false and left stack:ci_tool
+    unauthorized - a mechanical obligation the model forgot). Stable
+    human-readable slugs derive from the departure target; the model only
+    adds optional design ADRs and authors the prose."""
+    import re as _re
+
+    slots, used = [], set()
+    for target in authorizable:
+        base = "migrate-" + _re.sub(r"[^a-z0-9]+", "-", target.lower()).strip("-")
+        slug, n = base, 2
+        while slug in used:
+            slug, n = f"{base}-{n}", n + 1
+        used.add(slug)
+        slots.append({"slug": slug, "migration": True, "authorizes": [target]})
+    return slots
+
+
+def _validate_adr_plan(d, taken_slugs: list[str]) -> list[dict]:
+    """Plan call C result: OPTIONAL design-decision slots. Migration ADRs are
+    pipeline-generated (_required_adr_slots), so the model can no longer miss
+    or mis-set one. Here: non-empty unique slugs that do not collide with the
+    pipeline slots, and no model-authored migration/authorizes keys - those
+    are pipeline-owned."""
     if not isinstance(d, list):
         raise ModelStructureError("ADR plan must be an array of decision slots")
     slots = []
@@ -554,27 +575,27 @@ def _validate_adr_plan(d, authorizable: list[str], existing: bool) -> list[dict]
         if not isinstance(s, dict) or not str(s.get("slug", "")).strip():
             raise ModelStructureError("every ADR slot needs a non-empty slug")
         slug = str(s["slug"]).strip()
+        if "migration" in s or "authorizes" in s:
+            raise ModelStructureError(
+                f"ADR slot {slug!r}: migration/authorizes are pipeline-owned - "
+                "propose only optional design decisions, by slug alone")
         slugs.append(slug)
-        slots.append({"slug": slug, "migration": bool(s.get("migration")),
-                      "authorizes": [str(a) for a in s.get("authorizes") or []]})
+        slots.append({"slug": slug, "migration": False, "authorizes": []})
     if len(slugs) != len(set(slugs)):
         raise ModelStructureError(f"duplicate ADR slugs: {sorted({n for n in slugs if slugs.count(n) > 1})}")
-    for s in slots:
-        unknown = [a for a in s["authorizes"] if a not in authorizable]
-        if unknown:
-            raise ModelStructureError(f"ADR slot {s['slug']!r} authorizes undeclared departures: {unknown}")
-        if s["migration"] and not s["authorizes"]:
-            raise ModelStructureError(f"ADR slot {s['slug']!r}: migration=true must authorize at least one declared departure")
-        if not s["migration"] and s["authorizes"]:
-            raise ModelStructureError(f"ADR slot {s['slug']!r}: authorizes requires migration=true")
-    if not existing and any(s["migration"] or s["authorizes"] for s in slots):
-        raise ModelStructureError("greenfield architecture is new design, not a migration")
-    uncovered = [a for a in authorizable
-                 if not any(s["migration"] and a in s["authorizes"] for s in slots)]
-    if uncovered:
-        raise ModelStructureError(f"departures authorized by no migration ADR: {uncovered}")
+    clash = sorted(set(taken_slugs) & set(slugs))
+    if clash:
+        raise ModelStructureError(
+            f"ADR slugs collide with pipeline-required migration slots: {clash}")
+    return slots
+
+
+def _merge_adr_slots(required: list[dict], optional: list[dict]) -> list[dict]:
+    """Required migration slots first, then the model's optional slots; code
+    assigns ADR ids in order (ADR-0020)."""
+    slots = [dict(s) for s in required] + [dict(s) for s in optional]
     for i, s in enumerate(slots, start=1):
-        s["decision_id"] = f"ADR-{i}"  # ADR-0020: code assigns ids in order
+        s["decision_id"] = f"ADR-{i}"
     return slots
 
 
@@ -1211,24 +1232,30 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             _save()
 
         # 5. Plan: ADR slots. Departures are CODE-COMPUTED from the accepted
-        # entries/slots; `authorizes` is enum-constrained to them.
+        # entries/slots and the required migration slots are CODE-GENERATED
+        # from them (the 2026-09-12 live phi4 failure: the model forgot to
+        # authorize stack:ci_tool). The model only proposes OPTIONAL design
+        # decisions; ids are assigned after the merge, required slots first.
         departures = [k for k, e in entries.items() if not e["baseline_refs"]] if existing else []
         migrating = [c["name"] for c in part["component_slots"] if c["migration"]] if existing else []
         authorizable = [f"stack:{k}" for k in departures] + [f"component:{n}" for n in migrating]
         if "adr_slots" not in part:
-            req_block = ("\n\nREQUIRED AUTHORIZATIONS (each needs a migration ADR naming it in authorizes):\n"
-                         + json.dumps(authorizable)) if authorizable else \
-                        "\n\nREQUIRED AUTHORIZATIONS: none - no departures, so nothing may be a migration."
-            part["adr_slots"] = _call_json(
+            required = _required_adr_slots(authorizable)
+            req_block = ("\n\nPIPELINE-REQUIRED MIGRATION ADRS (already planned - do not "
+                         "re-propose them; you will author their bodies against these "
+                         "fixed slots):\n" + json.dumps(required)) if required else \
+                        "\n\nPIPELINE-REQUIRED MIGRATION ADRS: none - no departures, nothing migrates."
+            optional = _call_json(
                 "architecture",
                 context + "\n\nDECIDED STACK (key: value):\n"
                 + json.dumps({k: e["value"] for k, e in entries.items()})
                 + "\n\nCOMPONENT SLOTS:\n" + json.dumps(part["component_slots"])
                 + req_block + "\n\n" + ARCH_ADR_PLAN + feedback,
                 log, progress,
-                validate=lambda d: _validate_adr_plan(d, authorizable, existing),
-                schema=arch_adr_plan_schema(authorizable),
+                validate=lambda d: _validate_adr_plan(d, [s["slug"] for s in required]),
+                schema=arch_adr_plan_schema(),
                 stream_items=False, item_label="plan: decision slots")
+            part["adr_slots"] = _merge_adr_slots(required, optional)
             _save()
 
         # 6. One micro-call per ADR: the decision substance.

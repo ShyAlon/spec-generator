@@ -85,8 +85,8 @@ class FakeModel:
                     "affected_repositories": []}
         if "THE NON-FUNCTIONAL REQUIREMENT" in prompt:
             return {"position": "fast enough"}
-        if "REQUIRED AUTHORIZATIONS" in prompt:
-            return [{"slug": "t", "migration": False, "authorizes": []}]
+        if "PIPELINE-REQUIRED MIGRATION ADRS" in prompt:
+            return [{"slug": "t"}]
         if "REQUIREMENT IDS TO COVER" in prompt:
             return [{"name": "api", "requirement_ids": ["R-1"],
                      "baseline_refs": ["repo:spec-generator"], "migration": False}]
