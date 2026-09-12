@@ -45,24 +45,9 @@ STAGE_PROMPTS = {
            "verifiable requirement text. Return one JSON object: {purpose, scope_summary, "
            "fills: [{requirement_id, title, statement, priority, acceptance: [statements]}]} "
            "- exactly one fill per given slot.",
-    "architecture": "Reconcile the SRS against the supplied SystemBaseline. The baseline is the "
-                    "source of truth; NEVER infer a stack from an archetype or generic product pattern. "
-                    "In existing mode, every stack key needs stack_baseline_refs. Each ungrounded stack key must be "
-                    "named by a migration ADR's title or decision. Every preserved "
-                    "component needs baseline_refs using only the supplied canonical refs. A new/replaced "
-                    "component sets migration=true and migration_adr_title to its exact ADR. Any stack key with [] refs "
-                    "or component migration requires an ADR with migration=true, concrete evidence, "
-                    "and affected_repositories. "
-                    "In greenfield mode, refs stay empty and migration flags stay false. "
-                    "Propose stack, components, ADRs, non-functionals. Components and decisions REFERENCE "
-                    "requirement ids (R-n) - never restate requirement text. Do NOT number the "
-                    "decisions: ADR ids are assigned by the pipeline in order. "
-                    "Every decision MUST carry: driver - exactly one of founder_constraint (the "
-                    "founder mandated/confined it; cite the preference), ecosystem_maturity, "
-                    "community_adoption, team_fit, simplicity - and options_considered: the real "
-                    "leading alternatives you rejected, each with one sentence on why it lost "
-                    "(not strawmen; empty list only when a founder mandate genuinely leaves no "
-                    "alternative). No decision is arbitrary.",
+    "architecture": "See ARCH_* prompts: the architecture stage is a micro-pipeline "
+                    "(ADR-0022 applied to the 2026-09-11 phi4 failure) - plan calls propose "
+                    "slots, one small call fills each slot, code assembles and validates.",
     "items": "Write item-level specs (SPEC-...) covering EVERY requirement in the SRS: each "
              "requirement id must appear in at least one spec's requirement_ids. Reference "
              "requirements by id through requirement_ids - never restate or regroup requirement "
@@ -105,6 +90,85 @@ STAGE_PROMPTS = {
               "solution language in the SRS, downstream text that restates requirements. "
               "Return a JSON list of typed fixes {{scope, target_ids, fix}}, or []. scope is requirement|spec|test|systemic. Use exact R-/SPEC-/T- ids for a scoped fix; use systemic with [] only when no safe target exists.",
 }
+
+
+# 0.13.0 architecture micro-pipeline (ADR-0022 doctrine applied to the
+# 2026-09-11 phi4 failure: the single giant architecture call asked a small
+# local model to keep two free-form maps key-synchronized - a relation no
+# grammar can enforce. Now: tiny planning calls propose SLOTS, one shallow
+# call fills each slot, and code owns ids, grounding checks, and assembly.
+# Every call shares the same context block first (prompt-caching friendly),
+# then its own small task, then a final FORMAT CONTRACT - the model follows
+# the last frame it read.)
+
+ARCH_CONTEXT = """You are reconciling an SRS against a SystemBaseline to produce a system architecture.
+The baseline is the source of truth; NEVER infer a stack from an archetype or a generic
+product pattern. Rules that apply to every architecture call:
+- In existing mode, every grounded claim cites ONLY the supplied canonical baseline refs,
+  exactly as written. A technology choice with NO baseline refs is a MIGRATION (a departure
+  from the recorded system) and must be authorized by a migration ADR.
+- In greenfield mode there is no baseline: refs stay empty and nothing is a migration.
+- Components and decisions REFERENCE requirement ids (R-n) - never restate requirement text.
+- Ids are assigned by the pipeline: ADR numbers, and the links between a departure and the
+  ADR authorizing it, are wired in code. You never write them.
+- Output STRICT JSON matching the requested schema. No prose around it."""
+
+ARCH_STACK_PLAN = """List the technology slots this architecture must decide (e.g. "language",
+"framework", "database", "model_runtime", "ci"). Judge from the SRS, the founder's
+constraints, and the baseline - one short snake_case key per slot, no values yet.
+FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
+STRICT JSON object {stack_keys: [strings]} - only the keys, 3 to 12 of them, no duplicates."""
+
+ARCH_STACK_ENTRY = """Decide ONE stack entry: the chosen technology for the given key, and the
+baseline refs that ground it (existing mode: cite every ref that records this choice; empty
+refs means this DEPARTS from the baseline and will need a migration ADR). The value must be a
+concrete technology as recorded in the baseline facts, or - for a departure - the specific
+replacement. In greenfield mode refs stay empty.
+FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
+STRICT JSON object {value: string, baseline_refs: [refs]} - baseline_refs uses only exact
+strings from the VALID BASELINE REFS list, nothing else."""
+
+ARCH_COMPONENT_PLAN = """List the software components of this architecture. For each: a short
+unique name, the requirement ids (R-n) it realizes, the baseline refs proving where it already
+exists (existing mode: a preserved component NEEDS refs), and migration=true only for a
+new/replaced component. Cover every requirement id across the components.
+FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
+STRICT JSON array of {name, requirement_ids, baseline_refs, migration} - names unique, ids and
+refs only from the supplied lists."""
+
+ARCH_COMPONENT_BODY = """Write the responsibility of ONE component: one or two sentences naming
+what it owns and what it deliberately does not own, grounded in its requirements and baseline
+refs. Reference requirement ids; never restate their text.
+FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
+STRICT JSON object {responsibility: string}."""
+
+ARCH_ADR_PLAN = """Plan the architecture decision records (ADRs). Some decisions are FORCED:
+every departure listed under REQUIRED AUTHORIZATIONS must be authorized by exactly one ADR
+with migration=true whose authorizes entry names it. Also plan the load-bearing design
+decisions (migration=false) - no arbitrary choices, but no strawmen either. One short slug per
+decision. The pipeline assigns ADR numbers in order.
+FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
+STRICT JSON array of {slug, migration, authorizes} - authorizes entries only from the REQUIRED
+AUTHORIZATIONS list ([] when there are none), migration=true only for authorizing ADRs."""
+
+ARCH_ADR_BODY = """Write ONE architecture decision record against its fixed slot: title, the
+decision itself, the rationale (load-bearing - why this option won), driver (exactly one of
+founder_constraint - the founder mandated/confined it, cite the preference; ecosystem_maturity;
+community_adoption; team_fit; simplicity), options_considered (the real leading alternatives
+you rejected, each with one sentence on why it lost - not strawmen; empty only when a founder
+mandate genuinely leaves no alternative), baseline_refs supporting it, and - ONLY for a
+migration ADR - evidence (concrete justification for departing) and affected_repositories
+(baseline repository names that change). Non-migration ADRs leave evidence and
+affected_repositories empty.
+FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
+STRICT JSON object {title, decision, rationale, driver, options_considered, baseline_refs,
+evidence, affected_repositories} - refs and repository names only from the supplied lists."""
+
+ARCH_NFR = """Write ONE non-functional position: the checkable stance this architecture takes
+for the given non-functional requirement (how the design makes the requirement observable -
+budgets, mechanisms, limits), referencing the requirement id without restating its text.
+FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
+STRICT JSON object {position: string}."""
 
 
 TOOL_PROMPTS = {

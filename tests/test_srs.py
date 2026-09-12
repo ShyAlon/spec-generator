@@ -27,6 +27,8 @@ def _run(monkeypatch, srs_body, thread="srs1"):
     class FM(FakeModel):
         def invoke(self, messages):
             self.calls += 1
+            if self.stage == "architecture":
+                return AIMessage(content=json.dumps(self._architecture_answer(messages[-1].content)))
             return AIMessage(content=json.dumps(payloads[self.stage]))
     monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
     g = build_graph(UsageLog("s"))
@@ -58,6 +60,8 @@ def test_structure_carried_deterministically(monkeypatch):
     class FM(FakeModel):
         def invoke(self, messages):
             self.calls += 1
+            if self.stage == "architecture":
+                return AIMessage(content=json.dumps(self._architecture_answer(messages[-1].content)))
             return AIMessage(content=json.dumps(payloads[self.stage]))
     monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
     g = build_graph(UsageLog("s"))

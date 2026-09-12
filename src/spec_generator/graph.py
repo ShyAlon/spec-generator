@@ -105,7 +105,9 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
         tok = (usage or {}).get("total_tokens")
         progress.emit(ProgressEvent(stage, "", "item", _t.time(), _t.time() - t0,
                                     item_label + (f" · {tok} tok" if tok else "")))
-    return "".join(chunks)
+    raw = "".join(chunks)
+    model_config.log_raw_completion(stage, item_label, attempt, raw)
+    return raw
 
 
 def _extract_json(text: str) -> str:
@@ -358,8 +360,30 @@ def _legacy_arch_fill(payload: dict) -> dict:
     synthesize the honest legacy form (same rule as vmodel_contracts.migrate)
     so resuming an old session past the architecture stage cannot crash
     assembly. New production never takes this path: the stage validator
-    requires a real driver before state is written."""
+    requires a real driver before state is written.
+
+    Pre-0.13.0 checkpoints hold the parallel maps (stack + stack_baseline_refs);
+    heal them into typed stack_entries. A MISSING refs map heals to empty refs
+    ("not recorded" - pre-grounding artifacts). A MISMATCHED refs map is the
+    2026-09-11 phi4 failure shape: its per-key refs cannot be trusted, so every
+    entry heals with refs [] - empty refs mark a migration choice and can never
+    fabricate baseline grounding; the reconciliation gate judges the result.
+    (The explicit `vmodel_contracts.migrate` path refuses this shape instead -
+    there, "re-run the stage" is an actionable answer.)"""
     out = dict(payload)
+    if "stack_entries" not in out and "stack" in out:
+        stack = out.pop("stack") or {}
+        refs = out.pop("stack_baseline_refs", None)
+        if isinstance(refs, dict) and set(refs) == set(stack):
+            healed = [(k, v, refs[k] if isinstance(refs[k], list) else []) for k, v in stack.items()]
+        else:
+            healed = [(k, v, []) for k, v in stack.items()]
+        out["stack_entries"] = [
+            {"key": k, "value": v, "baseline_refs": [str(r) for r in rs], "migration_adr_id": None}
+            for k, v, rs in healed]
+    else:
+        out.pop("stack", None)
+        out.pop("stack_baseline_refs", None)
     decisions = []
     for d in out.get("decisions") or []:
         dd = dict(d)
@@ -397,25 +421,36 @@ def _check_baseline_reconciliation(arch: ArchitectureOverview, baseline: SystemB
     migration_adrs = {d.title: d for d in migration_list}
     if len(migration_adrs) != len(migration_list):
         raise ModelStructureError("migration ADR titles must be unique")
+    migration_adr_ids = {d.decision_id for d in migration_list}
+    entry_keys = [e.key for e in arch.stack_entries]
+    if len(entry_keys) != len(set(entry_keys)):
+        raise ModelStructureError("stack entry keys must be unique")
     if baseline.mode.value == "existing":
-        if set(arch.stack_baseline_refs) != set(arch.stack):
-            raise ModelStructureError("stack_baseline_refs must contain exactly every stack key")
         baseline_vocab = " ".join(
             v for r in baseline.repositories for field in (
                 "languages", "runtime", "persistence", "integrations", "immutable_decisions")
             for v in getattr(r, field)).lower()
-        departing_stack = {k for k, refs in arch.stack_baseline_refs.items() if not refs}
-        for key, refs in arch.stack_baseline_refs.items():
-            check_refs(f"stack.{key}", refs)
-            if not refs:
-                matching = [d for d in migration_list
-                            if key.lower() in (d.title + " " + d.decision).lower()
-                            or str(arch.stack[key]).lower() in (d.title + " " + d.decision).lower()]
-                if not matching:
-                    raise ModelStructureError(f"stack.{key}: departure requires an ADR tagged migration that names the stack key or value")
-        for key, value in arch.stack.items():
-            if key not in departing_stack and str(value).lower() not in baseline_vocab:
-                raise ModelStructureError(f"stack.{key}: value {value!r} is not present in the cited baseline facts")
+        for e in arch.stack_entries:
+            check_refs(f"stack.{e.key}", e.baseline_refs)
+            if not e.baseline_refs:
+                # a departure: authorized by pipeline-wired id (0.13.0) or, for
+                # healed pre-0.13.0 artifacts, by the legacy title/decision text.
+                if e.migration_adr_id is not None:
+                    if e.migration_adr_id not in migration_adr_ids:
+                        raise ModelStructureError(
+                            f"stack.{e.key}: migration_adr_id {e.migration_adr_id} is not an ADR tagged migration")
+                else:
+                    matching = [d for d in migration_list
+                                if e.key.lower() in (d.title + " " + d.decision).lower()
+                                or str(e.value).lower() in (d.title + " " + d.decision).lower()]
+                    if not matching:
+                        raise ModelStructureError(f"stack.{e.key}: departure requires an ADR tagged migration that names the stack key or value")
+            else:
+                if e.migration_adr_id is not None:
+                    raise ModelStructureError(
+                        f"stack.{e.key}: migration_adr_id requires empty baseline_refs (a departure)")
+                if str(e.value).lower() not in baseline_vocab:
+                    raise ModelStructureError(f"stack.{e.key}: value {e.value!r} is not present in the cited baseline facts")
         for c in arch.components:
             check_refs(f"component {c.name}", c.baseline_refs)
             if c.migration:
@@ -427,7 +462,8 @@ def _check_baseline_reconciliation(arch: ArchitectureOverview, baseline: SystemB
                 if not c.baseline_refs:
                     raise ModelStructureError(f"component {c.name}: existing component requires baseline refs")
     else:
-        if any(arch.stack_baseline_refs.values()) or any(c.baseline_refs for c in arch.components):
+        if (any(e.baseline_refs or e.migration_adr_id for e in arch.stack_entries)
+                or any(c.baseline_refs for c in arch.components)):
             raise ModelStructureError("greenfield architecture cannot cite nonexistent baseline refs or migration ADRs")
         if any(c.migration or c.migration_adr_title for c in arch.components) or migration_adrs:
             raise ModelStructureError("greenfield architecture is new design, not a migration")
@@ -465,6 +501,116 @@ def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict) -> N
                 raise ModelStructureError(
                     f"{d.decision_id} '{d.title}': driver founder_constraint but the decision cites none "
                     f"of the founder's stated preferences ({', '.join(prefs)}) - name the one that drove it.")
+
+
+def _validate_stack_plan(d: dict) -> dict:
+    """Plan call A result: a non-empty list of unique, non-empty slot keys."""
+    keys = d.get("stack_keys") if isinstance(d, dict) else None
+    if not isinstance(keys, list) or not keys or not all(isinstance(k, str) and k.strip() for k in keys):
+        raise ModelStructureError("stack plan must be a non-empty list of non-empty string keys")
+    keys = [k.strip() for k in keys]
+    if len(set(keys)) != len(keys):
+        raise ModelStructureError(f"duplicate stack keys: {sorted({k for k in keys if keys.count(k) > 1})}")
+    if len(keys) > 24:
+        raise ModelStructureError(f"stack plan has {len(keys)} slots - merge near-duplicate slots (24 max)")
+    return {"stack_keys": keys}
+
+
+def _validate_component_plan(d, req_ids: list[str]) -> list[dict]:
+    """Plan call B result: component slots. The grammar enum-constrains
+    requirement refs; here: unique names, real coverage, sane shape."""
+    if not isinstance(d, list) or not d:
+        raise ModelStructureError("component plan must be a non-empty array of slots")
+    slots = []
+    names = []
+    for s in d:
+        if not isinstance(s, dict) or not str(s.get("name", "")).strip():
+            raise ModelStructureError("every component slot needs a non-empty name")
+        name = str(s["name"]).strip()
+        names.append(name)
+        slots.append({"name": name,
+                      "requirement_ids": [str(r) for r in s.get("requirement_ids") or []],
+                      "baseline_refs": [str(r) for r in s.get("baseline_refs") or []],
+                      "migration": bool(s.get("migration"))})
+    if len(names) != len(set(names)):
+        raise ModelStructureError(f"duplicate component names: {sorted({n for n in names if names.count(n) > 1})}")
+    covered = {r for s in slots for r in s["requirement_ids"]}
+    missing = [r for r in req_ids if r not in covered]
+    if missing:
+        raise ModelStructureError(f"requirements covered by no component: {missing}")
+    return slots
+
+
+def _validate_adr_plan(d, authorizable: list[str], existing: bool) -> list[dict]:
+    """Plan call C result: decision slots with pipeline-assigned ADR ids.
+    Every declared departure is authorized by exactly the migration slots;
+    nothing migrates that was not declared (the link the parallel maps faked
+    is now enum-constrained and code-checked)."""
+    if not isinstance(d, list):
+        raise ModelStructureError("ADR plan must be an array of decision slots")
+    slots = []
+    slugs = []
+    for s in d:
+        if not isinstance(s, dict) or not str(s.get("slug", "")).strip():
+            raise ModelStructureError("every ADR slot needs a non-empty slug")
+        slug = str(s["slug"]).strip()
+        slugs.append(slug)
+        slots.append({"slug": slug, "migration": bool(s.get("migration")),
+                      "authorizes": [str(a) for a in s.get("authorizes") or []]})
+    if len(slugs) != len(set(slugs)):
+        raise ModelStructureError(f"duplicate ADR slugs: {sorted({n for n in slugs if slugs.count(n) > 1})}")
+    for s in slots:
+        unknown = [a for a in s["authorizes"] if a not in authorizable]
+        if unknown:
+            raise ModelStructureError(f"ADR slot {s['slug']!r} authorizes undeclared departures: {unknown}")
+        if s["migration"] and not s["authorizes"]:
+            raise ModelStructureError(f"ADR slot {s['slug']!r}: migration=true must authorize at least one declared departure")
+        if not s["migration"] and s["authorizes"]:
+            raise ModelStructureError(f"ADR slot {s['slug']!r}: authorizes requires migration=true")
+    if not existing and any(s["migration"] or s["authorizes"] for s in slots):
+        raise ModelStructureError("greenfield architecture is new design, not a migration")
+    uncovered = [a for a in authorizable
+                 if not any(s["migration"] and a in s["authorizes"] for s in slots)]
+    if uncovered:
+        raise ModelStructureError(f"departures authorized by no migration ADR: {uncovered}")
+    for i, s in enumerate(slots, start=1):
+        s["decision_id"] = f"ADR-{i}"  # ADR-0020: code assigns ids in order
+    return slots
+
+
+def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
+                           comp_slots: list, comp_bodies: dict, adr_slots: list,
+                           adr_bodies: dict, nfr: dict) -> dict:
+    """Deterministic assembly (0.13.0): the model authored per-slot substance;
+    code wires every cross-reference - ADR ids, departure -> authorizing ADR,
+    component -> migration ADR title - from the validated slots."""
+    decisions = [{"decision_id": slot["decision_id"], **adr_bodies[slot["decision_id"]]}
+                 for slot in adr_slots]
+
+    def covering(target: str) -> str | None:
+        for slot in adr_slots:
+            if slot["migration"] and target in slot["authorizes"]:
+                return slot["decision_id"]
+        return None
+
+    stack_entries = []
+    for key, e in entries.items():
+        adr_id = None if e["baseline_refs"] else covering(f"stack:{key}")
+        stack_entries.append({"key": key, "value": e["value"],
+                              "baseline_refs": e["baseline_refs"], "migration_adr_id": adr_id})
+    components = []
+    for c in comp_slots:
+        adr_id = covering(f"component:{c['name']}") if c.get("migration") else None
+        components.append({"name": c["name"],
+                           "responsibility": comp_bodies[c["name"]]["responsibility"],
+                           "requirement_ids": c["requirement_ids"],
+                           "baseline_refs": c["baseline_refs"],
+                           "migration": bool(c.get("migration")),
+                           "migration_adr_title": (adr_bodies[adr_id]["title"] if adr_id else None)})
+    return {"session_id": session_id, "baseline_id": baseline_id,
+            "stack_entries": stack_entries, "components": components,
+            "decisions": decisions, "non_functionals": nfr}
+
 
 
 def _heal_slugs(entries: list) -> list:
@@ -794,7 +940,7 @@ def _compact_test_context(state: GenState, slot: dict) -> dict:
         spec = next((i for i in state["items"] if i.get("spec_id") == slot["spec_id"]), {})
         linked = {"spec": spec}
     arch = state.get("architecture") or {}
-    minimal_arch = {k: arch.get(k) for k in ("stack", "components", "non_functionals") if arch.get(k)}
+    minimal_arch = {k: arch.get(k) for k in ("stack_entries", "components", "non_functionals") if arch.get(k)}
     glossary = {"requirements": [r.get("requirement_id") for sec in ("functional", "non_functional")
                                   for r in state["srs"].get(sec) or []],
                 "specs": [i.get("spec_id") for i in state["items"]]}
@@ -967,28 +1113,192 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 "gate_feedback": _clear_feedback(state, "srs")}
 
     def node_architecture(state: GenState) -> dict:
+        """0.13.0 micro-pipeline (ADR-0022 doctrine applied to the 2026-09-11
+        phi4 failure): three tiny planning calls propose SLOTS (stack keys,
+        component slots, ADR slots), one shallow call fills each slot, and
+        code owns ids, grounding checks, cross-references, and assembly. The
+        old single giant call asked a small local model to keep two free-form
+        maps key-synchronized - a relation no grammar can enforce. No schema
+        here carries two fields that must agree: there is nothing left to
+        drift out of sync. Per-slot partials resume a crashed stage item by
+        item, the same way the SRS fills already do."""
+        from .prompts import (ARCH_ADR_BODY, ARCH_ADR_PLAN, ARCH_COMPONENT_BODY,
+                              ARCH_COMPONENT_PLAN, ARCH_CONTEXT, ARCH_NFR,
+                              ARCH_STACK_ENTRY, ARCH_STACK_PLAN)
+        from .schemas import (arch_adr_body_schema, arch_adr_plan_schema,
+                              arch_component_body_schema, arch_component_plan_schema,
+                              arch_nfr_schema, arch_stack_entry_schema,
+                              arch_stack_plan_schema)
+
         baseline = SystemBaseline.model_validate(state["system_baseline"])
-        payload = (STAGE_PROMPTS["architecture"]
+        sid = state["intent_model"]["session_id"]
+        valid_refs = sorted(baseline_reference_index(baseline))
+        repo_names = sorted(r.name for r in baseline.repositories)
+        existing = baseline.mode.value == "existing"
+        req_ids = [r.get("requirement_id") for sec in ("functional", "non_functional")
+                   for r in (state["srs"].get(sec) or [])]
+        nfr_slots = {r["requirement_id"]: r for r in (state["srs"].get("non_functional") or [])}
+
+        context = (ARCH_CONTEXT
                    + "\n\nSYSTEM BASELINE (source of truth):\n" + json.dumps(_prompt_view(state["system_baseline"]))
-                   + "\n\nVALID BASELINE REFS (use exact strings):\n" + json.dumps(sorted(baseline_reference_index(baseline)))
+                   + "\n\nVALID BASELINE REFS (use exact strings):\n" + json.dumps(valid_refs)
                    + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
                    + _tech_constraint_block(state["intent_model"]))
         fb = _gate_feedback(state, "architecture")
+        feedback = ""
         if fb:
-            payload += ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
+            feedback = ("\n\nFOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
                         + "\n\nPREVIOUS DRAFT:\n" + json.dumps(_prompt_view(state["architecture"])))
-        def _validate_arch(d):
-            merged = assign_architecture_ids(_strip_pipeline_owned(d))  # ADR-0020: code assigns ADR-n
-            arch = ArchitectureOverview.model_validate(
-                {**merged, "session_id": state["intent_model"]["session_id"],
-                 "baseline_id": baseline.baseline_id})
-            _check_decision_drivers(arch, state["intent_model"])  # ADR-0021
-            _check_baseline_reconciliation(arch, baseline)
-            return merged
 
-        data = _call_json("architecture", payload, log, progress, validate=_validate_arch)
-        data.setdefault("session_id", state["intent_model"]["session_id"])
-        data["baseline_id"] = baseline.baseline_id
+        part = (partials.load("architecture") if partials else None) or {}
+
+        def _save():
+            if partials:
+                partials.save("architecture", part)
+
+        # 1. Plan: which technology slots to decide.
+        if "stack_keys" not in part:
+            plan = _call_json("architecture", context + "\n\n" + ARCH_STACK_PLAN + feedback,
+                              log, progress, validate=_validate_stack_plan,
+                              schema=arch_stack_plan_schema(), stream_items=False,
+                              item_label="plan: stack slots")
+            part["stack_keys"] = plan["stack_keys"]
+            _save()
+
+        # 2. One micro-call per stack entry: value + grounding refs.
+        entries = part.setdefault("stack_entries", {})
+        for key in part["stack_keys"]:
+            if key in entries:
+                continue  # per-slot resume
+            def _v_entry(d, key=key):
+                if not str(d.get("value", "")).strip():
+                    raise ModelStructureError(f"stack.{key}: value must name a concrete technology")
+                return {"key": key, "value": str(d["value"]).strip(),
+                        "baseline_refs": [str(r) for r in d.get("baseline_refs") or []]}
+            entries[key] = _call_json(
+                "architecture",
+                context + f"\n\nTHE STACK KEY TO DECIDE: {key}\n\n" + ARCH_STACK_ENTRY + feedback,
+                log, progress, validate=_v_entry, schema=arch_stack_entry_schema(valid_refs),
+                stream_items=False, item_label=f"stack:{key}")
+            _save()
+
+        # 3. Plan: component slots (coverage checked here, not at assembly).
+        if "component_slots" not in part:
+            part["component_slots"] = _call_json(
+                "architecture",
+                context + "\n\nREQUIREMENT IDS TO COVER: " + json.dumps(req_ids)
+                + "\n\n" + ARCH_COMPONENT_PLAN + feedback,
+                log, progress, validate=lambda d: _validate_component_plan(d, req_ids),
+                schema=arch_component_plan_schema(req_ids, valid_refs),
+                stream_items=False, item_label="plan: component slots")
+            _save()
+
+        # 4. One micro-call per component: responsibility prose.
+        comp_bodies = part.setdefault("component_bodies", {})
+        for slot in part["component_slots"]:
+            if slot["name"] in comp_bodies:
+                continue
+            def _v_comp(d, name=slot["name"]):
+                if not str(d.get("responsibility", "")).strip():
+                    raise ModelStructureError(f"component {name}: responsibility must not be empty")
+                return {"responsibility": str(d["responsibility"]).strip()}
+            comp_bodies[slot["name"]] = _call_json(
+                "architecture",
+                context + "\n\nTHE COMPONENT SLOT (fixed):\n" + json.dumps(slot)
+                + "\n\n" + ARCH_COMPONENT_BODY + feedback,
+                log, progress, validate=_v_comp, schema=arch_component_body_schema(),
+                stream_items=False, item_label=f"component:{slot['name']}")
+            _save()
+
+        # 5. Plan: ADR slots. Departures are CODE-COMPUTED from the accepted
+        # entries/slots; `authorizes` is enum-constrained to them.
+        departures = [k for k, e in entries.items() if not e["baseline_refs"]] if existing else []
+        migrating = [c["name"] for c in part["component_slots"] if c["migration"]] if existing else []
+        authorizable = [f"stack:{k}" for k in departures] + [f"component:{n}" for n in migrating]
+        if "adr_slots" not in part:
+            req_block = ("\n\nREQUIRED AUTHORIZATIONS (each needs a migration ADR naming it in authorizes):\n"
+                         + json.dumps(authorizable)) if authorizable else \
+                        "\n\nREQUIRED AUTHORIZATIONS: none - no departures, so nothing may be a migration."
+            part["adr_slots"] = _call_json(
+                "architecture",
+                context + "\n\nDECIDED STACK (key: value):\n"
+                + json.dumps({k: e["value"] for k, e in entries.items()})
+                + "\n\nCOMPONENT SLOTS:\n" + json.dumps(part["component_slots"])
+                + req_block + "\n\n" + ARCH_ADR_PLAN + feedback,
+                log, progress,
+                validate=lambda d: _validate_adr_plan(d, authorizable, existing),
+                schema=arch_adr_plan_schema(authorizable),
+                stream_items=False, item_label="plan: decision slots")
+            _save()
+
+        # 6. One micro-call per ADR: the decision substance.
+        adr_bodies = part.setdefault("adr_bodies", {})
+        for slot in part["adr_slots"]:
+            did = slot["decision_id"]
+            if did in adr_bodies:
+                continue
+            def _v_adr(d, slot=slot):
+                body = {"title": str(d.get("title", "")).strip(),
+                        "decision": str(d.get("decision", "")).strip(),
+                        "rationale": str(d.get("rationale", "")).strip(),
+                        "driver": d.get("driver"),
+                        "options_considered": d.get("options_considered") or [],
+                        "baseline_refs": [str(r) for r in d.get("baseline_refs") or []],
+                        "migration": slot["migration"],
+                        "evidence": [str(x) for x in d.get("evidence") or []],
+                        "affected_repositories": [str(x) for x in d.get("affected_repositories") or []],
+                        "rejected": []}
+                if not body["title"] or not body["decision"] or not body["rationale"]:
+                    raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
+                if slot["migration"]:
+                    if not body["evidence"]:
+                        raise ModelStructureError(f"{slot['decision_id']} {body['title']}: migration requires evidence")
+                    if not body["affected_repositories"]:
+                        raise ModelStructureError(f"{slot['decision_id']} {body['title']}: migration requires affected_repositories")
+                elif body["evidence"] or body["affected_repositories"]:
+                    raise ModelStructureError(f"{slot['decision_id']} {body['title']}: evidence/affected_repositories only belong on migration ADRs")
+                return body
+            adr_bodies[did] = _call_json(
+                "architecture",
+                context + "\n\nTHE ADR SLOT (fixed - ids, migration flag and authorizations are pipeline-owned):\n"
+                + json.dumps({"decision_id": did, "slug": slot["slug"],
+                              "migration": slot["migration"], "authorizes": slot["authorizes"]})
+                + "\n\nDECIDED STACK (key: value):\n"
+                + json.dumps({k: e["value"] for k, e in entries.items()})
+                + "\n\n" + ARCH_ADR_BODY + feedback,
+                log, progress, validate=_v_adr,
+                schema=arch_adr_body_schema(valid_refs, repo_names),
+                stream_items=False, item_label=f"{did} {slot['slug']}")
+            _save()
+
+        # 7. One micro-call per non-functional requirement: the position.
+        nfr = part.setdefault("non_functionals", {})
+        for rid, req in nfr_slots.items():
+            if rid in nfr:
+                continue
+            def _v_nfr(d, rid=rid):
+                if not str(d.get("position", "")).strip():
+                    raise ModelStructureError(f"{rid}: non-functional position must not be empty")
+                return str(d["position"]).strip()
+            nfr[rid] = _call_json(
+                "architecture",
+                context + "\n\nTHE NON-FUNCTIONAL REQUIREMENT:\n" + json.dumps(req)
+                + "\n\n" + ARCH_NFR + feedback,
+                log, progress, validate=_v_nfr, schema=arch_nfr_schema(),
+                stream_items=False, item_label=f"non-functional:{rid}")
+            _save()
+
+        # 8. Deterministic assembly + the whole-architecture semantic gate.
+        merged = _assemble_architecture(
+            session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
+            comp_slots=part["component_slots"], comp_bodies=comp_bodies,
+            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
+        arch = ArchitectureOverview.model_validate(merged)
+        _check_decision_drivers(arch, state["intent_model"])  # ADR-0021
+        _check_baseline_reconciliation(arch, baseline)
+        if partials:
+            partials.clear("architecture")
+        data = merged
         if persist:
             persist("architecture", data, state)
         return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}

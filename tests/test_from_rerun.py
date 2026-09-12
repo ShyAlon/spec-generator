@@ -33,12 +33,12 @@ def test_from_items_reruns_downstream_only(monkeypatch, tmp_path):
     db = str(tmp_path / "cp.sqlite")
     g, cfg = _run_once(box, monkeypatch, db)
     counts = {k: v.calls for k, v in box.items()}
-    assert counts == {"needs": 1, "srs": 1, "architecture": 1, "items": 1, "tests": 1, "review": 1}
+    assert counts == {"needs": 1, "srs": 1, "architecture": 6, "items": 1, "tests": 1, "review": 1}  # architecture: 3 plans + 3 slot fills
 
     _invalidate_from(g, cfg, "items", review_mode=False)
     r = g.invoke(None, cfg)
     after = {k: v.calls for k, v in box.items()}
-    assert after["needs"] == 1 and after["srs"] == 1 and after["architecture"] == 1  # preserved
+    assert after["needs"] == 1 and after["srs"] == 1 and after["architecture"] == 6  # preserved
     assert after["items"] == 2 and after["tests"] == 2 and after["review"] == 2      # re-fired
     assert "bundle" in r and r["bundle"]["items"][0]["spec_id"] == "SPEC-1"
 

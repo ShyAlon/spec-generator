@@ -25,6 +25,32 @@ PLAN = [{"slug": "api", "kind": "api_surface", "title": "API",
          "requirement_ids": ["R-1"], "depends_on": ["api"]}]
 
 
+
+
+def _arch_answer(schema):
+    """0.13.0 micro-pipeline: answer the one small call this schema shapes."""
+    props = set(schema.get("properties", {}))
+    if props == {"stack_keys"}:
+        return {"stack_keys": ["language"]}
+    if props == {"value", "baseline_refs"}:
+        return {"value": "ts", "baseline_refs": ["repo:spec-generator"]}
+    if props == {"responsibility"}:
+        return {"responsibility": "serve"}
+    if props == {"position"}:
+        return {"position": "fast"}
+    if "driver" in props:
+        return {"title": "t", "decision": "x", "rationale": "y", "driver": "simplicity",
+                "options_considered": [{"option": "z", "reason": "heavier"}],
+                "baseline_refs": ["repo:spec-generator"], "evidence": [],
+                "affected_repositories": []}
+    if schema.get("type") == "array":
+        item_props = set(schema["items"].get("properties", {}))
+        if "authorizes" in item_props:
+            return [{"slug": "t", "migration": False, "authorizes": []}]
+        return [{"name": "api", "requirement_ids": ["R-1"],
+                 "baseline_refs": ["repo:spec-generator"], "migration": False}]
+    raise AssertionError(f"unexpected architecture schema: {schema}")
+
 def _routing(calls, fail_after_bodies=None, bus_events=None):
     class RoutingModel:
         def __init__(self, stage, schema):
@@ -51,6 +77,8 @@ def _routing(calls, fail_after_bodies=None, bus_events=None):
                 out = {"fills": {tid: PAYLOADS["tests"]["fills"].get(
                     tid, {"description": f"{tid} holds", "runner": "pytest",
                           "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}}) for tid in wanted}}
+            elif self.stage == "architecture":
+                out = _arch_answer(self.schema)
             else:
                 out = PAYLOADS[self.stage]
             yield AIMessage(content=json.dumps(out))

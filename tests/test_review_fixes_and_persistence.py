@@ -26,7 +26,12 @@ class QueueModel(FakeModel):
         self.calls += 1
         self.last_human = messages[-1].content
         q = self.QUEUES.get(self.stage) or []
-        payload = q.pop(0) if q else PAYLOADS[self.stage]
+        if q:
+            payload = q.pop(0)
+        elif self.stage == "architecture":
+            payload = self._architecture_answer(self.last_human)
+        else:
+            payload = PAYLOADS[self.stage]
         return type("R", (), {"content": json.dumps(payload)})()
 
 

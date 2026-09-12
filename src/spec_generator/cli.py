@@ -123,6 +123,7 @@ def _make_partials(outdir: Path):
     --from <stage> deletes partials for that stage and everything downstream
     (explicit rewind forces real re-runs)."""
     FILES = {"srs_fills": "srs_fills.partial.json",
+             "architecture": "architecture.partial.json",
              "items": "items.partial.json",
              "tests_fills": "tests_fills.partial.json"}
 
@@ -143,8 +144,8 @@ def _make_partials(outdir: Path):
 
 
 # partial files invalidated by --from <stage> (that stage and everything after)
-_PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "items", "tests_fills"),
-                      "architecture": ("items", "tests_fills"),
+_PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fills"),
+                      "architecture": ("architecture", "items", "tests_fills"),
                       "items": ("items", "tests_fills"),
                       "tests": ("tests_fills",)}
 

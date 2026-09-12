@@ -145,7 +145,8 @@ def test_cli_resume_does_not_repay_completed_stages(tmp_path, monkeypatch):
     assert "bundle" in result
     assert box["needs"].calls == 1, "needs must NOT be re-paid on resume"
     assert box["srs"].calls == 1, "srs must NOT be re-paid on resume"
-    assert box["architecture"].calls == 1  # ran once after the accepted gate
+    # micro-pipeline: plan + 1 entry + component plan + 1 body + ADR plan + 1 body
+    assert box["architecture"].calls == 6  # ran once (as 6 slot calls) after the accepted gate
 
 
 def test_gate_render_failure_on_stale_checkpoint_restarts_once(tmp_path, monkeypatch):

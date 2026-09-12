@@ -9,7 +9,7 @@ from spec_generator.render import render_architecture
 from spec_generator.schemas import for_stage
 from spec_generator.skeleton import ModelStructureError, assign_architecture_ids
 
-ARCH = {"session_id": "s", "stack": {"framework": "React"},
+ARCH = {"session_id": "s", "stack_entries": [{"key": "framework", "value": "React"}],
         "components": [{"name": "web", "responsibility": "UI", "requirement_ids": ["R-1"]}],
         "decisions": [{"title": "Frontend framework", "decision": "React",
                        "rationale": "Largest ecosystem for this archetype.",
@@ -32,7 +32,7 @@ def test_valid_decision_passes():
 
 def test_missing_driver_key_fails_contract_validation():
     # contract-required (his call): the KEY must be present...
-    bad = {"session_id": "s", "stack": {}, "components": [],
+    bad = {"session_id": "s", "stack_entries": [], "components": [],
            "decisions": [{"title": "t", "decision": "x", "rationale": "y",
                           "options_considered": []}]}
     from pydantic import ValidationError
@@ -43,7 +43,7 @@ def test_missing_driver_key_fails_contract_validation():
 def test_null_driver_is_a_retryable_model_error():
     # ...and a null VALUE (only legal in migrated legacy artifacts) is a
     # stage-level retryable error for new production.
-    bad = {"session_id": "s", "stack": {}, "components": [],
+    bad = {"session_id": "s", "stack_entries": [], "components": [],
            "decisions": [{"title": "t", "decision": "x", "rationale": "y",
                           "driver": None, "options_considered": []}]}
     with pytest.raises(ModelStructureError, match="no driver"):
@@ -51,7 +51,7 @@ def test_null_driver_is_a_retryable_model_error():
 
 
 def test_founder_constraint_must_cite_an_existing_preference():
-    bad = {"session_id": "s", "stack": {}, "components": [],
+    bad = {"session_id": "s", "stack_entries": [], "components": [],
            "decisions": [{"title": "Language", "decision": "We use python",
                           "rationale": "It is nice.", "driver": "founder_constraint",
                           "options_considered": []}]}
@@ -59,7 +59,7 @@ def test_founder_constraint_must_cite_an_existing_preference():
     # cite it as the driver... the decision text names it, so this passes:
     _check_decision_drivers(_arch(bad), INTENT_WITH_PREFS)
     # a founder_constraint decision citing nothing the founder said fails:
-    bad2 = {"session_id": "s", "stack": {}, "components": [],
+    bad2 = {"session_id": "s", "stack_entries": [], "components": [],
             "decisions": [{"title": "Language", "decision": "We use ruby",
                            "rationale": "It is nice.", "driver": "founder_constraint",
                            "options_considered": []}]}
@@ -83,7 +83,7 @@ def test_gate_render_shows_driver_options_and_the_unverified_label():
 
 
 def test_gate_render_marks_legacy_driverless_decisions():
-    legacy = _arch({"session_id": "s", "stack": {}, "components": [],
+    legacy = _arch({"session_id": "s", "stack_entries": [], "components": [],
                     "decisions": [{"title": "t", "decision": "x", "rationale": "y",
                                    "driver": None, "options_considered": [],
                                    "rejected": ["z - old flat form"]}]})

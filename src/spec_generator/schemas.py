@@ -236,6 +236,109 @@ def items_body_schema() -> dict:
             "additionalProperties": False}
 
 
+def _enum_or_str(values: list[str]) -> dict:
+    """An empty enum is a broken grammar (nothing can satisfy it); fall back
+    to a plain string and let the stage check judge (greenfield: any ref is
+    rejected with retry feedback)."""
+    return {"enum": list(values)} if values else {"type": "string"}
+
+
+# --- 0.13.0 architecture micro-pipeline grammars (see prompts.ARCH_*) --------
+# Every schema is shallow and per-slot: one small object (or a slot list) per
+# call, with references enum-constrained to values code supplied - a small
+# local model cannot drift across fields it never sees together.
+
+def arch_stack_plan_schema() -> dict:
+    """Plan call A: which technology slots to decide. Keys only."""
+    return {"type": "object",
+            "properties": {"stack_keys": {"type": "array", "items": {"type": "string"}}},
+            "required": ["stack_keys"],
+            "additionalProperties": False}
+
+
+def arch_stack_entry_schema(valid_refs: list[str]) -> dict:
+    """One stack entry against its fixed key. Grounding refs are enum-
+    constrained to the canonical baseline refs (invented refs impossible by
+    construction); empty refs marks a departure, wired to an ADR in code."""
+    return {"type": "object",
+            "properties": {"value": {"type": "string"},
+                           "baseline_refs": {"type": "array",
+                                             "items": _enum_or_str(valid_refs)}},
+            "required": ["value", "baseline_refs"],
+            "additionalProperties": False}
+
+
+def arch_component_plan_schema(requirement_ids: list[str], valid_refs: list[str]) -> dict:
+    """Plan call B: the component slots. Requirement and ref enums are the
+    real ids/refs, so coverage and grounding are checked against truth."""
+    slot = {"type": "object",
+            "properties": {"name": {"type": "string"},
+                           "requirement_ids": {"type": "array",
+                                               "items": _enum_or_str(requirement_ids)},
+                           "baseline_refs": {"type": "array",
+                                             "items": _enum_or_str(valid_refs)},
+                           "migration": {"type": "boolean"}},
+            "required": ["name", "requirement_ids", "baseline_refs", "migration"],
+            "additionalProperties": False}
+    return {"type": "array", "items": slot}
+
+
+def arch_component_body_schema() -> dict:
+    return {"type": "object",
+            "properties": {"responsibility": {"type": "string"}},
+            "required": ["responsibility"],
+            "additionalProperties": False}
+
+
+def arch_adr_plan_schema(authorizable: list[str]) -> dict:
+    """Plan call C: the decision slots. `authorizes` entries are enum-
+    constrained to the REQUIRED AUTHORIZATIONS code computed (departing stack
+    keys + migrating components), so an ADR can only authorize a real,
+    declared departure - the link the parallel maps used to fake."""
+    slot = {"type": "object",
+            "properties": {"slug": {"type": "string"},
+                           "migration": {"type": "boolean"},
+                           "authorizes": {"type": "array",
+                                          "items": _enum_or_str(authorizable)}},
+            "required": ["slug", "migration", "authorizes"],
+            "additionalProperties": False}
+    return {"type": "array", "items": slot}
+
+
+def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str]) -> dict:
+    """One ADR against its fixed slot. Ids, migration flag, and authorizations
+    stay pipeline-owned; the model authors the decision substance."""
+    return {"type": "object",
+            "properties": {"title": {"type": "string"},
+                           "decision": {"type": "string"},
+                           "rationale": {"type": "string"},
+                           "driver": {"enum": ["founder_constraint", "ecosystem_maturity",
+                                               "community_adoption", "team_fit", "simplicity"]},
+                           "options_considered": {"type": "array", "items": {
+                               "type": "object",
+                               "properties": {"option": {"type": "string"},
+                                              "reason": {"type": "string"}},
+                               "required": ["option", "reason"],
+                               "additionalProperties": False}},
+                           "baseline_refs": {"type": "array",
+                                             "items": _enum_or_str(valid_refs)},
+                           "evidence": {"type": "array", "items": {"type": "string"}},
+                           "affected_repositories": {"type": "array",
+                                                     "items": _enum_or_str(repo_names)}},
+            "required": ["title", "decision", "rationale", "driver", "options_considered",
+                         "baseline_refs", "evidence", "affected_repositories"],
+            "additionalProperties": False}
+
+
+def arch_nfr_schema() -> dict:
+    """One non-functional position against a fixed requirement slot."""
+    return {"type": "object",
+            "properties": {"position": {"type": "string"}},
+            "required": ["position"],
+            "additionalProperties": False}
+
+
+
 def _raw_stage_schema(stage: str) -> dict:
     if stage == "needs":
         return _body_schema(StakeholderNeedsSet, drop=("session_id",))
@@ -257,10 +360,13 @@ def _raw_stage_schema(stage: str) -> dict:
                 "required": ["purpose", "scope_summary", "fills"],
                 "additionalProperties": False}
     if stage == "architecture":
-        # ADR-0020: bulk proposal, code disposes - ADR ids are assigned by the
-        # pipeline, so decision_id leaves the schema.
+        # The assembled-shape projection (review gates, test projection). Live
+        # generation uses the micro-pipeline schemas below - the model never
+        # emits this whole shape in one call (2026-09-11 phi4 failure).
+        # ADR-0020: ADR ids are pipeline-assigned, so decision_id leaves the
+        # grammar; migration_adr_id on stack entries is pipeline-assigned at
+        # assembly too (0.13.0: from the authorizing ADR slot, not the model).
         sch = _body_schema(ArchitectureOverview, drop=("session_id", "baseline_id"))
-        sch["required"] = sorted(set(sch.get("required", [])) | {"stack_baseline_refs"})
         comp = sch["$defs"]["ComponentSpec"]
         comp["required"] = sorted(set(comp.get("required", [])) | {"baseline_refs", "migration", "migration_adr_title"})
         dec = sch["$defs"]["ArchitectureDecision"]
@@ -272,6 +378,9 @@ def _raw_stage_schema(stage: str) -> dict:
         # grammar narrows it to the closed enum.
         dec["properties"]["driver"] = {"enum": ["founder_constraint", "ecosystem_maturity",
                                                 "community_adoption", "team_fit", "simplicity"]}
+        entry = sch["$defs"]["StackEntry"]
+        entry["properties"].pop("migration_adr_id", None)
+        entry["required"] = [r for r in entry.get("required", []) if r != "migration_adr_id"]
         return sch
     if stage == "items":
         return _array_schema(ItemSpec)

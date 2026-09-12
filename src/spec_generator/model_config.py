@@ -148,10 +148,30 @@ def _mask_secrets(value: str) -> str:
     return _re.sub(r"(sk-[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+", r"\1...", str(value))
 
 
+def raw_capture_enabled() -> bool:
+    """SPEC_GENERATOR_LOG_RAW=1 (opt-in, off by default): append each raw
+    completion to the LLM log as an llm_call_raw event. Completions can carry
+    founder context, so this is a deliberate debugging act - it exists so a
+    structural failure leaves a BYTE-EXACT artifact for a regression fixture
+    (the 2026-09-11 phi4 architecture failure was unrecoverable as a fixture
+    because only a 200-character snippet survived)."""
+    return _env("SPEC_GENERATOR_LOG_RAW") == "1"
+
+
+def log_raw_completion(stage: str, item: str | None, attempt: int, raw: str) -> None:
+    """The only path that ever logs message content - gated on the explicit
+    opt-in above, and written through the same sink as the metadata events."""
+    if raw_capture_enabled():
+        _log_llm({"event": "llm_call_raw", "stage": stage,
+                  **({"item": item} if item else {}),
+                  "attempt": attempt, "raw_chars": len(raw), "raw": raw})
+
+
 def _log_llm(event: dict) -> None:
     """One JSON line per LLM call event. Never logs message content or keys -
-    metadata, token usage, and provider error payloads only. Logging must
-    never break a run."""
+    metadata, token usage, and provider error payloads only, plus raw
+    completions when (and only when) SPEC_GENERATOR_LOG_RAW=1 opts in.
+    Logging must never break a run."""
     sink = _llm_log_sink()
     if not sink:
         return

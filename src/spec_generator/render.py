@@ -30,8 +30,8 @@ def render_agents_md(
         "## Architecture (decided - do not re-litigate)",
         "",
     ]
-    for k, v in arch.stack.items():
-        L.append(f"- **{k}**: {v}")
+    for e in arch.stack_entries:
+        L.append(f"- **{e.key}**: {e.value}")
     L += ["", "### Decisions and why", ""]
     for d in arch.decisions:
         L.append(f"**{d.decision_id} {d.title}.** {d.decision} Rationale: {d.rationale}")
@@ -111,12 +111,17 @@ def render_architecture(arch: ArchitectureOverview) -> str:
     """Human-readable architecture for the founder review gate (ADR-0019) and
     the bundle's architecture.md."""
     lines = ["# Architecture overview\n"]
-    if arch.stack:
+    if arch.stack_entries:
         lines.append("## Stack")
-        for k, v in arch.stack.items():
-            refs = ", ".join(arch.stack_baseline_refs.get(k, []))
-            trace = f" (baseline: {refs})" if refs else " (migration: see ADRs)"
-            lines.append(f"- **{k}**: {v}{trace}")
+        for e in arch.stack_entries:
+            refs = ", ".join(e.baseline_refs)
+            if refs:
+                trace = f" (baseline: {refs})"
+            elif e.migration_adr_id:
+                trace = f" (migration: {e.migration_adr_id})"
+            else:
+                trace = " (migration: see ADRs)"  # healed pre-0.13.0 artifact - linked by ADR text
+            lines.append(f"- **{e.key}**: {e.value}{trace}")
     if arch.components:
         lines.append("\n## Components")
         for c in arch.components:

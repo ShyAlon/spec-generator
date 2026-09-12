@@ -23,14 +23,22 @@ PAYLOADS = {
             "fills": {"R-1": {"title": "Spec file",
                               "statement": "system shall emit a spec", "priority": "must",
                               "acceptance": ["spec exists"]}}},
-    "architecture": {"session_id": "s", "stack": {"language": "ts"},
-                     "stack_baseline_refs": {"language": ["repo:spec-generator"]},
-                     "components": [{"name": "api", "responsibility": "serve", "baseline_refs": ["repo:spec-generator"], "migration": False, "migration_adr_title": None}],
-                     "decisions": [{"title": "t", "decision": "x", "rationale": "y",
+    # 0.13.0: the ASSEMBLED artifact (state shape) - the model never returns
+    # this; the micro-pipeline assembles it from the per-slot answers FakeModel
+    # routes in invoke() below.
+    "architecture": {"session_id": "s", "baseline_id": "test-baseline",
+                     "stack_entries": [{"key": "language", "value": "ts",
+                                        "baseline_refs": ["repo:spec-generator"],
+                                        "migration_adr_id": None}],
+                     "components": [{"name": "api", "responsibility": "serve", "requirement_ids": ["R-1"],
+                                     "baseline_refs": ["repo:spec-generator"], "migration": False,
+                                     "migration_adr_title": None}],
+                     "decisions": [{"decision_id": "ADR-1", "title": "t", "decision": "x", "rationale": "y",
                                     "driver": "simplicity",
                                     "options_considered": [{"option": "z", "reason": "heavier"}],
                                     "baseline_refs": ["repo:spec-generator"], "migration": False,
-                                    "evidence": [], "affected_repositories": []}]},
+                                    "evidence": [], "affected_repositories": [], "rejected": []}],
+                     "non_functionals": {}},
     "items": [{"slug": "api", "kind": "api_surface", "title": "API",
                "body_markdown": "# API", "requirement_ids": ["R-1"]}],  # code numbers it SPEC-1
     "tests": {"fills": {"T-1": {"description": "criterion holds",
@@ -62,8 +70,32 @@ class FakeModel:
         self.stage = stage
         self.calls = 0
 
+    def _architecture_answer(self, prompt: str):
+        """0.13.0 micro-pipeline routing: the stage makes many small calls;
+        answer the one this prompt asks for (markers are the prompt's own
+        slot headers - a wrong route fails validation, loudly)."""
+        if "THE STACK KEY TO DECIDE" in prompt:
+            return {"value": "ts", "baseline_refs": ["repo:spec-generator"]}
+        if "THE COMPONENT SLOT" in prompt:
+            return {"responsibility": "serve"}
+        if "THE ADR SLOT" in prompt:
+            return {"title": "t", "decision": "x", "rationale": "y", "driver": "simplicity",
+                    "options_considered": [{"option": "z", "reason": "heavier"}],
+                    "baseline_refs": ["repo:spec-generator"], "evidence": [],
+                    "affected_repositories": []}
+        if "THE NON-FUNCTIONAL REQUIREMENT" in prompt:
+            return {"position": "fast enough"}
+        if "REQUIRED AUTHORIZATIONS" in prompt:
+            return [{"slug": "t", "migration": False, "authorizes": []}]
+        if "REQUIREMENT IDS TO COVER" in prompt:
+            return [{"name": "api", "requirement_ids": ["R-1"],
+                     "baseline_refs": ["repo:spec-generator"], "migration": False}]
+        return {"stack_keys": ["language"]}
+
     def invoke(self, messages):
         self.calls += 1
+        if self.stage == "architecture":
+            return AIMessage(content=json.dumps(self._architecture_answer(messages[-1].content)))
         return AIMessage(content=json.dumps(PAYLOADS[self.stage]))
 
     def stream(self, messages):
