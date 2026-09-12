@@ -397,3 +397,38 @@ def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monke
     assert arch["stack_entries"]  # regenerated under the current code
     assert arch["baseline_id"] == SYSTEM_BASELINE["baseline_id"]
     assert (outdir / "manifest.json").exists()  # downstream bundle assembled
+
+
+def test_verbatim_fact_text_is_grounded_not_rejected(monkeypatch):
+    # the exact 2026-09-12 live rejection: the model COPIED the baseline fact
+    # 'python -m spec_generator.cli' for stack:module_entry_points and the old
+    # check rejected it - the vocab excluded entry-point/artifact facts. The
+    # vocab now covers every citable fact class.
+    from spec_generator.graph import _baseline_vocab, _value_grounded
+    from vmodel_contracts import SystemBaseline
+
+    vocab = _baseline_vocab(SystemBaseline.model_validate(SYSTEM_BASELINE))
+    assert _value_grounded("python -m spec_generator.cli", vocab)  # verbatim fact
+    assert _value_grounded("spec_generator.cli python", vocab)     # composed of fact tokens
+    assert _value_grounded("ts", vocab)                            # language fact
+    assert not _value_grounded("Auth0", vocab)                     # invented: still closed
+    assert not _value_grounded("python -m auth0.cli", vocab)       # composed fabrication
+
+    class LiveAnswer(_MicroModel):
+        def stream(self, messages):
+            if any("THE STACK KEY TO DECIDE: database" in m.content for m in messages):
+                yield AIMessage(content=json.dumps(
+                    {"value": "python -m spec_generator.cli",
+                     "baseline_refs": ["module:spec-generator:1"]}))
+                return
+            yield from super().stream(messages)
+
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: LiveAnswer(stage, k.get("schema") or {}, []))
+    r = build_graph(UsageLog("s")).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+        {"configurable": {"thread_id": "verbatim"}})
+    db = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "database")
+    assert db["value"] == "python -m spec_generator.cli"
+    assert db["baseline_refs"] == ["module:spec-generator:1"]
+    assert db["migration_adr_id"] is None  # grounded, not a departure

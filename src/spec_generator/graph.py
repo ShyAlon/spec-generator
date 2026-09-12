@@ -394,6 +394,35 @@ def _legacy_arch_fill(payload: dict) -> dict:
     return out
 
 
+def _baseline_vocab(baseline: SystemBaseline) -> str:
+    """Every baseline fact text a stack value may quote: the descriptive fields
+    AND the structural facts (entry points, artifacts, contracts). The model is
+    asked to cite module/artifact refs, so their verbatim text must be quotable
+    - the 2026-09-12 module_entry_points rejection happened because the check
+    excluded the very facts the entry cited, and the model's VERBATIM copy
+    ('python -m spec_generator.cli') failed."""
+    fields = ("languages", "runtime", "persistence", "integrations",
+              "immutable_decisions", "package_entry_points", "module_entry_points",
+              "existing_artifacts", "existing_contracts")
+    return " ".join(v for r in baseline.repositories for f in fields
+                    for v in getattr(r, f)).lower()
+
+
+def _value_grounded(value: str, vocab: str) -> bool:
+    """Grounded = the fact's verbatim text (substring), OR a composition of
+    real fact tokens (a command assembled FROM the cited facts). Fabrication
+    stays closed: any token that appears in no baseline fact (an invented
+    name like 'auth0') fails. One-letter tokens (flags like -m) are ignored."""
+    import re as _re
+
+    v = str(value).lower()
+    if v in vocab:
+        return True
+    tokens = {t for t in _re.split(r"[^a-z0-9]+", v) if len(t) > 1}
+    vocab_tokens = set(_re.split(r"[^a-z0-9]+", vocab))
+    return bool(tokens) and tokens <= vocab_tokens
+
+
 def baseline_reference_index(baseline: SystemBaseline) -> set[str]:
     """Canonical, mechanically checkable references available to the model."""
     refs = {f"repo:{r.name}" for r in baseline.repositories}
@@ -426,10 +455,7 @@ def _check_baseline_reconciliation(arch: ArchitectureOverview, baseline: SystemB
     if len(entry_keys) != len(set(entry_keys)):
         raise ModelStructureError("stack entry keys must be unique")
     if baseline.mode.value == "existing":
-        baseline_vocab = " ".join(
-            v for r in baseline.repositories for field in (
-                "languages", "runtime", "persistence", "integrations", "immutable_decisions")
-            for v in getattr(r, field)).lower()
+        baseline_vocab = _baseline_vocab(baseline)
         for e in arch.stack_entries:
             check_refs(f"stack.{e.key}", e.baseline_refs)
             if not e.baseline_refs:
@@ -449,7 +475,7 @@ def _check_baseline_reconciliation(arch: ArchitectureOverview, baseline: SystemB
                 if e.migration_adr_id is not None:
                     raise ModelStructureError(
                         f"stack.{e.key}: migration_adr_id requires empty baseline_refs (a departure)")
-                if str(e.value).lower() not in baseline_vocab:
+                if not _value_grounded(e.value, baseline_vocab):
                     raise ModelStructureError(f"stack.{e.key}: value {e.value!r} is not present in the cited baseline facts")
         for c in arch.components:
             check_refs(f"component {c.name}", c.baseline_refs)
@@ -1199,10 +1225,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # at assembly: an invented technology costs one retried entry call,
         # not the whole stage (the 2026-09-12 Auth0 acceptance failure -
         # 1282s of good calls lost to a gate that fired at the end).
-        baseline_vocab = (" ".join(
-            v for r in baseline.repositories for field in (
-                "languages", "runtime", "persistence", "integrations", "immutable_decisions")
-            for v in getattr(r, field)).lower()) if existing else ""
+        baseline_vocab = _baseline_vocab(baseline) if existing else ""
 
         def _v_entry(d, key):
             value = str(d.get("value", "")).strip()
@@ -1221,10 +1244,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     "becomes a proposed migration automatically and the pipeline generates "
                     "the authorizing ADR itself")
             entry = {"key": key, "value": value, "baseline_refs": refs}
-            if existing and entry["baseline_refs"] and entry["value"].lower() not in baseline_vocab:
+            if existing and entry["baseline_refs"] and not _value_grounded(entry["value"], baseline_vocab):
                 raise ModelStructureError(
                     f"stack.{key}: value {entry['value']!r} is not present in the cited baseline facts - "
-                    "pick a value from the cited facts, or declare a migration (empty baseline_refs)")
+                    "copy the fact text VERBATIM (if the fact is 'python -m spec_generator.cli', the "
+                    "value is exactly that string), compose it only from cited fact text, or declare "
+                    "a migration (empty baseline_refs)")
             if not existing and entry["baseline_refs"]:
                 raise ModelStructureError(
                     f"stack.{key}: greenfield architecture cannot cite baseline refs")

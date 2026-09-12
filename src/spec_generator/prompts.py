@@ -126,6 +126,10 @@ records it;
 (b) it is NOT - name a concrete technology ANYWAY with baseline_refs []: that is a proposed
 migration, and the pipeline generates the authorizing decision record itself. Choosing (b) is
 normal and expected whenever the baseline records no fact for this key.
+When you cite baseline facts (answer a), the value must be the fact's VERBATIM text or a
+composition of cited fact texts: if the baseline fact is 'python -m spec_generator.cli',
+the value is exactly that string - not a paraphrase, not a description, never an invented
+name.
 An empty value is NEVER a legal answer - a blank decides nothing. If no baseline fact fits,
 your job is to PROPOSE: pick the concrete technology the SRS and the founder's constraints
 imply. The value must be specific (a named product, framework or tool), never a category
