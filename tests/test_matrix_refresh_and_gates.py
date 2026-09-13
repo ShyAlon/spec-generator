@@ -251,7 +251,7 @@ DB_ENGINES_HTML = """<table class="dbi">
 
 
 def test_parse_stackshare_fixture():
-    assert ss.parse_stackshare(STACKSHARE_HTML, "firebase") == 17_200
+    assert ss.parse_stackshare(STACKSHARE_HTML, "firebase") == (17_200, "stacks")
     assert ss.parse_stackshare("<html>nothing</html>", "firebase") is None
 
 
@@ -359,7 +359,7 @@ class _Flaky429:
 def test_fetch_page_retries_429_once_then_succeeds():
     opener = _Flaky429(1, "<div>30K</div> stacks")
     html = ss._fetch_page("https://stackshare.io/x", opener, _sleep=lambda s: None)
-    assert ss.parse_stackshare(html, "x") == 30_000
+    assert ss.parse_stackshare(html, "x") == (30_000, "stacks")
     assert opener.calls == 2
 
 
@@ -432,13 +432,13 @@ class _FakeBrowser:
 def test_browser_path_used_when_available():
     data = {"technologies": [
         {"name": "Firebase", "service": {"stackshare": "firebase"}}]}
-    fake = _FakeBrowser(html="<div>55K</div> stacks")
+    fake = _FakeBrowser(html="<div><span>12,400</span> companies reportedly use <b>Firebase</b> in their tech stacks</div>")
     changes, failures, stats = ss.refresh_services(
         data, today=date(2026, 9, 13), _sleep=lambda s: None,
         _browser_factory=lambda log: fake)
     assert fake.fetched == ["firebase"] and fake.closed
     sm = data["technologies"][0]["service_metrics"]["sources"]["stackshare"]
-    assert sm["value"] == 55_000 and sm["score"] == 2
+    assert sm["value"] == 12_400 and sm["score"] == 3 and sm["metric"] == "companies"
     assert failures == []
 
 
@@ -490,3 +490,13 @@ def test_try_start_without_playwright_logs_install_commands(monkeypatch):
     assert result is None
     assert any("pip install playwright" in l for l in logs)
     assert any("playwright install chromium" in l for l in logs)
+
+
+def test_parse_stackshare_current_phrasings():
+    # his 2026-09-13 dry run: pages fetched fine, old 'stacks' phrasing gone
+    companies = '<div><span>3226</span> companies reportedly use <b>Firebase</b> in their tech stacks</div>'
+    developers = '<div><span>37,412</span> developers on StackShare have stated that they use Firebase</div>'
+    assert ss.parse_stackshare(companies, "firebase") == (3226, "companies")
+    assert ss.parse_stackshare(developers, "firebase") == (37412, "developers")
+    assert ss._stackshare_result(companies, "firebase")["score"] == 2
+    assert ss._stackshare_result(developers, "firebase")["score"] == 3

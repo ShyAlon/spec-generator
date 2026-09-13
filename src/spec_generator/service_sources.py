@@ -40,8 +40,15 @@ STACKSHARE_PAGE = "https://stackshare.io/{slug}"
 DB_ENGINES_RANKING = "https://db-engines.com/en/ranking"
 GITHUB_REPO = "https://api.github.com/repos/{repo}"
 
-# score bands: (threshold, score) checked high to low -> score in 0..3
-_STACKSHARE_BANDS = ((100_000, 3), (10_000, 2), (1_000, 1))
+# score bands: (threshold, score) checked high to low -> score in 0..3.
+# StackShare's page copy changed (his 2026-09-13 dry run: every row fetched
+# fine via the browser but 'no stacks count found'): the adoption signal is
+# now 'N companies reportedly use X in their tech stacks' / 'N developers
+# on StackShare stated that they use X'. Bands per metric, and the
+# contribution records WHICH metric it measured.
+_STACKSHARE_BANDS = {"stacks": ((100_000, 3), (10_000, 2), (1_000, 1)),
+                     "companies": ((5_000, 3), (1_000, 2), (100, 1)),
+                     "developers": ((20_000, 3), (5_000, 2), (500, 1))}
 _DB_ENGINES_BANDS = ((5, 3), (20, 2), (50, 1))  # rank position, lower is better
 _GITHUB_BANDS = ((100_000, 3), (30_000, 2), (5_000, 1))
 STRONG_SCORE = 2  # score >= this votes "strong"
@@ -56,16 +63,23 @@ def _band(value: float, bands) -> int:
 
 # ---------- parsers (pure functions over fetched text; fixture-tested) ----------
 
-def parse_stackshare(html: str, slug: str) -> int | None:
-    """Stacks count from a service page, e.g. '17.2K stacks'. None = markup
-    changed (the refresh treats that as a source failure and keeps the
-    previous value)."""
-    m = re.search(r'([\d,.]+)\s*(K|M)?(?:\s*<[^>]+>)*\s*stacks\b', html, re.I)
-    if not m:
-        return None
-    value = float(m.group(1).replace(",", ""))
-    mult = {"K": 1_000, "M": 1_000_000}.get((m.group(2) or "").upper(), 1)
-    return int(value * mult)
+def parse_stackshare(html: str, slug: str) -> tuple[int, str] | None:
+    """Adoption signal from a service page + WHICH metric was found:
+    ('3226', 'companies') / ('37412', 'developers') / ('17200', 'stacks'
+    - the legacy phrasing). None = markup changed (the refresh treats that
+    as a source failure and keeps the previous value)."""
+    for pattern, metric in (
+            (r'([\d,]+)(?:\s*<[^>]+>)*\s+companies reportedly use', "companies"),
+            (r'([\d,]+)(?:\s*<[^>]+>)*\s+developers on StackShare', "developers"),
+            (r'([\d,.]+)\s*(K|M)?(?:\s*<[^>]+>)*\s*stacks\b', "stacks")):
+        m = re.search(pattern, html, re.I)
+        if m:
+            value = float(m.group(1).replace(",", ""))
+            if metric == "stacks":
+                mult = {"K": 1_000, "M": 1_000_000}.get((m.group(2) or "").upper(), 1)
+                value *= mult
+            return int(value), metric
+    return None
 
 
 def parse_db_engines(html: str) -> dict[str, int] | None:
@@ -95,11 +109,12 @@ def parse_github(payload) -> int | None:
 def _stackshare_result(html_text: str, slug: str) -> dict:
     if "Vercel Security Checkpoint" in html_text or "Failed to verify your browser" in html_text:
         raise RefreshError("StackShare's Vercel bot checkpoint rejected the fetch")
-    stacks = parse_stackshare(html_text, slug)
-    if stacks is None:
-        raise RefreshError("page fetched but no stacks count found - markup changed?")
-    score = _band(stacks, _STACKSHARE_BANDS)
-    return {"found": True, "value": stacks, "score": score,
+    parsed = parse_stackshare(html_text, slug)
+    if parsed is None:
+        raise RefreshError("page fetched but no adoption count found - markup changed?")
+    value, metric = parsed
+    score = _band(value, _STACKSHARE_BANDS[metric])
+    return {"found": True, "value": value, "metric": metric, "score": score,
             "vote": "strong" if score >= STRONG_SCORE else "weak"}
 
 
@@ -196,8 +211,15 @@ class _StackShareBrowser:
     def fetch(self, slug: str) -> str:
         page = self._ctx.new_page()
         try:
-            page.goto(STACKSHARE_PAGE.format(slug=quote(slug)),
-                      wait_until="domcontentloaded", timeout=45000)
+            for attempt in (1, 2):  # one retry: his first run saw stray goto timeouts
+                try:
+                    page.goto(STACKSHARE_PAGE.format(slug=quote(slug)),
+                              wait_until="domcontentloaded", timeout=45000)
+                    break
+                except Exception as exc:
+                    if attempt == 2 or "Timeout" not in type(exc).__name__ + str(exc):
+                        raise
+                    page.wait_for_timeout(4000)
             page.wait_for_timeout(1500 + random.uniform(0, 1000))  # let counts render
             html = page.content()
         except Exception as exc:
