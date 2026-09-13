@@ -24,13 +24,16 @@ Design rules he accepted:
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 from datetime import date
+from urllib.error import HTTPError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
-from .refresh_registry import RefreshError, _get_json
+from .refresh_registry import (RefreshError, _get_json, default_opener,
+                               explain_fetch_error)
 
 SOURCES = ("stackshare", "db_engines", "github")
 STACKSHARE_PAGE = "https://stackshare.io/{slug}"
@@ -68,9 +71,13 @@ def parse_stackshare(html: str, slug: str) -> int | None:
 def parse_db_engines(html: str) -> dict[str, int] | None:
     """name (lowercased) -> rank from the ranking table. None = markup
     changed. A name ABSENT from a well-formed table is genuinely unranked."""
+    # Real markup (verified live 2026-09-13): '<tr><td>4.<td class=small>4.
+    # <td class="small pad-r">4.<th class="pad-l"><a href=".../system/PostgreSQL">
+    # PostgreSQL</a>' - unquoted attrs, unclosed <td>s, the engine name only
+    # in the /en/system/ link.
     ranks: dict[str, int] = {}
     for m in re.finditer(
-            r'<tr[^>]*>\s*<td[^>]*>\s*(\d+)\.?\s*</td>.*?<a[^>]*>([^<]+)</a>',
+            r'<tr[^>]*><td[^>]*>\s*(\d+)\..{0,500}?/en/system/[^"]+">([^<]+)</a>',
             html, re.S):
         ranks.setdefault(m.group(2).strip().lower(), int(m.group(1)))
     return ranks or None
@@ -114,7 +121,38 @@ def _db_engines_result(ranks: dict[str, int], name: str) -> dict:
             "vote": "strong" if score >= STRONG_SCORE else "weak"}
 
 
-def refresh_services(data: dict, opener=urlopen, today: date | None = None,
+# StackShare throttles hard (his 2026-09-13 dry run: 429 on every row even
+# from a residential IP): fetch like a browser, pace at seconds - not
+# fractions - with jitter, and give each page one long-backoff retry.
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def _fetch_page(url: str, opener, _sleep, retries_429: int = 1) -> str:
+    """One page fetch with a long-backoff retry on 429. Anything else fails
+    immediately with a classified cause."""
+    for attempt in range(1 + retries_429):
+        try:
+            req = Request(url, headers=_BROWSER_HEADERS)
+            with opener(req, timeout=30) as resp:
+                return resp.read().decode("utf-8", "replace")
+        except HTTPError as exc:
+            if exc.code == 429 and attempt < retries_429:
+                _sleep(30 + random.uniform(0, 15))  # long backoff, then ONE retry
+                continue
+            raise RefreshError(explain_fetch_error(exc)) from exc
+        except RefreshError:
+            raise
+        except Exception as exc:
+            raise RefreshError(explain_fetch_error(exc)) from exc
+    raise RefreshError("unreachable")  # pragma: no cover
+
+
+def refresh_services(data: dict, opener=default_opener, today: date | None = None,
                      log=lambda msg: None, _sleep=time.sleep,
                      exclude: frozenset[str] = frozenset()):
     """Refresh service_metrics on rows carrying a ``service`` mapping.
@@ -144,12 +182,9 @@ def refresh_services(data: dict, opener=urlopen, today: date | None = None,
     if db_rows:
         log(f"  source db_engines: fetching ranking page ({len(db_rows)} rows mapped)...")
         try:
-            req = Request(DB_ENGINES_RANKING, headers={"User-Agent": "Mozilla/5.0 (vmodel-spec-generator)"})
-            with opener(req, timeout=30) as resp:
-                db_ranks = parse_db_engines(resp.read().decode("utf-8", "replace"))
+            db_ranks = parse_db_engines(_fetch_page(DB_ENGINES_RANKING, opener, _sleep))
             if db_ranks is None:
                 raise RefreshError("ranking page fetched but no table found - markup changed?")
-            stats["db_engines"]["ok"] += len(db_rows)
             log(f"  source db_engines: ok ({len(db_ranks)} entries parsed)")
         except Exception as exc:
             stats["db_engines"]["failed"] += len(db_rows)
@@ -170,11 +205,10 @@ def refresh_services(data: dict, opener=urlopen, today: date | None = None,
             log(f"  {name}: {source} ({ident})...")
             try:
                 if source == "stackshare":
-                    req = Request(STACKSHARE_PAGE.format(slug=quote(ident)),
-                                  headers={"User-Agent": "Mozilla/5.0 (vmodel-spec-generator)"})
-                    with opener(req, timeout=30) as resp:
-                        result = _stackshare_result(resp.read().decode("utf-8", "replace"), ident)
-                    _sleep(1.0)  # per-service page: be polite
+                    result = _stackshare_result(
+                        _fetch_page(STACKSHARE_PAGE.format(slug=quote(ident)),
+                                    opener, _sleep), ident)
+                    _sleep(random.uniform(3.0, 6.0))  # seconds, jittered: their 429 wall
                 elif source == "github":
                     result = _github_result(
                         _get_json(GITHUB_REPO.format(repo=quote(ident)), opener), ident)
@@ -187,8 +221,9 @@ def refresh_services(data: dict, opener=urlopen, today: date | None = None,
                     continue
             except Exception as exc:
                 stats[source]["failed"] += 1
-                failures.append(f"{name}: {source} failed ({exc}); kept previous value")
-                log(f"    {source}: FAILED - kept previous ({exc})")
+                cause = explain_fetch_error(exc) if not isinstance(exc, RefreshError) else str(exc)
+                failures.append(f"{name}: {source} failed ({cause}); kept previous value")
+                log(f"    {source}: FAILED - kept previous ({cause})")
                 continue
             stats[source]["ok"] += 1
             old = sources.get(source)
@@ -196,11 +231,15 @@ def refresh_services(data: dict, opener=urlopen, today: date | None = None,
             if old and old.get("vote") != result["vote"]:
                 stats[source]["flipped"] += 1
             sources[source] = result
-            if old != result:
-                old_desc = f"{old.get('value')} (score {old.get('score')})" if old else "none"
+            # the review surface shows MEANINGFUL change: first fetch, score
+            # move, or vote flip - a 28555 -> 28556 star drift is stored
+            # silently, not printed.
+            if old is None or old.get("score") != result["score"] or old.get("vote") != result["vote"]:
+                old_desc = (f"{old.get('value')} (score {old.get('score')})"
+                            if old else "none")
                 contributors_changed.append(
                     f"{source}: {old_desc} -> {result['value']} (score {result['score']})")
-                log(f"    {source}: {result['value']} score {result['score']} vote {result['vote']}")
+            log(f"    {source}: {result['value']} score {result['score']} vote {result['vote']}")
         contributing = [s for s, r in sources.items() if r.get("fetched")]
         strong_votes = sum(1 for s in contributing if sources[s].get("vote") == "strong")
         n = len(contributing)

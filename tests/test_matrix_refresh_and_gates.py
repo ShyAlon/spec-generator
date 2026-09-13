@@ -242,10 +242,11 @@ def test_download_sort_in_prompt_view():
 # ---------- 5. service ranking sources (fixtures) ----------
 
 STACKSHARE_HTML = "<html><body><span>17.2K</span> <span>stacks</span></body></html>"
-DB_ENGINES_HTML = """<table>
-<tr><td>1.</td><td></td><td><a>Oracle</a></td></tr>
-<tr><td>2.</td><td></td><td><a>PostgreSQL</a></td></tr>
-<tr><td>7.</td><td></td><td><a>Redis</a></td></tr>
+# mirrors the real 2026-09-13 db-engines markup (unquoted attrs, unclosed <td>s)
+DB_ENGINES_HTML = """<table class="dbi">
+<tr><td>1.<td class=small>1.<td class="small pad-r">1.<th class="pad-l"><a href="https://db-engines.com/en/system/Oracle">Oracle</a><th class="small pad-r">Relational
+<tr><td>2.<td class=small>2.<td class="small pad-r">2.<th class="pad-l"><a href="https://db-engines.com/en/system/PostgreSQL">PostgreSQL</a><th class="small pad-r">Relational
+<tr><td>7.<td class=small>7.<td class="small pad-r">7.<th class="pad-l"><a href="https://db-engines.com/en/system/Redis">Redis</a><th class="small pad-r">Key-value
 </table>"""
 
 
@@ -326,3 +327,87 @@ def test_validate_rejects_bad_metrics_and_dual_source():
     row = next(r for r in dual["technologies"] if r.get("package"))
     row["service"] = {"github": "x/y"}
     assert any("never both" in p for p in validate_artifact(dual))
+
+
+# ---------- 7. fetch robustness (his 2026-09-13 dry run) ----------
+
+def test_explain_fetch_error_classifies():
+    import ssl as _ssl
+    from urllib.error import HTTPError
+    from spec_generator.refresh_registry import explain_fetch_error
+    cert = explain_fetch_error(_ssl.SSLError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] x"))
+    assert "certificate" in cert and "certifi" in cert and "Certificates.command" in cert
+    assert "rate-limited" in explain_fetch_error(HTTPError("u", 429, "x", {}, None))
+    assert "blocked" in explain_fetch_error(HTTPError("u", 403, "x", {}, None))
+    assert "timed out" in explain_fetch_error(TimeoutError("timed out"))
+
+
+class _Flaky429:
+    """429s N times, then serves the page."""
+    def __init__(self, n_fail, html):
+        self.left = n_fail; self.html = html; self.calls = 0
+    def __call__(self, req, timeout=0, **kw):
+        from urllib.error import HTTPError
+        self.calls += 1
+        if self.left:
+            self.left -= 1
+            raise HTTPError(req.full_url, 429, "Too Many Requests", {}, None)
+        return _Resp_html(self.html)
+
+
+def test_fetch_page_retries_429_once_then_succeeds():
+    opener = _Flaky429(1, "<div>30K</div> stacks")
+    html = ss._fetch_page("https://stackshare.io/x", opener, _sleep=lambda s: None)
+    assert ss.parse_stackshare(html, "x") == 30_000
+    assert opener.calls == 2
+
+
+def test_fetch_page_persistent_429_classified():
+    opener = _Flaky429(5, "never")
+    with pytest.raises(rr.RefreshError, match="rate-limited"):
+        ss._fetch_page("https://stackshare.io/x", opener, _sleep=lambda s: None)
+    assert opener.calls == 2  # one long-backoff retry, not a hammer
+
+
+def test_stackshare_down_keeps_previous_and_reports():
+    data = {"technologies": [
+        {"name": "Firebase", "service": {"stackshare": "firebase"},
+         "service_metrics": {"sources": {"stackshare": {"value": 50_000, "score": 2,
+                                                        "vote": "strong",
+                                                        "fetched": "2026-06-01"}},
+                             "contributors": ["stackshare"], "consensus": 2.0,
+                             "strong": False, "fetched": "2026-06-01"}}]}
+    opener = _Flaky429(99, "never")
+    changes, failures, stats = ss.refresh_services(
+        data, opener=opener, today=date(2026, 9, 13), _sleep=lambda s: None)
+    assert stats["stackshare"]["failed"] == 1
+    assert "rate-limited" in failures[0] and "kept previous" in failures[0]
+    row = data["technologies"][0]["service_metrics"]["sources"]["stackshare"]
+    assert row["value"] == 50_000 and row["fetched"] == "2026-06-01"  # previous kept
+
+
+def test_cert_error_during_services_is_classified_not_misread():
+    import ssl as _ssl
+    data = {"technologies": [
+        {"name": "PostgreSQL", "service": {"db_engines": "PostgreSQL"}}]}
+    def cert_fail(req, timeout=0, **kw):
+        raise _ssl.SSLError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer certificate")
+    changes, failures, stats = ss.refresh_services(
+        data, opener=cert_fail, today=date(2026, 9, 13), _sleep=lambda s: None)
+    assert stats["db_engines"]["failed"] == 1
+    assert "certificate" in failures[0] and "Certificates.command" in failures[0]
+
+
+def test_shared_package_fetched_once():
+    # Django + Django ORM map to the same pypi package: one fetch, both rows
+    data = {"technologies": [
+        {"name": "Django", "package": {"registry": "pypi", "name": "django"}},
+        {"name": "Django ORM", "package": {"registry": "pypi", "name": "django"}}]}
+    calls = []
+    def fetcher(row, today=None):
+        calls.append(row["name"])
+        return {"weekly_downloads": 9, "monthly_downloads": 9, "version": "6",
+                "published": "2026-09-01", "fetched": "2026-09-13"}
+    changes, failures = rr.refresh_artifact(data, fetcher=fetcher, today=date(2026, 9, 13))
+    assert calls == ["Django"] and failures == [] and len(changes) == 2
+    assert data["technologies"][1]["metrics"]["version"] == "6"

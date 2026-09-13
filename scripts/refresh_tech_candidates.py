@@ -119,12 +119,16 @@ def main() -> int:
                           "retry when the network is back. The committed artifact was NOT modified."))
     for src, st in sorted(svc_stats.items()):
         if st["mapped"] >= 4 and st["failed"] * 2 > st["mapped"]:
+            hint = (f"the per-row failures above carry the classified cause (local cert store "
+                    f"vs site throttling vs markup change). If {src} keeps blocking, exclude it "
+                    f"explicitly: python scripts/refresh_tech_candidates.py --write "
+                    f"--skip-source={src} - otherwise dry-run again later or fix the parser; "
+                    f"the committed artifact was NOT modified.")
             anomalies.append((f"source {src} answered for only "
                               f"{st['ok']}/{st['mapped']} mapped rows.",
                               "the site is blocking this run or its markup changed - writing would "
                               "freeze every row it covers at stale values.",
-                              "dry-run again later, or fix the parser against the new markup; "
-                              "the committed artifact was NOT modified."))
+                              hint))
         flip_ratio = st["flipped"] / st["mapped"] if st["mapped"] else 0
         if st["mapped"] >= 4 and flip_ratio > 0.3 and not allow_mass:
             anomalies.append((f"source {src} flipped the strong/weak vote on "

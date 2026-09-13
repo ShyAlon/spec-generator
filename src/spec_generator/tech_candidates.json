@@ -869,7 +869,7 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 178922,
+      "value": 178923,
       "score": 3,
       "vote": "strong",
       "fetched": "2026-09-13"
@@ -975,7 +975,7 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 109093,
+      "value": 109092,
       "score": 3,
       "vote": "strong",
       "fetched": "2026-09-13"
@@ -1016,16 +1016,24 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 22085,
+      "value": 22086,
       "score": 1,
       "vote": "weak",
+      "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 4,
+      "score": 3,
+      "vote": "strong",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
-    "consensus": 1.0,
+    "consensus": 2.0,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1059,12 +1067,20 @@
       "score": 1,
       "vote": "weak",
       "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 2,
+      "score": 3,
+      "vote": "strong",
+      "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
-    "consensus": 1.0,
+    "consensus": 2.0,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1094,16 +1110,24 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 10461,
+      "value": 10460,
       "score": 1,
       "vote": "weak",
+      "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 10,
+      "score": 2,
+      "vote": "strong",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
-    "consensus": 1.0,
+    "consensus": 1.5,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1134,16 +1158,24 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 28555,
+      "value": 28556,
       "score": 1,
       "vote": "weak",
+      "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 5,
+      "score": 3,
+      "vote": "strong",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
-    "consensus": 1.0,
+    "consensus": 2.0,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1177,13 +1209,21 @@
       "score": 2,
       "vote": "strong",
       "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 8,
+      "score": 2,
+      "vote": "strong",
+      "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
     "consensus": 2.0,
-    "strong": false,
+    "strong": true,
     "fetched": "2026-09-13"
    }
   },
@@ -1208,6 +1248,23 @@
    "service": {
     "db_engines": "Amazon DynamoDB",
     "stackshare": "amazon-dynamodb"
+   },
+   "service_metrics": {
+    "sources": {
+     "db_engines": {
+      "found": true,
+      "value": 18,
+      "score": 2,
+      "vote": "strong",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "db_engines"
+    ],
+    "consensus": 2.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -1228,7 +1285,7 @@
     "database"
    ],
    "service": {
-    "db_engines": "Cassandra",
+    "db_engines": "Apache Cassandra",
     "github": "apache/cassandra"
    },
    "service_metrics": {
@@ -1239,12 +1296,20 @@
       "score": 1,
       "vote": "weak",
       "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 12,
+      "score": 2,
+      "vote": "strong",
+      "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
-    "consensus": 1.0,
+    "consensus": 1.5,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1278,12 +1343,20 @@
       "score": 1,
       "vote": "weak",
       "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 13,
+      "score": 2,
+      "vote": "strong",
+      "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
-    "consensus": 1.0,
+    "consensus": 1.5,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1318,13 +1391,21 @@
       "score": 2,
       "vote": "strong",
       "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 11,
+      "score": 2,
+      "vote": "strong",
+      "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
     "consensus": 2.0,
-    "strong": false,
+    "strong": true,
     "fetched": "2026-09-13"
    }
   },
@@ -1353,16 +1434,24 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 49865,
+      "value": 49866,
       "score": 2,
       "vote": "strong",
+      "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 26,
+      "score": 1,
+      "vote": "weak",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
-    "consensus": 2.0,
+    "consensus": 1.5,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1396,12 +1485,20 @@
       "score": 1,
       "vote": "weak",
       "fetched": "2026-09-13"
+     },
+     "db_engines": {
+      "found": true,
+      "value": 20,
+      "score": 2,
+      "vote": "strong",
+      "fetched": "2026-09-13"
      }
     },
     "contributors": [
+     "db_engines",
      "github"
     ],
-    "consensus": 1.0,
+    "consensus": 1.5,
     "strong": false,
     "fetched": "2026-09-13"
    }

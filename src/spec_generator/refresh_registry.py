@@ -15,11 +15,69 @@ Download counts are his primary sort key; publish date gives freshness.
 from __future__ import annotations
 
 import json
+import ssl
 import time
+from pathlib import Path
 from datetime import date
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
+
+def _ssl_context():
+    """His 2026-09-13 dry run hit CERTIFICATE_VERIFY_FAILED on db-engines
+    from his Mac - TWO stacked causes handled here:
+    1. python.org macOS Python ships without root certs: prefer certifi's
+       CA bundle (present in any pip-built toolchain), fall back to the
+       system store.
+    2. db-engines serves an INCOMPLETE chain: its leaf is signed by Let's
+       Encrypt's 2025-generation YR1/YE* intermediates and the server does
+       not send them (browsers mask this via AIA fetching; Python does
+       not). letsencrypt_y_roots.pem ships those intermediates + Root YR,
+       fetched from LE's own AIA endpoints (i.lencr.org).
+    If verification STILL fails, explain_fetch_error says how to fix the
+    LOCAL store - a local-cert failure must never read as 'site blocked'."""
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ctx = ssl.create_default_context()
+    extra = Path(__file__).with_name("letsencrypt_y_roots.pem")
+    if extra.exists():
+        ctx.load_verify_locations(cafile=str(extra))
+    return ctx
+
+
+_CONTEXT = _ssl_context()
+
+
+def default_opener(req, timeout=20):
+    """The production opener: real CA bundle, so macOS python.org installs
+    verify without system surgery."""
+    return urlopen(req, timeout=timeout, context=_CONTEXT)
+
+
+def explain_fetch_error(exc: Exception) -> str:
+    """Classify a fetch failure into the cause + next action he should see.
+    'Local cert store broken' and 'site is blocking us' are DIFFERENT
+    failures with different fixes - the log must never blur them."""
+    text = f"{exc}"
+    if isinstance(exc, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in text:
+        return ("local certificate store can't verify HTTPS "
+                "(python.org macOS Python ships without root certs) - run once: "
+                "'/Applications/Python 3.x/Install Certificates.command', or: "
+                "python3 -m pip install certifi")
+    if isinstance(exc, HTTPError):
+        if exc.code == 429:
+            return "rate-limited by the site (HTTP 429) - it is throttling automated fetches"
+        if exc.code == 403:
+            return "blocked by the site (HTTP 403) - bot protection"
+        if exc.code == 404:
+            return "not found (HTTP 404) - the identifier or URL shape is wrong"
+        return f"HTTP {exc.code} from the site"
+    if isinstance(exc, TimeoutError) or "timed out" in text:
+        return "timed out - network or the site is slow right now"
+    return text or type(exc).__name__
 
 STALE_DAYS = 18 * 30  # ~18 months without a publish reads as stale
 
@@ -66,7 +124,7 @@ def _get_json(url: str, opener, headers: dict | None = None, _sleep=time.sleep) 
         except Exception as exc:  # network, JSON - all land here
             last_exc = exc
             break
-    raise RefreshError(str(last_exc) or type(last_exc).__name__) from last_exc
+    raise RefreshError(explain_fetch_error(last_exc)) from last_exc
 
 
 def _require_int(value, label: str) -> int:
@@ -85,7 +143,7 @@ def _require_iso(value, label: str) -> str:
     return text
 
 
-def fetch_npm_metrics(package: str, opener=urlopen, today: date | None = None) -> dict:
+def fetch_npm_metrics(package: str, opener=default_opener, today: date | None = None) -> dict:
     today = today or date.today()
     week = _get_json(NPM_DOWNLOADS.format(period="last-week", pkg=quote(package)), opener)
     month = _get_json(NPM_DOWNLOADS.format(period="last-month", pkg=quote(package)), opener)
@@ -107,7 +165,7 @@ def fetch_npm_metrics(package: str, opener=urlopen, today: date | None = None) -
     }
 
 
-def fetch_pypi_metrics(package: str, opener=urlopen, today: date | None = None) -> dict:
+def fetch_pypi_metrics(package: str, opener=default_opener, today: date | None = None) -> dict:
     today = today or date.today()
     meta = _get_json(PYPI_JSON.format(pkg=quote(package)), opener)
     stats = _get_json(PYPISTATS.format(pkg=quote(package)), opener)
@@ -129,7 +187,7 @@ def fetch_pypi_metrics(package: str, opener=urlopen, today: date | None = None) 
     }
 
 
-def fetch_metrics(row: dict, opener=urlopen, today: date | None = None) -> dict:
+def fetch_metrics(row: dict, opener=default_opener, today: date | None = None) -> dict:
     pkg = row.get("package") or {}
     registry = pkg.get("registry")
     if registry == "npm":
@@ -147,11 +205,16 @@ def refresh_artifact(data: dict, fetcher=fetch_metrics, today: date | None = Non
     changes, failures = [], []
     rows = [r for r in data.get("technologies", [])
             if isinstance(r, dict) and r.get("package")]
+    cache: dict = {}  # Django + Django ORM map to the SAME pypi package: one fetch,
+    # both rows - pypistats 429s the duplicate hit (seen live 2026-09-13)
     for i, row in enumerate(rows):
-        if i:
+        pkg_key = (row["package"]["registry"], row["package"]["name"])
+        if i and pkg_key not in cache:
             time.sleep(0.3)  # registry politeness: ~44 rows spread over ~15s
         try:
-            new_metrics = fetcher(row, today=today)
+            if pkg_key not in cache:
+                cache[pkg_key] = fetcher(row, today=today)
+            new_metrics = dict(cache[pkg_key])
         except Exception as exc:
             failures.append(f"{row.get('name')}: {exc}")
             continue
@@ -193,7 +256,7 @@ def metrics_diff_lines(changes: list[dict], failures: list[str],
     return lines or ["(no metric changes)"]
 
 
-def discover_candidates(data: dict, opener=urlopen, today: date | None = None,
+def discover_candidates(data: dict, opener=default_opener, today: date | None = None,
                         fetcher=fetch_npm_metrics) -> list[str]:
     """Advisory discovery: top npm packages per searched kind that the
     matrix does not know, with real download counts. Never writes - the
