@@ -107,9 +107,13 @@ def render_srs(srs: SRSDocument) -> str:
     return "\n".join(L)
 
 
-def render_architecture(arch: ArchitectureOverview) -> str:
+def render_architecture(arch: ArchitectureOverview, greenfield: bool = False) -> str:
     """Human-readable architecture for the founder review gate (ADR-0019) and
-    the bundle's architecture.md."""
+    the bundle's architecture.md. greenfield=True labels ungrounded entries as
+    what they ARE - new design, not a migration (2026-09-13: his greenfield
+    bundle's architecture.md said 'migration: see ADRs' for all 10 stack
+    entries, contradicting the greenfield no-migration semantics fixed the
+    same morning)."""
     lines = ["# Architecture overview\n"]
     if arch.stack_entries:
         lines.append("## Stack")
@@ -119,6 +123,8 @@ def render_architecture(arch: ArchitectureOverview) -> str:
                 trace = f" (baseline: {refs})"
             elif e.migration_adr_id:
                 trace = f" (migration: {e.migration_adr_id})"
+            elif greenfield:
+                trace = " (new design)"
             else:
                 trace = " (migration: see ADRs)"  # healed pre-0.13.0 artifact - linked by ADR text
             lines.append(f"- **{e.key}**: {e.value}{trace}")

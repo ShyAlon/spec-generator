@@ -111,3 +111,23 @@ def test_legacy_arch_fill_never_overwrites_real_drivers():
     filled = _legacy_arch_fill(ARCH)
     assert filled["decisions"][0]["driver"] == "ecosystem_maturity"
     assert filled["decisions"][0]["options_considered"][0]["option"] == "Angular"
+
+
+class RenderGreenfieldTest(unittest.TestCase):
+    def test_greenfield_labels_ungrounded_entries_new_design(self):
+        from spec_generator.render import render_architecture
+        arch = ArchitectureOverview.model_validate({
+            "session_id": "s", "overview": "o",
+            "stack_entries": [{"key": "database", "value": "Firestore", "baseline_refs": []}],
+        })
+        md = render_architecture(arch, greenfield=True)
+        self.assertIn("**database**: Firestore (new design)", md)
+        self.assertNotIn("migration", md)
+
+    def test_existing_mode_keeps_legacy_migration_label(self):
+        from spec_generator.render import render_architecture
+        arch = ArchitectureOverview.model_validate({
+            "session_id": "s", "overview": "o",
+            "stack_entries": [{"key": "database", "value": "X", "baseline_refs": []}],
+        })
+        self.assertIn("(migration: see ADRs)", render_architecture(arch))

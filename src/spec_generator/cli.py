@@ -150,7 +150,7 @@ _PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fill
                       "tests": ("tests_fills",)}
 
 
-def _make_persist(intent: dict, outdir: Path):
+def _make_persist(intent: dict, outdir: Path, greenfield: bool = False):
     """The incremental bundle writer (his ask 2026-09-09: 'persist them
     intermittently so we'll have some of the data'). Fires after each stage;
     the final assembly writes remain the canonical full bundle."""
@@ -171,7 +171,7 @@ def _make_persist(intent: dict, outdir: Path):
             body = _legacy_arch_fill({**data, "session_id": sid})  # pre-0.8.0 checkpoints lack the ADR-0021 fields
             _atomic_write(outdir / "architecture.json", json.dumps(body, indent=2))
             arch = ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
-            _atomic_write(outdir / "architecture.md", render_architecture(arch))
+            _atomic_write(outdir / "architecture.md", render_architecture(arch, greenfield=greenfield))
         elif stage == "items":
             _atomic_write(outdir / "items.json", json.dumps(data, indent=2))
             for i in data:
@@ -441,7 +441,7 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     print(f"New output: {outdir} (source will not be modified)", file=sys.stderr)
     log = UsageLog(sid, sink=jsonl_sink(outdir / "usage.jsonl"))
     bus = ProgressBus(); bus.subscribe(stderr_printer())
-    persist = _make_persist(intent, outdir)
+    persist = _make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield")
     graph = build_graph(log, progress=bus, persist=persist, partials=_make_partials(outdir),
                         only_stage=args.only_stage)
     result = graph.invoke(state, {"configurable": {"thread_id": sid + "-" + args.only_stage}})
@@ -540,7 +540,8 @@ def main() -> None:
     conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
     partials = _make_partials(outdir)
     graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review,
-                        persist=_make_persist(intent, outdir), partials=partials)
+                        persist=_make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield"),
+                        partials=partials)
     from . import model_config as _mc
 
     if args.from_stage:
@@ -641,7 +642,8 @@ def main() -> None:
     (outdir / "needs.md").write_text(render_needs(needs))
     srs = SRSDocument.model_validate(coerce_for_model(b["_srs"], SRSDocument))
     (outdir / "srs.md").write_text(render_srs(srs))
-    (outdir / "architecture.md").write_text(render_architecture(arch))
+    (outdir / "architecture.md").write_text(
+        render_architecture(arch, greenfield=baseline["mode"] == "greenfield"))
     (outdir / "architecture.json").write_text(arch.model_dump_json(indent=2))
     for i in items:
         (outdir / "specs" / f"{i.spec_id}.md").write_text(render_spec_file(i))
