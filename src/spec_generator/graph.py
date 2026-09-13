@@ -34,6 +34,9 @@ from vmodel_contracts import (
 from pydantic import ValidationError
 
 from . import model_config
+from .tech_candidates import (KIND_LEXICONS, PLATFORM_CHECKED_KINDS,
+                              SLOT_KEY_SUBSTR, TECH_CANDIDATES,
+                              TECH_CANDIDATES_AS_OF, tech_row)
 from .tools import tools_enabled
 from .skeleton import (ModelStructureError, assign_architecture_ids,
                                    build_srs_skeleton, build_test_skeleton,
@@ -483,29 +486,10 @@ def _experiment_cap(name: str, items: list, label: str,
 # over LLM judgment wherever possible). A stack value that matches a KNOWN
 # technology lexicon of one kind cannot answer a slot of another kind
 # ('Pydantic' for encryption, 'ts' for database). Values in NO lexicon (novel
-# tech) pass - a lexicon miss is never a verdict.
-_KIND_LEXICONS = {
-    "language": ("python", "typescript", "javascript", "ts", "go", "rust", "java", "ruby",
-                 "c#", "csharp", "c++", "php", "swift", "kotlin", "scala", "elixir"),
-    "framework": ("django", "flask", "fastapi", "express", "rails", "laravel", "spring",
-                  "next.js", "nextjs", "react", "vue", "angular", "svelte", "langgraph",
-                  "langchain", "nestjs", "nuxt"),
-    "database": ("postgresql", "postgres", "mysql", "sqlite", "mongodb", "mongo", "redis",
-                 "dynamodb", "cassandra", "mariadb", "elasticsearch", "clickhouse",
-                 "neo4j", "supabase"),
-    "orm": ("pydantic", "sqlalchemy", "prisma", "sequelize", "typeorm", "hibernate",
-            "alembic", "django orm", "active record"),
-    "ci": ("github actions", "gitlab ci", "jenkins", "circleci", "travis ci", "travis",
-           "azure pipelines", "buildkite", "teamcity", "woodpecker"),
-    "auth": ("auth0", "keycloak", "okta", "firebase", "cognito", "clerk", "oauth2",
-             "openid connect", "supabase", "jwt"),
-    "encryption": ("aes", "aes-256", "aes-128", "rsa", "tls", "ssl", "bcrypt", "argon2",
-                   "libsodium", "fernet", "chacha20"),
-    "queue": ("rabbitmq", "kafka", "sqs", "celery", "bullmq", "nats", "redis streams"),
-    "visualization": ("d3.js", "d3", "chart.js", "plotly", "matplotlib", "seaborn",
-                      "recharts", "highcharts", "echarts", "apache echarts", "vega",
-                      "vega-lite", "three.js", "bokeh", "altair", "victory", "nivo"),
-}
+# tech) pass - a lexicon miss is never a verdict. The lexicons are DERIVED
+# from the tech candidate matrix (2026-09-13 matrix decision: ONE artifact
+# owns all tech knowledge - kinds, platforms, aliases, notes, freshness).
+_KIND_LEXICONS = KIND_LEXICONS
 _SLOT_KIND = {
     "language": "language", "runtime": "language", "framework": "framework",
     "web_framework": "framework", "database": "database", "persistence": "database",
@@ -543,6 +527,188 @@ def _wrong_kind(key: str, value: str) -> str | None:
     if not slot_kind or _kind_match(value, slot_kind):
         return None
     return next((k for k in _KIND_LEXICONS if k != slot_kind and _kind_match(value, k)), None)
+
+
+# ---- Founder candidates + curated tech candidate lists (founder decision
+# 2026-09-13): a founder-NAMED technology is adopted or rejected, never
+# dropped from the record; the dated curated list seeds candidates so the
+# model's training cutoff is not its only source. Suggestions, not
+# constraints - off-list picks stay legal but an ADR must justify them.
+
+_CANDIDATE_DISPLAY = {n.lower(): n for c in TECH_CANDIDATES.values() for n, _ in c}
+
+
+def _display(tech: str) -> str:
+    return _CANDIDATE_DISPLAY.get(tech, tech)
+
+
+def _candidate_kind(key: str) -> str | None:
+    """The slot's candidate kind: the fitness gate's exact map, then the
+    matrix's substring rules for model-proposed keys."""
+    if key in _SLOT_KIND:
+        return _SLOT_KIND[key]
+    kl = key.lower()
+    for sub, kind in SLOT_KEY_SUBSTR:
+        if sub in kl:
+            return kind
+    return None
+
+
+# Product platform context, derived deterministically from the intent model
+# (2026-09-13 matrix decision): an iOS mention (or an iOS-only integration
+# like HealthKit) makes UI-kind slots require a matching-platform candidate.
+_PLATFORM_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("ios", ("ios", "iphone", "ipad", "healthkit", "app store")),
+    ("android", ("android", "health connect", "google play")),
+    ("web", ("web app", "web application", "webapp", "browser", "pwa")),
+    ("desktop", ("desktop",)),
+)
+
+
+def _product_platforms(intent_model: dict) -> set[str]:
+    text = json.dumps({k: intent_model.get(k) for k in
+                       ("problem_statement", "target_users", "core_value_proposition",
+                        "stakeholder_needs", "in_scope", "constraints",
+                        "external_integrations")}, default=str).lower()
+    return {plat for plat, kws in _PLATFORM_KEYWORDS if any(k in text for k in kws)}
+
+
+def _tech_in_text(name: str, text: str) -> bool:
+    return bool(_re.search(rf"(?<![\w+.#]){_re.escape(name.lower())}(?![\w])", text.lower()))
+
+
+def _tech_kinds(name: str) -> list[str]:
+    """Every kind a technology belongs to - lexicon kinds, then candidate
+    kinds (supabase: database + auth + backend)."""
+    kinds = [k for k in _KIND_LEXICONS if _kind_match(name, k)]
+    n = name.lower()
+    kinds += [k for k, cands in TECH_CANDIDATES.items() if k not in kinds
+              and any(cn.lower() == n for cn, _ in cands)]
+    return kinds
+
+
+def _founder_named_techs(intent_model: dict) -> list[str]:
+    """Technologies the founder NAMED inside their stated tech preferences
+    ('free resources like Supabase' -> ['supabase']). Only names the pipeline
+    itself recognizes (lexicon or candidate list) are extractable; a
+    preference naming nothing known injects nothing and gates nothing."""
+    vocab = {t for terms in _KIND_LEXICONS.values() for t in terms}
+    vocab |= {n.lower() for c in TECH_CANDIDATES.values() for n, _ in c}
+    out = set()
+    for pref in (intent_model.get("tech_preferences") or []):
+        text = str(pref.get("preference", ""))
+        for v in vocab:
+            if _tech_in_text(v, text):
+                out.add(v)
+    return sorted(out)
+
+
+_GENERIC_REJECTIONS = (
+    "not suitable", "not a good fit", "not a fit", "does not fit", "doesn't fit",
+    "better alternatives", "better alternatives exist", "better options exist",
+    "better option", "less suitable", "not ideal", "not appropriate",
+    "not the best", "inferior", "not needed", "unnecessary", "overkill",
+)
+
+
+def _specific_reason(reason: str) -> bool:
+    """A rejection reason earns its place by naming WHAT the option fails -
+    a requirement, a constraint, a missing capability. Bare verdicts
+    ('not suitable') and sub-20-character shrugs re-ask (founder decision
+    2026-09-13)."""
+    r = reason.strip().lower().rstrip(".!")
+    if len(r) < 20:
+        return False
+    return r not in _GENERIC_REJECTIONS
+
+
+def _candidate_block(key: str, founder_techs: list[str]) -> str:
+    """Per-stack-entry prompt injection: the dated curated candidates for the
+    slot's kind, with founder-named technologies marked and weighted."""
+    kind = _candidate_kind(key)
+    cands = TECH_CANDIDATES.get(kind, ()) if kind else ()
+    lines = []
+    if cands:
+        lines.append(f"CANDIDATE TECHNOLOGIES for this slot's kind ({kind}) - curated list as of "
+                     f"{TECH_CANDIDATES_AS_OF}; suggestions, NOT constraints (an off-list pick is "
+                     "allowed, but an ADR must then name it and why it won):")
+        lines += [f"- {name}: {note}" for name, note in cands]
+    marked = [t for t in founder_techs if kind and kind in _tech_kinds(t)]
+    if marked:
+        lines.append("FOUNDER-NAMED CANDIDATE(S) for this slot: "
+                     + ", ".join(_display(t) for t in marked)
+                     + " - the founder named these in their stated preferences; weigh them heavily "
+                     "(adopt unless a concrete technical reason says otherwise). The ADR covering "
+                     "this slot records the verdict either way; a rejection must state the specific "
+                     "requirement it fails ('not suitable' re-asks).")
+    return ("\n\n" + "\n".join(lines)) if lines else ""
+
+
+def _announce_candidate_lists(founder_techs: list[str]) -> None:
+    """The freshness contract is VISIBILITY (founder decision 2026-09-13):
+    every run log says how stale its candidate lists are."""
+    model_config._console_line(
+        f"   tech candidate lists as of {TECH_CANDIDATES_AS_OF} "
+        "(suggestions, not constraints; refresh: python scripts/refresh_tech_candidates.py)")
+    if founder_techs:
+        model_config._console_line(
+            "   founder-named candidates (weighted; verdicts tracked into the ADRs): "
+            + ", ".join(_display(t) for t in founder_techs))
+
+
+def _check_candidate_grounding(arch: ArchitectureOverview, intent_model: dict,
+                               contested: dict | None = None) -> None:
+    """Assembly gate (founder decision 2026-09-13): a founder-NAMED technology
+    is adopted (a stack value names it) or rejected (an ADR's
+    options_considered names it with a SPECIFIC reason) - never dropped from
+    the record. And an off-list stack pick (no lexicon, no candidate list) is
+    justified by an ADR naming it. Failures trigger ONE bounded ADR-set
+    re-plan in node_architecture, then a human-readable stage error."""
+    stack_values = [e.value for e in arch.stack_entries]
+    all_options = [(d.decision_id, o.option, o.reason)
+                   for d in arch.decisions for o in d.options_considered]
+    for t in _founder_named_techs(intent_model):
+        if any(_tech_in_text(t, v) for v in stack_values):
+            continue  # adopted - the decision record carries the pick itself
+        hits = [(did, o, r) for did, o, r in all_options if _tech_in_text(t, o)]
+        if not hits:
+            raise ModelStructureError(
+                f"founder-named technology {_display(t)!r} is neither adopted in the stack nor "
+                "rejected in any ADR's options_considered - the record must carry the verdict. "
+                "Add it to the ADR covering its area, rejected, with the specific requirement it fails")
+        for did, _o, r in hits:
+            if not _specific_reason(r):
+                raise ModelStructureError(
+                    f"{did}: founder-named technology {_display(t)!r} rejected with the vague reason "
+                    f"{r!r} - state the specific requirement it fails or the constraint it violates")
+    # Contested off-platform picks (gate 3 insistence): the justification MUST
+    # land in an ADR for founder veto - named in the decision, with the
+    # platform trade-off argued explicitly in the rationale.
+    for key, value in (contested or {}).items():
+        hits = [d for d in arch.decisions if _tech_in_text(value, d.title + " " + d.decision)]
+        if not hits:
+            raise ModelStructureError(
+                f"stack.{key}: contested off-platform pick {value!r} is justified in NO ADR - "
+                "an ADR must own this decision and argue the platform trade-off explicitly "
+                "(why it fits despite the product's platform)")
+        if not any(_re.search(r"web|pwa|platform|mobile|cross.?platform|ios|android",
+                              d.rationale.lower()) for d in hits):
+            raise ModelStructureError(
+                f"stack.{key}: the ADR(s) naming contested pick {value!r} never argue the "
+                "platform trade-off - the rationale must state explicitly why a technology "
+                "of its platform fits this product's platform")
+    adr_text = " ".join(
+        d.title + " " + d.decision + " " + d.rationale + " "
+        + " ".join(o.option for o in d.options_considered) for d in arch.decisions).lower()
+    for e in arch.stack_entries:
+        if e.baseline_refs or _entry_point_slot(e.key) or _known_tech(e.value):
+            continue
+        if any(_tech_in_text(n.lower(), e.value) for c in TECH_CANDIDATES.values() for n, _ in c):
+            continue  # on the curated list
+        if e.value.lower() not in adr_text:
+            raise ModelStructureError(
+                f"stack.{e.key}: off-list pick {e.value!r} (in no lexicon, on no candidate list) is "
+                "justified in NO ADR - an ADR must name it and why it won over the curated candidates")
 
 
 def baseline_reference_index(baseline: SystemBaseline) -> set[str]:
@@ -1352,6 +1518,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             if partials:
                 partials.save("architecture", part)
 
+        founder_techs = _founder_named_techs(state["intent_model"])
+        product_platforms = _product_platforms(state["intent_model"])
+        _announce_candidate_lists(founder_techs)
+        if product_platforms & {"ios", "android"}:
+            model_config._console_line(
+                "   product platform context: " + ", ".join(sorted(product_platforms))
+                + " - UI-kind slots require a matching-platform candidate (insistence "
+                "lands its justification in an ADR for your veto)")
+
         # 1. Plan: which technology slots to decide.
         if "stack_keys" not in part:
             plan = _call_json("architecture", context + "\n\n" + ARCH_STACK_PLAN + feedback,
@@ -1417,6 +1592,36 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     f"stack.{key}: {value!r} is a {wrong}, which does not answer this "
                     "slot - name a technology that directly answers this slot's question, "
                     "or declare a migration (empty baseline_refs)")
+            # Gate 3 (2026-09-13 matrix decision, his React-for-mobile defect):
+            # ATTRIBUTE fitness. A wrong-PLATFORM technology cannot silently
+            # answer a UI-kind slot when the product context is mobile.
+            # Deterministic reject with the matching-platform alternatives;
+            # ONE insistence is allowed, and then the covering ADR must carry
+            # the explicit platform justification for founder veto (checked
+            # at assembly) - no silent pass, no soft hint. Baseline-grounded
+            # values are facts about the repo, not proposals: not re-judged.
+            kind3 = _candidate_kind(key)
+            if (kind3 in PLATFORM_CHECKED_KINDS and not entry["baseline_refs"]
+                    and product_platforms & {"ios", "android"}):
+                row = tech_row(value)
+                need = product_platforms & {"ios", "android"}
+                if row and "any" not in row["platforms"] and not (set(row["platforms"]) & need):
+                    conflicts = part.setdefault("platform_conflicts", {}).setdefault(key, [])
+                    if value.lower() in (c.lower() for c in conflicts):
+                        part.setdefault("contested", {})[key] = value
+                        model_config._console_line(
+                            f"     - contested: stack.{key}={value} ({'/'.join(row['platforms'])} technology, "
+                            f"{'/'.join(sorted(need))} product) - an ADR must carry the explicit justification")
+                    else:
+                        conflicts.append(value)
+                        fitting = [n for n, _ in TECH_CANDIDATES.get(kind3, ())
+                                   if (r2 := tech_row(n)) and (set(r2["platforms"]) & need or "any" in r2["platforms"])]
+                        raise ModelStructureError(
+                            f"stack.{key}: {value!r} is a {'/'.join(row['platforms'])} technology, but the "
+                            f"product context is {'/'.join(sorted(need))} - it cannot answer this slot "
+                            f"directly. Matching-platform candidates: {', '.join(fitting[:6]) or '(none on file)'}. "
+                            f"If {value!r} is a DELIBERATE call (e.g. web-first PWA), repeat it and the "
+                            "covering ADR must carry the explicit platform justification for founder veto.")
             return entry
 
         entries = part.setdefault("stack_entries", {})
@@ -1435,7 +1640,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 continue  # per-slot resume
             entries[key] = _call_json(
                 "architecture",
-                context + f"\n\nTHE STACK KEY TO DECIDE: {key}\n\n" + ARCH_STACK_ENTRY + feedback,
+                context + f"\n\nTHE STACK KEY TO DECIDE: {key}\n"
+                + _candidate_block(key, founder_techs) + "\n\n" + ARCH_STACK_ENTRY + feedback,
                 log, progress, validate=lambda d, key=key: _v_entry(d, key),
                 schema=arch_stack_entry_schema(valid_refs),
                 stream_items=False, item_label=f"stack:{key}")
@@ -1478,137 +1684,189 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 stream_items=False, item_label=f"component:{slot['name']}")
             _save()
 
-        # 5. Plan: ADR slots. Departures are CODE-COMPUTED from the accepted
-        # entries/slots and the required migration slots are CODE-GENERATED
-        # from them (the 2026-09-12 live phi4 failure: the model forgot to
-        # authorize stack:ci_tool). The model only proposes OPTIONAL design
-        # decisions; ids are assigned after the merge, required slots first.
-        departures = [k for k, e in entries.items() if not e["baseline_refs"]] if existing else []
-        migrating = [c["name"] for c in part["component_slots"] if c["migration"]] if existing else []
-        authorizable = [f"stack:{k}" for k in departures] + [f"component:{n}" for n in migrating]
-        if "adr_slots" not in part:
-            required = _required_adr_slots(authorizable)
-            req_block = ("\n\nPIPELINE-REQUIRED MIGRATION ADRS (already planned - do not "
-                         "re-propose them; you will author their bodies against these "
-                         "fixed slots):\n" + json.dumps(required)) if required else \
-                        "\n\nPIPELINE-REQUIRED MIGRATION ADRS: none - no departures, nothing migrates."
-            optional = _call_json(
-                "architecture",
-                context + "\n\nDECIDED STACK (key: value):\n"
-                + json.dumps({k: e["value"] for k, e in entries.items()})
-                + "\n\nCOMPONENT SLOTS:\n" + json.dumps(part["component_slots"])
-                + req_block + "\n\n" + ARCH_ADR_PLAN + feedback,
-                log, progress,
-                validate=lambda d: _validate_adr_plan(d, [s["slug"] for s in required]),
-                schema=arch_adr_plan_schema(),
-                stream_items=False, item_label="plan: decision slots")
-            part["adr_slots"] = _merge_adr_slots(required, optional)
-            _save()
+        # Founder-candidate grounding can only be judged at assembly (which ADR
+        # covers which area is the model's call), so the ADR plan+fill runs in a
+        # bounded re-plan loop: ONE re-plan with the gate failure as feedback,
+        # then a human-readable stage error (founder decision 2026-09-13).
+        candidate_feedback = ""
+        founder_plan_block = ("" if not founder_techs else
+            "\n\nFOUNDER-NAMED TECHNOLOGIES (from the founder's stated preferences): "
+            + ", ".join(_display(t) for t in founder_techs)
+            + ". Your plan MUST leave room for the decision where each of these is adopted "
+            + "or rejected - one slug per affected area.")
+        won = {t for t in founder_techs
+               if any(_tech_in_text(t, e["value"]) for e in entries.values())}
+        lost = [t for t in founder_techs if t not in won]
+        lost_block = ("" if not lost else
+            "\n\nFOUNDER-NAMED TECHNOLOGIES NOT ADOPTED IN THE STACK: "
+            + ", ".join(_display(t) for t in lost)
+            + ". If THIS decision covers one of their areas, that technology MUST appear "
+            + "in options_considered with the specific requirement it fails - vague reasons "
+            + "('not suitable') are rejected and re-asked. If unrelated, ignore this line.")
+        for _adr_attempt in (1, 2):
+            # 5. Plan: ADR slots. Departures are CODE-COMPUTED from the accepted
+            # entries/slots and the required migration slots are CODE-GENERATED
+            # from them (the 2026-09-12 live phi4 failure: the model forgot to
+            # authorize stack:ci_tool). The model only proposes OPTIONAL design
+            # decisions; ids are assigned after the merge, required slots first.
+            departures = [k for k, e in entries.items() if not e["baseline_refs"]] if existing else []
+            migrating = [c["name"] for c in part["component_slots"] if c["migration"]] if existing else []
+            authorizable = [f"stack:{k}" for k in departures] + [f"component:{n}" for n in migrating]
+            if "adr_slots" not in part:
+                required = _required_adr_slots(authorizable)
+                req_block = ("\n\nPIPELINE-REQUIRED MIGRATION ADRS (already planned - do not "
+                             "re-propose them; you will author their bodies against these "
+                             "fixed slots):\n" + json.dumps(required)) if required else \
+                            "\n\nPIPELINE-REQUIRED MIGRATION ADRS: none - no departures, nothing migrates."
+                optional = _call_json(
+                    "architecture",
+                    context + "\n\nDECIDED STACK (key: value):\n"
+                    + json.dumps({k: e["value"] for k, e in entries.items()})
+                    + "\n\nCOMPONENT SLOTS:\n" + json.dumps(part["component_slots"])
+                    + req_block + founder_plan_block + candidate_feedback + "\n\n" + ARCH_ADR_PLAN + feedback,
+                    log, progress,
+                    validate=lambda d: _validate_adr_plan(d, [s["slug"] for s in required]),
+                    schema=arch_adr_plan_schema(),
+                    stream_items=False, item_label="plan: decision slots")
+                part["adr_slots"] = _merge_adr_slots(required, optional)
+                _save()
 
-        # 6. One micro-call per ADR: the decision substance.
-        adr_bodies = part.setdefault("adr_bodies", {})
-        for slot in part["adr_slots"]:
-            did = slot["decision_id"]
-            if did in adr_bodies:
-                continue
-            def _v_adr(d, slot=slot):
-                body = {"title": str(d.get("title", "")).strip(),
-                        "decision": str(d.get("decision", "")).strip(),
-                        "rationale": str(d.get("rationale", "")).strip(),
-                        "driver": d.get("driver"),
-                        "options_considered": d.get("options_considered") or [],
-                        "baseline_refs": [str(r) for r in d.get("baseline_refs") or []],
-                        "migration": slot["migration"],
-                        "evidence": [str(x) for x in d.get("evidence") or []],
-                        "affected_repositories": [str(x) for x in d.get("affected_repositories") or []],
-                        "rejected": []}
-                if not body["title"] or not body["decision"] or not body["rationale"]:
-                    raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
-                # P1 (2026-09-12 regen, founder-approved): a founder_constraint
-                # driver claims THE FOUNDER mandated this - that requires a
-                # founder tech preference actually on record, and the decision
-                # must name it. With no preferences recorded the claim is
-                # impossible, never merely unproven (ADR-1 'Auth0' sailed
-                # through the old check's empty-prefs hole claiming his
-                # mandate). Deterministic gate, per-ADR retry, cheap.
-                adr_text = (body["title"] + " " + body["decision"] + " " + body["rationale"]).lower()
-                founder_prefs = [str(p.get("preference", "")) for p in
-                                 (state["intent_model"].get("tech_preferences") or []) if p.get("preference")]
-                if body["driver"] == "founder_constraint":
-                    if not founder_prefs:
+            # 6. One micro-call per ADR: the decision substance.
+            adr_bodies = part.setdefault("adr_bodies", {})
+            for slot in part["adr_slots"]:
+                did = slot["decision_id"]
+                if did in adr_bodies:
+                    continue
+                def _v_adr(d, slot=slot):
+                    body = {"title": str(d.get("title", "")).strip(),
+                            "decision": str(d.get("decision", "")).strip(),
+                            "rationale": str(d.get("rationale", "")).strip(),
+                            "driver": d.get("driver"),
+                            "options_considered": d.get("options_considered") or [],
+                            "baseline_refs": [str(r) for r in d.get("baseline_refs") or []],
+                            "migration": slot["migration"],
+                            "evidence": [str(x) for x in d.get("evidence") or []],
+                            "affected_repositories": [str(x) for x in d.get("affected_repositories") or []],
+                            "rejected": []}
+                    if not body["title"] or not body["decision"] or not body["rationale"]:
+                        raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
+                    # P1 (2026-09-12 regen, founder-approved): a founder_constraint
+                    # driver claims THE FOUNDER mandated this - that requires a
+                    # founder tech preference actually on record, and the decision
+                    # must name it. With no preferences recorded the claim is
+                    # impossible, never merely unproven (ADR-1 'Auth0' sailed
+                    # through the old check's empty-prefs hole claiming his
+                    # mandate). Deterministic gate, per-ADR retry, cheap.
+                    adr_text = (body["title"] + " " + body["decision"] + " " + body["rationale"]).lower()
+                    founder_prefs = [str(p.get("preference", "")) for p in
+                                     (state["intent_model"].get("tech_preferences") or []) if p.get("preference")]
+                    if body["driver"] == "founder_constraint":
+                        if not founder_prefs:
+                            raise ModelStructureError(
+                                f"{slot['decision_id']} '{body['title']}': driver founder_constraint, but the "
+                                "intent model records NO founder tech preferences - the founder never mandated "
+                                "this. Pick the real driver (ecosystem_maturity | community_adoption | team_fit "
+                                "| simplicity) and delete any founder-mandate language")
+                        if not any(pref.lower() in adr_text for pref in founder_prefs):
+                            raise ModelStructureError(
+                                f"{slot['decision_id']} '{body['title']}': driver founder_constraint but the "
+                                f"decision names none of the founder's stated preferences "
+                                f"({', '.join(founder_prefs)}) - name the one that drove it, or pick the real driver")
+                    elif _re.search(r"mandat\w* by the founder|founder(-|\')s? (mandate|preference|requirement|decision)", adr_text):
                         raise ModelStructureError(
-                            f"{slot['decision_id']} '{body['title']}': driver founder_constraint, but the "
-                            "intent model records NO founder tech preferences - the founder never mandated "
-                            "this. Pick the real driver (ecosystem_maturity | community_adoption | team_fit "
-                            "| simplicity) and delete any founder-mandate language")
-                    if not any(pref.lower() in adr_text for pref in founder_prefs):
-                        raise ModelStructureError(
-                            f"{slot['decision_id']} '{body['title']}': driver founder_constraint but the "
-                            f"decision names none of the founder's stated preferences "
-                            f"({', '.join(founder_prefs)}) - name the one that drove it, or pick the real driver")
-                elif _re.search(r"mandat\w* by the founder|founder(-|\')s? (mandate|preference|requirement|decision)", adr_text):
-                    raise ModelStructureError(
-                        f"{slot['decision_id']} '{body['title']}': the text claims a founder mandate but the "
-                        "driver is not founder_constraint - delete the mandate language or justify the driver")
-                if slot["migration"]:
-                    if not body["evidence"]:
-                        raise ModelStructureError(f"{slot['decision_id']} {body['title']}: migration requires evidence")
-                    if not body["affected_repositories"]:
-                        raise ModelStructureError(f"{slot['decision_id']} {body['title']}: migration requires affected_repositories")
-                elif body["evidence"] or body["affected_repositories"]:
-                    raise ModelStructureError(f"{slot['decision_id']} {body['title']}: evidence/affected_repositories only belong on migration ADRs")
-                return body
-            adr_bodies[did] = _call_json(
-                "architecture",
-                context + "\n\nTHE ADR SLOT (fixed - ids, migration flag and authorizations are pipeline-owned):\n"
-                + json.dumps({"decision_id": did, "slug": slot["slug"],
-                              "migration": slot["migration"], "authorizes": slot["authorizes"]})
-                + "\n\nDECIDED STACK (key: value):\n"
-                + json.dumps({k: e["value"] for k, e in entries.items()})
-                + "\n\n" + ARCH_ADR_BODY + feedback,
-                log, progress, validate=_v_adr,
-                schema=arch_adr_body_schema(valid_refs, repo_names),
-                stream_items=False, item_label=f"{did} {slot['slug']}")
-            _save()
+                            f"{slot['decision_id']} '{body['title']}': the text claims a founder mandate but the "
+                            "driver is not founder_constraint - delete the mandate language or justify the driver")
+                    # Founder-NAMED technologies rejected here need a SPECIFIC
+                    # reason (2026-09-13 founder decision) - vague verdicts
+                    # re-ask this ADR call, far cheaper than an assembly re-plan.
+                    for opt in body["options_considered"]:
+                        if not isinstance(opt, dict):
+                            continue
+                        oname, oreason = str(opt.get("option", "")), str(opt.get("reason", ""))
+                        for t in founder_techs:
+                            if _tech_in_text(t, oname) and not _specific_reason(oreason):
+                                raise ModelStructureError(
+                                    f"{slot['decision_id']} '{body['title']}': founder-named technology "
+                                    f"{_display(t)!r} is rejected with the vague reason {oreason!r} - state "
+                                    "the specific requirement it fails or the constraint it violates")
+                    if slot["migration"]:
+                        if not body["evidence"]:
+                            raise ModelStructureError(f"{slot['decision_id']} {body['title']}: migration requires evidence")
+                        if not body["affected_repositories"]:
+                            raise ModelStructureError(f"{slot['decision_id']} {body['title']}: migration requires affected_repositories")
+                    elif body["evidence"] or body["affected_repositories"]:
+                        raise ModelStructureError(f"{slot['decision_id']} {body['title']}: evidence/affected_repositories only belong on migration ADRs")
+                    return body
+                adr_bodies[did] = _call_json(
+                    "architecture",
+                    context + "\n\nTHE ADR SLOT (fixed - ids, migration flag and authorizations are pipeline-owned):\n"
+                    + json.dumps({"decision_id": did, "slug": slot["slug"],
+                                  "migration": slot["migration"], "authorizes": slot["authorizes"]})
+                    + "\n\nDECIDED STACK (key: value):\n"
+                    + json.dumps({k: e["value"] for k, e in entries.items()})
+                    + lost_block + "\n\n" + ARCH_ADR_BODY + feedback,
+                    log, progress, validate=_v_adr,
+                    schema=arch_adr_body_schema(valid_refs, repo_names),
+                    stream_items=False, item_label=f"{did} {slot['slug']}")
+                _save()
 
-        # 7. One micro-call per non-functional requirement: the position.
-        nfr = part.setdefault("non_functionals", {})
-        for rid, req in nfr_slots.items():
-            if rid in nfr:
-                continue
-            def _v_nfr(d, rid=rid):
-                if not str(d.get("position", "")).strip():
-                    raise ModelStructureError(f"{rid}: non-functional position must not be empty")
-                return str(d["position"]).strip()
-            nfr[rid] = _call_json(
-                "architecture",
-                context + "\n\nTHE NON-FUNCTIONAL REQUIREMENT:\n" + json.dumps(req)
-                + "\n\n" + ARCH_NFR + feedback,
-                log, progress, validate=_v_nfr, schema=arch_nfr_schema(),
-                stream_items=False, item_label=f"non-functional:{rid}")
-            _save()
+            # 7. One micro-call per non-functional requirement: the position.
+            nfr = part.setdefault("non_functionals", {})
+            for rid, req in nfr_slots.items():
+                if rid in nfr:
+                    continue
+                def _v_nfr(d, rid=rid):
+                    if not str(d.get("position", "")).strip():
+                        raise ModelStructureError(f"{rid}: non-functional position must not be empty")
+                    return str(d["position"]).strip()
+                nfr[rid] = _call_json(
+                    "architecture",
+                    context + "\n\nTHE NON-FUNCTIONAL REQUIREMENT:\n" + json.dumps(req)
+                    + "\n\n" + ARCH_NFR + feedback,
+                    log, progress, validate=_v_nfr, schema=arch_nfr_schema(),
+                    stream_items=False, item_label=f"non-functional:{rid}")
+                _save()
 
-        # 8. Deterministic assembly + the whole-architecture semantic gate.
-        merged = _assemble_architecture(
-            session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
-            comp_slots=part["component_slots"], comp_bodies=comp_bodies,
-            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
-        try:
-            arch = ArchitectureOverview.model_validate(merged)
-            _check_decision_drivers(arch, state["intent_model"])  # ADR-0021
-            _check_baseline_reconciliation(arch, baseline)
-        except (ValidationError, ModelStructureError) as e:
-            # the gate failing is a KNOWN pain (a slot the per-slot checks could
-            # not see) - it gets the human-readable shape, never a raw traceback
-            # (the 2026-09-12 acceptance run dumped one on the founder).
-            from .errors import UserFacingError
-            raise UserFacingError(
-                "stage 'architecture': the assembled architecture failed the whole-architecture semantic gate.",
-                _contract_errors(e),
-                f"{model_config._rerun_guidance('architecture')} - per-slot work is preserved and any slot "
-                "that fails the current contract is re-asked, not the whole stage; if the same gate error "
-                "repeats after the re-ask, report it: a persistent gate failure is a pipeline bug, not a model limit.",
-            ) from e
+            # 8. Deterministic assembly + the whole-architecture semantic gate.
+            merged = _assemble_architecture(
+                session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
+                comp_slots=part["component_slots"], comp_bodies=comp_bodies,
+                adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
+            try:
+                arch = ArchitectureOverview.model_validate(merged)
+                _check_decision_drivers(arch, state["intent_model"])  # ADR-0021
+                _check_baseline_reconciliation(arch, baseline)
+            except (ValidationError, ModelStructureError) as e:
+                # the gate failing is a KNOWN pain (a slot the per-slot checks could
+                # not see) - it gets the human-readable shape, never a raw traceback
+                # (the 2026-09-12 acceptance run dumped one on the founder).
+                from .errors import UserFacingError
+                raise UserFacingError(
+                    "stage 'architecture': the assembled architecture failed the whole-architecture semantic gate.",
+                    _contract_errors(e),
+                    f"{model_config._rerun_guidance('architecture')} - per-slot work is preserved and any slot "
+                    "that fails the current contract is re-asked, not the whole stage; if the same gate error "
+                    "repeats after the re-ask, report it: a persistent gate failure is a pipeline bug, not a model limit.",
+                ) from e
+            try:
+                _check_candidate_grounding(arch, state["intent_model"],
+                                           contested=part.get("contested"))
+            except ModelStructureError as e:
+                if _adr_attempt == 1:
+                    model_config._console_line(
+                        f"     - candidate-grounding gate: {e} - re-planning the ADR set ONCE with this as feedback")
+                    part.pop("adr_slots", None)
+                    part.pop("adr_bodies", None)
+                    _save()
+                    candidate_feedback = ("\n\nTHE PREVIOUS ADR SET FAILED THE CANDIDATE-GROUNDING GATE "
+                                          "(fix it):\n" + str(e))
+                    continue
+                from .errors import UserFacingError
+                raise UserFacingError(
+                    "stage 'architecture': the ADR set failed the candidate-grounding gate twice.",
+                    str(e),
+                    "report it: a persistent gate failure after a re-plan is a pipeline bug, not a model limit.") from e
+            break
         if partials:
             partials.clear("architecture")
         data = merged

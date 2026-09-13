@@ -1,0 +1,1881 @@
+{
+  "_generated_by": "scripts/refresh_tech_candidates.py - the ONLY writer of this file; hand-edits get overwritten",
+  "as_of": "2026-09-13",
+  "kinds": [
+    "language",
+    "framework",
+    "mobile_framework",
+    "backend",
+    "database",
+    "orm",
+    "ci",
+    "auth",
+    "encryption",
+    "queue",
+    "visualization",
+    "push_notifications",
+    "health_data"
+  ],
+  "technologies": [
+    {
+      "name": "Python",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "python"
+      ],
+      "note": "general purpose; strongest data/AI ecosystem"
+    },
+    {
+      "name": "TypeScript",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "ts",
+        "typescript"
+      ],
+      "note": "typed JS; shares code across web/mobile/backend"
+    },
+    {
+      "name": "JavaScript",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "javascript",
+        "js"
+      ],
+      "note": "the browser's language; universal runtime via Node"
+    },
+    {
+      "name": "Go",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "go",
+      "ecosystem": "go modules",
+      "aliases": [
+        "go",
+        "golang"
+      ],
+      "note": "compiled services, small deployables"
+    },
+    {
+      "name": "Rust",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "rust",
+      "ecosystem": "cargo",
+      "aliases": [
+        "rust"
+      ],
+      "note": "performance- and safety-critical components"
+    },
+    {
+      "name": "Java",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "jvm",
+      "ecosystem": "maven",
+      "aliases": [
+        "java"
+      ],
+      "note": "enterprise mainstay, huge hiring pool"
+    },
+    {
+      "name": "Ruby",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "ruby",
+      "ecosystem": "rubygems",
+      "aliases": [
+        "ruby"
+      ],
+      "note": "Rails' language; fast product iteration"
+    },
+    {
+      "name": "C#",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "dotnet",
+      "ecosystem": "nuget",
+      "aliases": [
+        "c#",
+        "csharp"
+      ],
+      "note": ".NET ecosystems, enterprise + Unity"
+    },
+    {
+      "name": "C++",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "native",
+      "ecosystem": "vcpkg",
+      "aliases": [
+        "c++"
+      ],
+      "note": "performance-critical native components"
+    },
+    {
+      "name": "PHP",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "php",
+      "ecosystem": "composer",
+      "aliases": [
+        "php"
+      ],
+      "note": "Laravel/WordPress ecosystems"
+    },
+    {
+      "name": "Swift",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "ios"
+      ],
+      "runtime": "swift",
+      "ecosystem": "swiftpm",
+      "aliases": [
+        "swift"
+      ],
+      "note": "native iOS"
+    },
+    {
+      "name": "Kotlin",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "jvm",
+      "ecosystem": "gradle",
+      "aliases": [
+        "kotlin"
+      ],
+      "note": "native Android"
+    },
+    {
+      "name": "Scala",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "jvm",
+      "ecosystem": "sbt",
+      "aliases": [
+        "scala"
+      ],
+      "note": "JVM functional/data systems"
+    },
+    {
+      "name": "Elixir",
+      "kinds": [
+        "language"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "beam",
+      "ecosystem": "hex",
+      "aliases": [
+        "elixir"
+      ],
+      "note": "fault-tolerant realtime backends"
+    },
+    {
+      "name": "Next.js",
+      "kinds": [
+        "framework"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "next",
+        "next.js",
+        "nextjs"
+      ],
+      "note": "React full-stack, SSR/SSG"
+    },
+    {
+      "name": "React",
+      "kinds": [
+        "framework"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "react",
+        "react.js",
+        "reactjs"
+      ],
+      "note": "web UI library - WEB only, not a mobile framework"
+    },
+    {
+      "name": "Vue",
+      "kinds": [
+        "framework"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "vue",
+        "vue.js",
+        "vuejs"
+      ],
+      "note": "web UI, gentle learning curve"
+    },
+    {
+      "name": "Angular",
+      "kinds": [
+        "framework"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "angular"
+      ],
+      "note": "established framework option"
+    },
+    {
+      "name": "Svelte",
+      "kinds": [
+        "framework"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "svelte"
+      ],
+      "note": "established framework option"
+    },
+    {
+      "name": "SvelteKit",
+      "kinds": [
+        "framework"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "sveltekit"
+      ],
+      "note": "compiled web UI, small bundles"
+    },
+    {
+      "name": "Nuxt",
+      "kinds": [
+        "framework"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "nuxt",
+        "nuxt.js",
+        "nuxtjs"
+      ],
+      "note": "established framework option"
+    },
+    {
+      "name": "Django",
+      "kinds": [
+        "framework",
+        "backend"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "django"
+      ],
+      "note": "Python web framework with admin and ORM"
+    },
+    {
+      "name": "Flask",
+      "kinds": [
+        "framework",
+        "backend"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "flask"
+      ],
+      "note": "established framework option"
+    },
+    {
+      "name": "FastAPI",
+      "kinds": [
+        "framework",
+        "backend"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "fastapi"
+      ],
+      "note": "typed Python API service"
+    },
+    {
+      "name": "Express",
+      "kinds": [
+        "framework",
+        "backend"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "express",
+        "express.js",
+        "expressjs"
+      ],
+      "note": "established framework option"
+    },
+    {
+      "name": "Rails",
+      "kinds": [
+        "framework",
+        "backend"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "ruby",
+      "ecosystem": "rubygems",
+      "aliases": [
+        "rails",
+        "ruby on rails"
+      ],
+      "note": "batteries-included Ruby web framework"
+    },
+    {
+      "name": "Laravel",
+      "kinds": [
+        "framework",
+        "backend"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "php",
+      "ecosystem": "composer",
+      "aliases": [
+        "laravel"
+      ],
+      "note": "established framework option"
+    },
+    {
+      "name": "Spring",
+      "kinds": [
+        "framework",
+        "backend"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "jvm",
+      "ecosystem": "maven",
+      "aliases": [
+        "spring",
+        "spring boot"
+      ],
+      "note": "established framework option"
+    },
+    {
+      "name": "NestJS",
+      "kinds": [
+        "framework",
+        "backend"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "nest",
+        "nestjs"
+      ],
+      "note": "structured TypeScript API service"
+    },
+    {
+      "name": "LangGraph",
+      "kinds": [
+        "framework"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "langgraph"
+      ],
+      "note": "established framework option"
+    },
+    {
+      "name": "LangChain",
+      "kinds": [
+        "framework"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "langchain"
+      ],
+      "note": "established framework option"
+    },
+    {
+      "name": "React Native",
+      "kinds": [
+        "mobile_framework"
+      ],
+      "platforms": [
+        "ios",
+        "android"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "react native",
+        "react-native"
+      ],
+      "note": "JS/React for native iOS+Android; Expo toolchain"
+    },
+    {
+      "name": "Expo",
+      "kinds": [
+        "mobile_framework"
+      ],
+      "platforms": [
+        "ios",
+        "android"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "expo"
+      ],
+      "note": "managed React Native; fastest start, OTA updates"
+    },
+    {
+      "name": "Flutter",
+      "kinds": [
+        "mobile_framework"
+      ],
+      "platforms": [
+        "ios",
+        "android",
+        "web"
+      ],
+      "runtime": "dart",
+      "ecosystem": "pub",
+      "aliases": [
+        "flutter"
+      ],
+      "note": "Dart, single codebase, own renderer"
+    },
+    {
+      "name": "SwiftUI",
+      "kinds": [
+        "mobile_framework"
+      ],
+      "platforms": [
+        "ios"
+      ],
+      "runtime": "swift",
+      "ecosystem": "swiftpm",
+      "aliases": [
+        "swift ui",
+        "swiftui"
+      ],
+      "note": "native iOS, first-party HealthKit access"
+    },
+    {
+      "name": "Jetpack Compose",
+      "kinds": [
+        "mobile_framework"
+      ],
+      "platforms": [
+        "android"
+      ],
+      "runtime": "kotlin",
+      "ecosystem": "gradle",
+      "aliases": [
+        "compose",
+        "jetpack compose"
+      ],
+      "note": "native Android, first-party Health Connect access"
+    },
+    {
+      "name": "Firebase",
+      "kinds": [
+        "auth",
+        "backend"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "firebase",
+      "aliases": [
+        "firebase"
+      ],
+      "note": "managed BaaS: auth, Firestore, FCM, free tier"
+    },
+    {
+      "name": "Supabase",
+      "kinds": [
+        "database",
+        "auth",
+        "backend"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "supabase",
+      "aliases": [
+        "supabase"
+      ],
+      "note": "managed Postgres with auth/realtime, free tier"
+    },
+    {
+      "name": "PostgreSQL",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "pg",
+        "postgres",
+        "postgresql"
+      ],
+      "note": "default relational choice, JSONB when needed"
+    },
+    {
+      "name": "MySQL",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "mysql"
+      ],
+      "note": "established database option"
+    },
+    {
+      "name": "SQLite",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "sqlite"
+      ],
+      "note": "embedded, zero-ops, single-node"
+    },
+    {
+      "name": "MongoDB",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "mongo",
+        "mongodb"
+      ],
+      "note": "document store, self-host or Atlas"
+    },
+    {
+      "name": "Redis",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "redis"
+      ],
+      "note": "cache/queue-adjacent KV, not a primary store"
+    },
+    {
+      "name": "DynamoDB",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "aws",
+      "aliases": [
+        "aws dynamodb",
+        "dynamodb"
+      ],
+      "note": "established database option"
+    },
+    {
+      "name": "Cassandra",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "cassandra"
+      ],
+      "note": "established database option"
+    },
+    {
+      "name": "MariaDB",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "mariadb"
+      ],
+      "note": "established database option"
+    },
+    {
+      "name": "Elasticsearch",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "elastic",
+        "elasticsearch"
+      ],
+      "note": "established database option"
+    },
+    {
+      "name": "ClickHouse",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "clickhouse"
+      ],
+      "note": "established database option"
+    },
+    {
+      "name": "Neo4j",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "neo4j"
+      ],
+      "note": "established database option"
+    },
+    {
+      "name": "Firebase Firestore",
+      "kinds": [
+        "database"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "firebase",
+      "aliases": [
+        "firebase firestore",
+        "firestore"
+      ],
+      "note": "managed document store, realtime sync, free tier"
+    },
+    {
+      "name": "Pydantic",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "pydantic"
+      ],
+      "note": "validation models, not an ORM"
+    },
+    {
+      "name": "SQLAlchemy",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "sqlalchemy"
+      ],
+      "note": "Python ORM, 2.0 typed style"
+    },
+    {
+      "name": "Prisma",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "prisma"
+      ],
+      "note": "typed JS/TS ORM"
+    },
+    {
+      "name": "Sequelize",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "sequelize"
+      ],
+      "note": "established orm option"
+    },
+    {
+      "name": "TypeORM",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "typeorm"
+      ],
+      "note": "established orm option"
+    },
+    {
+      "name": "Hibernate",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "jvm",
+      "ecosystem": "maven",
+      "aliases": [
+        "hibernate"
+      ],
+      "note": "established orm option"
+    },
+    {
+      "name": "Alembic",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "alembic"
+      ],
+      "note": "established orm option"
+    },
+    {
+      "name": "Django ORM",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "django orm"
+      ],
+      "note": "built into Django"
+    },
+    {
+      "name": "Active Record",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "ruby",
+      "ecosystem": "rubygems",
+      "aliases": [
+        "active record",
+        "activerecord"
+      ],
+      "note": "established orm option"
+    },
+    {
+      "name": "Drizzle",
+      "kinds": [
+        "orm"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "drizzle"
+      ],
+      "note": "lightweight typed TS ORM"
+    },
+    {
+      "name": "GitHub Actions",
+      "kinds": [
+        "ci"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "github",
+      "aliases": [
+        "github actions"
+      ],
+      "note": "native to GitHub-hosted repos"
+    },
+    {
+      "name": "GitLab CI",
+      "kinds": [
+        "ci"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "gitlab",
+      "aliases": [
+        "gitlab",
+        "gitlab ci"
+      ],
+      "note": "native to GitLab"
+    },
+    {
+      "name": "Jenkins",
+      "kinds": [
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "jenkins"
+      ],
+      "note": "established ci option"
+    },
+    {
+      "name": "CircleCI",
+      "kinds": [
+        "ci"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "circleci",
+      "aliases": [
+        "circle ci",
+        "circleci"
+      ],
+      "note": "hosted, fast startup"
+    },
+    {
+      "name": "Travis CI",
+      "kinds": [
+        "ci"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "travis",
+        "travis ci"
+      ],
+      "note": "established ci option"
+    },
+    {
+      "name": "Azure Pipelines",
+      "kinds": [
+        "ci"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "azure",
+      "aliases": [
+        "azure pipelines"
+      ],
+      "note": "established ci option"
+    },
+    {
+      "name": "Buildkite",
+      "kinds": [
+        "ci"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "buildkite"
+      ],
+      "note": "hybrid runners, your hardware"
+    },
+    {
+      "name": "TeamCity",
+      "kinds": [
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": "jetbrains",
+      "aliases": [
+        "teamcity"
+      ],
+      "note": "established ci option"
+    },
+    {
+      "name": "Woodpecker",
+      "kinds": [
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "woodpecker"
+      ],
+      "note": "established ci option"
+    },
+    {
+      "name": "Auth0",
+      "kinds": [
+        "auth"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "auth0",
+      "aliases": [
+        "auth0"
+      ],
+      "note": "managed, enterprise features"
+    },
+    {
+      "name": "Keycloak",
+      "kinds": [
+        "auth"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "keycloak"
+      ],
+      "note": "self-hosted OIDC/SAML"
+    },
+    {
+      "name": "Okta",
+      "kinds": [
+        "auth"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "okta",
+      "aliases": [
+        "okta"
+      ],
+      "note": "established auth option"
+    },
+    {
+      "name": "Cognito",
+      "kinds": [
+        "auth"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "aws",
+      "aliases": [
+        "aws cognito",
+        "cognito"
+      ],
+      "note": "established auth option"
+    },
+    {
+      "name": "Clerk",
+      "kinds": [
+        "auth"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "clerk",
+      "aliases": [
+        "clerk"
+      ],
+      "note": "managed, drop-in components"
+    },
+    {
+      "name": "OAuth2",
+      "kinds": [
+        "auth"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "oauth",
+        "oauth 2.0",
+        "oauth2"
+      ],
+      "note": "established auth option"
+    },
+    {
+      "name": "OpenID Connect",
+      "kinds": [
+        "auth"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "oidc",
+        "openid connect"
+      ],
+      "note": "established auth option"
+    },
+    {
+      "name": "JWT",
+      "kinds": [
+        "auth"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "json web token",
+        "jwt"
+      ],
+      "note": "established auth option"
+    },
+    {
+      "name": "AES",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "aes"
+      ],
+      "note": "established encryption option"
+    },
+    {
+      "name": "AES-256",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "aes-256"
+      ],
+      "note": "symmetric at-rest"
+    },
+    {
+      "name": "AES-128",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "aes-128"
+      ],
+      "note": "established encryption option"
+    },
+    {
+      "name": "RSA",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "rsa"
+      ],
+      "note": "established encryption option"
+    },
+    {
+      "name": "TLS",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "tls"
+      ],
+      "note": "transport, always on"
+    },
+    {
+      "name": "SSL",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "ssl"
+      ],
+      "note": "established encryption option"
+    },
+    {
+      "name": "bcrypt",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "bcrypt"
+      ],
+      "note": "password hashing, widely supported"
+    },
+    {
+      "name": "Argon2",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "argon2",
+        "argon2id"
+      ],
+      "note": "password hashing, current recommendation"
+    },
+    {
+      "name": "libsodium",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "libsodium",
+        "sodium"
+      ],
+      "note": "modern primitives, sane defaults"
+    },
+    {
+      "name": "Fernet",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "cryptography",
+      "aliases": [
+        "fernet"
+      ],
+      "note": "established encryption option"
+    },
+    {
+      "name": "ChaCha20",
+      "kinds": [
+        "encryption"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "chacha",
+        "chacha20"
+      ],
+      "note": "established encryption option"
+    },
+    {
+      "name": "RabbitMQ",
+      "kinds": [
+        "queue"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "rabbit",
+        "rabbitmq"
+      ],
+      "note": "general-purpose broker"
+    },
+    {
+      "name": "Kafka",
+      "kinds": [
+        "queue"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": "apache",
+      "aliases": [
+        "apache kafka",
+        "kafka"
+      ],
+      "note": "event streaming at scale"
+    },
+    {
+      "name": "SQS",
+      "kinds": [
+        "queue"
+      ],
+      "platforms": [
+        "cloud"
+      ],
+      "runtime": null,
+      "ecosystem": "aws",
+      "aliases": [
+        "amazon sqs",
+        "aws sqs",
+        "sqs"
+      ],
+      "note": "managed AWS queue"
+    },
+    {
+      "name": "Celery",
+      "kinds": [
+        "queue"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "celery"
+      ],
+      "note": "Python task queue"
+    },
+    {
+      "name": "BullMQ",
+      "kinds": [
+        "queue"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "bull",
+        "bullmq"
+      ],
+      "note": "Redis-backed JS queue"
+    },
+    {
+      "name": "NATS",
+      "kinds": [
+        "queue"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "nats"
+      ],
+      "note": "established queue option"
+    },
+    {
+      "name": "Redis Streams",
+      "kinds": [
+        "queue"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": null,
+      "ecosystem": null,
+      "aliases": [
+        "redis streams"
+      ],
+      "note": "established queue option"
+    },
+    {
+      "name": "Chart.js",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "chart.js",
+        "chartjs"
+      ],
+      "note": "simple web charts"
+    },
+    {
+      "name": "D3.js",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "d3",
+        "d3.js"
+      ],
+      "note": "custom web visualizations, full control, more effort"
+    },
+    {
+      "name": "Recharts",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "recharts"
+      ],
+      "note": "React web charts"
+    },
+    {
+      "name": "Apache ECharts",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "apache echarts",
+        "echarts"
+      ],
+      "note": "feature-rich web charts"
+    },
+    {
+      "name": "Highcharts",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "highcharts"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Plotly",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "plotly"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Three.js",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "three.js",
+        "threejs"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Vega",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "vega"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Vega-Lite",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "vega-lite"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Bokeh",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "bokeh"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Nivo",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "nivo"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Victory",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "web"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "victory"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Matplotlib",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "matplotlib"
+      ],
+      "note": "Python static/server-rendered"
+    },
+    {
+      "name": "Seaborn",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "seaborn"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Altair",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "runtime": "python",
+      "ecosystem": "pip",
+      "aliases": [
+        "altair"
+      ],
+      "note": "established visualization option"
+    },
+    {
+      "name": "Victory Native",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "ios",
+        "android"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "victory native"
+      ],
+      "note": "React Native charts"
+    },
+    {
+      "name": "react-native-gifted-charts",
+      "kinds": [
+        "visualization"
+      ],
+      "platforms": [
+        "ios",
+        "android"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "gifted-charts",
+        "react-native-gifted-charts"
+      ],
+      "note": "React Native charts, batteries included"
+    },
+    {
+      "name": "Firebase Cloud Messaging",
+      "kinds": [
+        "push_notifications"
+      ],
+      "platforms": [
+        "ios",
+        "android",
+        "web"
+      ],
+      "runtime": null,
+      "ecosystem": "firebase",
+      "aliases": [
+        "fcm",
+        "firebase cloud messaging"
+      ],
+      "note": "cross-platform push, free"
+    },
+    {
+      "name": "Apple Push Notification service",
+      "kinds": [
+        "push_notifications"
+      ],
+      "platforms": [
+        "ios"
+      ],
+      "runtime": null,
+      "ecosystem": "apple",
+      "aliases": [
+        "apns",
+        "apple push notification service",
+        "apple push notifications"
+      ],
+      "note": "iOS native, required underneath any iOS push"
+    },
+    {
+      "name": "Expo Notifications",
+      "kinds": [
+        "push_notifications"
+      ],
+      "platforms": [
+        "ios",
+        "android"
+      ],
+      "runtime": "javascript",
+      "ecosystem": "npm",
+      "aliases": [
+        "expo notifications"
+      ],
+      "note": "managed wrapper for React Native/Expo"
+    },
+    {
+      "name": "OneSignal",
+      "kinds": [
+        "push_notifications"
+      ],
+      "platforms": [
+        "ios",
+        "android",
+        "web"
+      ],
+      "runtime": null,
+      "ecosystem": "onesignal",
+      "aliases": [
+        "one signal",
+        "onesignal"
+      ],
+      "note": "managed cross-platform push + segments"
+    },
+    {
+      "name": "HealthKit",
+      "kinds": [
+        "health_data"
+      ],
+      "platforms": [
+        "ios"
+      ],
+      "runtime": null,
+      "ecosystem": "apple",
+      "aliases": [
+        "health kit",
+        "healthkit"
+      ],
+      "note": "iOS health/step data, first-party"
+    },
+    {
+      "name": "Health Connect",
+      "kinds": [
+        "health_data"
+      ],
+      "platforms": [
+        "android"
+      ],
+      "runtime": null,
+      "ecosystem": "google",
+      "aliases": [
+        "health connect"
+      ],
+      "note": "Android health data, current standard"
+    },
+    {
+      "name": "Google Fit",
+      "kinds": [
+        "health_data"
+      ],
+      "platforms": [
+        "android"
+      ],
+      "runtime": null,
+      "ecosystem": "google",
+      "aliases": [
+        "google fit"
+      ],
+      "note": "Android legacy - being superseded by Health Connect"
+    }
+  ]
+}
