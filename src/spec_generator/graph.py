@@ -431,7 +431,7 @@ def _value_grounded(value: str, vocab: str) -> bool:
 # doctrine: mechanical guards over prompt discipline.
 _ENTRY_POINT_VALUE = _re.compile(
     r"^(python3?|node|ruby|php|java|dotnet|uvicorn|gunicorn|flask|npm|npx|pip|bash|sh)\s"  # command invocation
-    r"|[\w\-./]+\.(sh|py|js|mjs|ts|rb)(\s|$)"   # script path
+    r"|[\w\-.~]*/[\w\-./]*\.(sh|py|js|mjs|ts|rb)(\s|$)"   # script PATH (slash required)
     r"|[\w_][\w_.\-]*:[\w_][\w_.\-]*(\s|$)"  # module:attr (delivery_api.app:app)
     r"|\s-m\s", _re.IGNORECASE)                    # '-m module' anywhere
 _ENTRY_POINT_KEY = _re.compile(
@@ -439,6 +439,12 @@ _ENTRY_POINT_KEY = _re.compile(
 
 
 def _entry_point_shaped(value: str) -> bool:
+    """Shaped like a command/script/module:attr. The script branch requires a
+    path separator (2026-09-13 his live greenfield run): a bare 'D3.js' /
+    'Vue.js' / 'Node.js' / 'Chart.js' is a technology NAME - script
+    detection needs invocation structure (a slash, 'python -m', module:attr),
+    not a bare extension. '.js/.ts' are how half the JS ecosystem spells its
+    proper nouns."""
     return bool(_ENTRY_POINT_VALUE.search(value.strip()))
 
 
@@ -469,6 +475,9 @@ _KIND_LEXICONS = {
     "encryption": ("aes", "aes-256", "aes-128", "rsa", "tls", "ssl", "bcrypt", "argon2",
                    "libsodium", "fernet", "chacha20"),
     "queue": ("rabbitmq", "kafka", "sqs", "celery", "bullmq", "nats", "redis streams"),
+    "visualization": ("d3.js", "d3", "chart.js", "plotly", "matplotlib", "seaborn",
+                      "recharts", "highcharts", "echarts", "apache echarts", "vega",
+                      "vega-lite", "three.js", "bokeh", "altair", "victory", "nivo"),
 }
 _SLOT_KIND = {
     "language": "language", "runtime": "language", "framework": "framework",
@@ -476,7 +485,23 @@ _SLOT_KIND = {
     "orm": "orm", "ci": "ci", "ci_tool": "ci", "auth": "auth",
     "sso_integration": "auth", "authentication": "auth", "encryption": "encryption",
     "message_queue": "queue", "queue": "queue",
+    "visualization": "visualization", "visualization_library": "visualization",
+    "data_visualization_library": "visualization", "charts": "visualization",
+    "charting_library": "visualization", "graphing_library": "visualization",
 }
+
+
+def _known_tech(value: str) -> bool:
+    """A BARE recognized technology name (any kind lexicon). Membership takes
+    precedence over the entry-point SHAPE rule: a recognized name is never a
+    command (founder directive 2026-09-13, after 'D3.js' was rejected from
+    his live run as 'an entry point'). Precedence applies to bare names only
+    - anything carrying invocation structure (whitespace, '/', ':') is judged
+    by its shape, so 'python -m spec_generator.cli' stays an entry point even
+    though it CONTAINS the known tech 'python'."""
+    if _re.search(r"[\s:/]", value.strip()):
+        return False
+    return any(_kind_match(value, kind) for kind in _KIND_LEXICONS)
 
 
 def _kind_match(value: str, kind: str) -> bool:
@@ -1332,7 +1357,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             # grounded name must ANSWER the slot, not merely exist. Layer 1 is
             # deterministic: entry-point-shaped values are legal only for
             # entry-point slots.
-            if _entry_point_shaped(value) and not _entry_point_slot(key):
+            if _entry_point_shaped(value) and not _known_tech(value) and not _entry_point_slot(key):
                 raise ModelStructureError(
                     f"stack.{key}: value {value!r} is an entry point (a command, script or "
                     "module:attr), which cannot answer this slot - name the technology of the "

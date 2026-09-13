@@ -110,7 +110,8 @@ class _MicroModel:
                      "ci_tool": ("Jenkins", "Adopt Jenkins for ci_tool"),
                      "encryption": ("AES-256", "Adopt AES-256 for encryption"),
                      "framework": ("LangGraph", "Adopt LangGraph for framework"),
-                     "sso_integration": ("Keycloak", "Adopt Keycloak for sso_integration")}
+                     "sso_integration": ("Keycloak", "Adopt Keycloak for sso_integration"),
+                     "data_visualization_library": ("D3.js", "Adopt D3.js for data_visualization_library")}
 
     def __init__(self, stage, schema, calls, crash_on=None, depart=False,
                  depart_key="database", adr_slugs=None, plan_keys=None):
@@ -580,4 +581,57 @@ def test_mandate_language_under_another_driver_is_rejected():
         {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
         {"configurable": {"thread_id": "quiet-overclaim"}})
     assert all("founder" not in d["rationale"] for d in r["architecture"]["decisions"])
+    monkeypatch.undo()
+
+
+def test_js_suffixed_technology_names_are_not_entry_points():
+    # 2026-09-13 HIS LIVE RUN died here: greenfield stack slot
+    # data_visualization_library='D3.js' rejected as "an entry point" - the
+    # bare '.js' tripped the script-file shape check. Script detection now
+    # requires invocation structure (a slash, 'python -m', module:attr), and
+    # known-tech lexicon membership takes precedence over shape.
+    from spec_generator.graph import (_entry_point_shaped, _known_tech,
+                                      _wrong_kind)
+    for name in ("D3.js", "Vue.js", "Node.js", "Chart.js", "Next.js",
+                 "Express.js", "Three.js", "Nuxt.js", "TensorFlow.js"):
+        assert not _entry_point_shaped(name), name
+    # real entry points still caught
+    assert _entry_point_shaped("scripts/batch-specs.sh")
+    assert _entry_point_shaped("./deploy.sh")
+    assert _entry_point_shaped("python -m spec_generator.cli")
+    assert _entry_point_shaped("python3 run.py")
+    assert _entry_point_shaped("delivery_api.app:app via uvicorn")
+    # lexicon precedence + the new visualization kind
+    assert _known_tech("D3.js") and _known_tech("Chart.js")
+    assert _wrong_kind("data_visualization_library", "D3.js") is None
+    assert _wrong_kind("data_visualization_library", "FastAPI") == "framework"
+
+
+def test_d3js_accepted_for_a_visualization_slot_end_to_end():
+    # the exact answer his run died on: D3.js for data_visualization_library,
+    # declared as a departure (empty refs) - must land with a migration ADR,
+    # not a contract failure.
+    class D3Answer(_MicroModel):
+        def stream(self, messages):
+            props = set(self.schema.get("properties", {}))
+            if props == {"value", "baseline_refs"} and any(
+                    "THE STACK KEY TO DECIDE: data_visualization_library" in m.content
+                    for m in messages):
+                yield AIMessage(content=json.dumps({"value": "D3.js", "baseline_refs": []}))
+                return
+            yield from super().stream(messages)
+
+    monkeypatch = __import__("pytest").MonkeyPatch()
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: D3Answer(
+                            stage, k.get("schema") or {}, [],
+                            plan_keys=["language", "data_visualization_library"],
+                            depart_key="data_visualization_library", depart=True))
+    r = build_graph(UsageLog("s")).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+        {"configurable": {"thread_id": "d3"}})
+    viz = next(e for e in r["architecture"]["stack_entries"]
+               if e["key"] == "data_visualization_library")
+    assert viz["value"] == "D3.js"
+    assert viz["migration_adr_id"] is not None
     monkeypatch.undo()
