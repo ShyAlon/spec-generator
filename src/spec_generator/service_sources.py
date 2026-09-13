@@ -49,21 +49,40 @@ GITHUB_REPO = "https://api.github.com/repos/{repo}"
 _STACKSHARE_BANDS = {"stacks": ((100_000, 3), (10_000, 2), (1_000, 1)),
                      "companies": ((5_000, 3), (1_000, 2), (100, 1)),
                      "developers": ((20_000, 3), (5_000, 2), (500, 1)),
-                     # PROVISIONAL (2026-09-13): no live spread to calibrate
-                     # against yet - his next dry run prints raw values; tune
-                     # bands once the real distribution is visible.
-                     "algolia_popularity": ((100_000, 3), (20_000, 2), (2_000, 1)),
+                     # Calibrated 2026-09-13 against his first interception
+                     # run (10 rows): natural breaks at ~40k (firebase 100k,
+                     # jenkins 140k, rails/flutter ~44k strong), ~10k (spring
+                     # 11k mid), ~500 (supabase 895 ... buildkite 581 weak),
+                     # below 500 reads as negligible (clerk 95).
+                     "algolia_popularity": ((40_000, 3), (10_000, 2), (500, 1)),
                      "stacks_52wk": ((2_000, 3), (400, 2), (40, 1))}
 _DB_ENGINES_BANDS = ((5, 3), (20, 2), (50, 1))  # rank position, lower is better
 _GITHUB_BANDS = ((100_000, 3), (30_000, 2), (5_000, 1))
 STRONG_SCORE = 2  # score >= this votes "strong"
 
 
-def _band(value: float, bands) -> int:
+def _band_match(value: float, bands) -> tuple[int, int | None]:
+    """(score, matched threshold). threshold None = below every band."""
     for threshold, score in bands:
         if value >= threshold:
-            return score
-    return 0
+            return score, threshold
+    return 0, None
+
+
+def _band(value: float, bands) -> int:
+    return _band_match(value, bands)[0]
+
+
+def _reason(source: str, metric: str, value, score: int, vote: str,
+            threshold: int | None, lowest: int, direction: str = ">=") -> str:
+    """The persisted WHY behind a score (his 2026-09-13 ask): any row must
+    be defensible/adjustable without reading this file. 'threshold' names
+    the band the value landed in; None means it fell below every band."""
+    if threshold is not None:
+        band = f"band {direction} {threshold}"
+    else:
+        band = f"below band {direction} {lowest}"
+    return f"{source} {metric} {value}, {band} -> score {score} {vote}"
 
 
 # ---------- parsers (pure functions over fetched text; fixture-tested) ----------
@@ -170,9 +189,12 @@ def _stackshare_result_data(data: dict, slug: str) -> dict:
             raise RefreshError("page fetched but no adoption data found "
                                "(shell-only page, no tRPC/Algolia capture)")
         value, metric = parsed
-    score = _band(value, _STACKSHARE_BANDS[metric])
+    score, thr = _band_match(value, _STACKSHARE_BANDS[metric])
+    vote = "strong" if score >= STRONG_SCORE else "weak"
     return {"found": True, "value": value, "metric": metric, "score": score,
-            "vote": "strong" if score >= STRONG_SCORE else "weak"}
+            "vote": vote,
+            "reason": _reason("stackshare", metric, value, score, vote,
+                              thr, _STACKSHARE_BANDS[metric][-1][0])}
 
 
 # ---------- source fetchers ----------
@@ -184,29 +206,50 @@ def _stackshare_result(html_text: str, slug: str) -> dict:
     if parsed is None:
         raise RefreshError("page fetched but no adoption count found - markup changed?")
     value, metric = parsed
-    score = _band(value, _STACKSHARE_BANDS[metric])
+    score, thr = _band_match(value, _STACKSHARE_BANDS[metric])
+    vote = "strong" if score >= STRONG_SCORE else "weak"
     return {"found": True, "value": value, "metric": metric, "score": score,
-            "vote": "strong" if score >= STRONG_SCORE else "weak"}
+            "vote": vote,
+            "reason": _reason("stackshare", metric, value, score, vote,
+                              thr, _STACKSHARE_BANDS[metric][-1][0])}
+
+
+def _github_headers() -> dict:
+    """Authenticated requests when GITHUB_TOKEN is set (env or the shared
+    ../.env / repo .env, same mechanism as the model API keys): anonymous
+    quota is 60/hour, which his repeated refresh runs exhaust (HTTP 403)."""
+    from .model_config import _env
+    token = _env("GITHUB_TOKEN")
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def _github_result(payload, repo: str) -> dict:
     stars = parse_github(payload)
     if stars is None:
         raise RefreshError("API payload without stargazers_count - shape changed?")
-    score = _band(stars, _GITHUB_BANDS)
-    return {"found": True, "value": stars, "score": score,
-            "vote": "strong" if score >= STRONG_SCORE else "weak"}
+    score, thr = _band_match(stars, _GITHUB_BANDS)
+    vote = "strong" if score >= STRONG_SCORE else "weak"
+    return {"found": True, "value": stars, "metric": "stars", "score": score,
+            "vote": vote,
+            "reason": _reason("github", "stars", stars, score, vote,
+                              thr, _GITHUB_BANDS[-1][0])}
 
 
 def _db_engines_result(ranks: dict[str, int], name: str) -> dict:
     rank = ranks.get(name.lower())
     if rank is None:
         # well-formed ranking, service absent: genuinely unranked, not a failure
-        return {"found": False, "value": None, "score": 0, "vote": "weak"}
+        return {"found": False, "value": None, "metric": "rank", "score": 0,
+                "vote": "weak",
+                "reason": "db_engines: absent from the ranking -> score 0 weak"}
     # rank position: lower is better, so the generic >= band helper does not apply
-    score = next((sc for hi, sc in _DB_ENGINES_BANDS if rank <= hi), 0)
-    return {"found": True, "value": rank, "score": score,
-            "vote": "strong" if score >= STRONG_SCORE else "weak"}
+    hit = next(((hi, sc) for hi, sc in _DB_ENGINES_BANDS if rank <= hi), None)
+    score, thr = (hit[1], hit[0]) if hit else (0, None)
+    vote = "strong" if score >= STRONG_SCORE else "weak"
+    return {"found": True, "value": rank, "metric": "rank", "score": score,
+            "vote": vote,
+            "reason": _reason("db_engines", "rank", rank, score, vote,
+                              thr, _DB_ENGINES_BANDS[-1][0], direction="<=")}
 
 
 # StackShare throttles hard (his 2026-09-13 dry run: 429 on every row even
@@ -429,6 +472,8 @@ def refresh_services(data: dict, opener=default_opener, today: date | None = Non
             log(f"  source db_engines: FAILED - kept previous values ({exc})")
         _sleep(1.0)
 
+    if any("github" in r["service"] for r in rows) and _github_headers():
+        log("  github: GITHUB_TOKEN found - authenticated requests (5000/hour)")
     browser = None
     if any("stackshare" in r["service"] and "stackshare" not in exclude for r in rows):
         browser = _browser_factory(log)
@@ -464,7 +509,8 @@ def _refresh_service_rows(rows, exclude, db_ranks, stats, changes, failures,
                     _sleep(random.uniform(3.0, 6.0))  # seconds, jittered: their 429 wall
                 elif source == "github":
                     result = _github_result(
-                        _get_json(GITHUB_REPO.format(repo=quote(ident)), opener), ident)
+                        _get_json(GITHUB_REPO.format(repo=quote(ident)), opener,
+                                  headers=_github_headers()), ident)
                     _sleep(0.5)
                 elif source == "db_engines":
                     if db_ranks is None:
@@ -492,7 +538,9 @@ def _refresh_service_rows(rows, exclude, db_ranks, stats, changes, failures,
                             if old else "none")
                 contributors_changed.append(
                     f"{source}: {old_desc} -> {result['value']} (score {result['score']})")
-            log(f"    {source}: {result['value']} score {result['score']} vote {result['vote']}")
+            value_desc = result["value"] if result["value"] is not None else "unranked"
+            log(f"    {source}: {result.get('metric', '-')} {value_desc} "
+                f"score {result['score']} vote {result['vote']}")
         contributing = [s for s, r in sources.items() if r.get("fetched")]
         strong_votes = sum(1 for s in contributing if sources[s].get("vote") == "strong")
         n = len(contributing)

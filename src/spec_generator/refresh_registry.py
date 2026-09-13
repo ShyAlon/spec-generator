@@ -71,6 +71,14 @@ def explain_fetch_error(exc: Exception) -> str:
         if exc.code == 429:
             return "rate-limited by the site (HTTP 429) - it is throttling automated fetches"
         if exc.code == 403:
+            # APIs that send rate-limit headers (GitHub): a 403 with the
+            # quota exhausted is a RATE LIMIT, not bot protection - his
+            # 2026-09-13 run hit this after repeated anonymous refreshes
+            # (60/hour). The fix is different, so the message must be too.
+            remaining = (exc.headers or {}).get("X-RateLimit-Remaining")
+            if remaining == "0":
+                return ("rate-limited by the API (HTTP 403, hourly quota exhausted) - "
+                        "set GITHUB_TOKEN in .env for 5000/hour, or wait for the reset")
             return "blocked by the site (HTTP 403) - bot protection"
         if exc.code == 404:
             return "not found (HTTP 404) - the identifier or URL shape is wrong"

@@ -532,7 +532,7 @@ def test_extract_algolia_creds_from_page_traffic():
 def test_result_data_priority_popularity_over_sparkline_over_markup():
     r = ss._stackshare_result_data({"popularity": 45678.9, "stacks_52wk": 184,
                                     "html": "no counts here"}, "firebase")
-    assert (r["value"], r["metric"], r["score"]) == (45679, "algolia_popularity", 2)
+    assert (r["value"], r["metric"], r["score"]) == (45679, "algolia_popularity", 3)
     r = ss._stackshare_result_data({"stacks_52wk": 184, "html": "x"}, "firebase")
     assert (r["value"], r["metric"], r["score"]) == (184, "stacks_52wk", 1)
     r = ss._stackshare_result_data(
@@ -553,3 +553,65 @@ def test_browser_popularity_flows_to_metrics():
     sm = data["technologies"][0]["service_metrics"]["sources"]["stackshare"]
     assert sm["value"] == 45679 and sm["metric"] == "algolia_popularity"
     assert failures == []
+
+
+# ---------- 10. Persisted reasons + calibrated bands (his 2026-09-13 ask) ----------
+
+def test_every_source_persists_metric_and_reason():
+    r = ss._github_result({"stargazers_count": 22086}, "postgres/postgres")
+    assert r["metric"] == "stars"
+    assert r["reason"] == "github stars 22086, band >= 5000 -> score 1 weak"
+    r = ss._db_engines_result({"postgresql": 4}, "PostgreSQL")
+    assert r["metric"] == "rank"
+    assert r["reason"] == "db_engines rank 4, band <= 5 -> score 3 strong"
+    r = ss._db_engines_result({"postgresql": 4}, "NotADB")
+    assert r["found"] is False and r["value"] is None and r["metric"] == "rank"
+    assert "absent from the ranking" in r["reason"]
+    r = ss._stackshare_result_data({"popularity": 895.4, "html": "x"}, "supabase")
+    assert r["reason"] == ("stackshare algolia_popularity 895, "
+                           "band >= 500 -> score 1 weak")
+
+
+def test_algolia_popularity_bands_calibrated_to_first_interception_run():
+    # His 2026-09-13 run, verbatim values:
+    expect = [("firebase", 100816, 3), ("jenkins", 140767, 3), ("rails", 45193, 3),
+              ("flutter", 43744, 3), ("spring", 11114, 2), ("onesignal", 1075, 1),
+              ("supabase", 895, 1), ("fcm", 846, 1), ("buildkite", 581, 1),
+              ("clerk", 95, 0)]
+    for slug, popularity, score in expect:
+        r = ss._stackshare_result_data({"popularity": float(popularity), "html": ""}, slug)
+        assert (r["score"], r["metric"]) == (score, "algolia_popularity"), slug
+
+
+def test_console_line_names_the_metric():
+    data = {"technologies": [
+        {"name": "Firebase", "service": {"stackshare": "firebase"}}]}
+    fake = _FakeBrowser(data={"html": "shell", "popularity": 895.0})
+    lines = []
+    ss.refresh_services(data, today=date(2026, 9, 13), _sleep=lambda s: None,
+                        log=lines.append, _browser_factory=lambda log: fake)
+    row_line = next(l for l in lines if l.strip().startswith("stackshare:"))
+    assert "algolia_popularity 895" in row_line
+
+
+def test_github_headers_use_token_when_present(monkeypatch):
+    from spec_generator import model_config
+    monkeypatch.setattr(model_config, "_DOTENV", {})  # isolate from real .env
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert ss._github_headers() == {}
+    monkeypatch.setenv("GITHUB_TOKEN", "tok123")
+    assert ss._github_headers() == {"Authorization": "Bearer tok123"}
+    monkeypatch.delenv("GITHUB_TOKEN")
+    monkeypatch.setattr(model_config, "_DOTENV", {"GITHUB_TOKEN": "from-dotenv"})
+    assert ss._github_headers() == {"Authorization": "Bearer from-dotenv"}
+
+
+def test_403_with_exhausted_quota_is_called_a_rate_limit():
+    from urllib.error import HTTPError
+    from spec_generator.refresh_registry import explain_fetch_error
+    exc = HTTPError("https://api.github.com/repos/x/y", 403, "Forbidden",
+                    {"X-RateLimit-Remaining": "0"}, None)
+    msg = explain_fetch_error(exc)
+    assert "rate-limited" in msg and "GITHUB_TOKEN" in msg
+    exc2 = HTTPError("https://stackshare.io/x", 403, "Forbidden", {}, None)
+    assert "bot protection" in explain_fetch_error(exc2)
