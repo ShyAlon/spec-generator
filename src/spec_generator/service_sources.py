@@ -48,7 +48,12 @@ GITHUB_REPO = "https://api.github.com/repos/{repo}"
 # contribution records WHICH metric it measured.
 _STACKSHARE_BANDS = {"stacks": ((100_000, 3), (10_000, 2), (1_000, 1)),
                      "companies": ((5_000, 3), (1_000, 2), (100, 1)),
-                     "developers": ((20_000, 3), (5_000, 2), (500, 1))}
+                     "developers": ((20_000, 3), (5_000, 2), (500, 1)),
+                     # PROVISIONAL (2026-09-13): no live spread to calibrate
+                     # against yet - his next dry run prints raw values; tune
+                     # bands once the real distribution is visible.
+                     "algolia_popularity": ((100_000, 3), (20_000, 2), (2_000, 1)),
+                     "stacks_52wk": ((2_000, 3), (400, 2), (40, 1))}
 _DB_ENGINES_BANDS = ((5, 3), (20, 2), (50, 1))  # rank position, lower is better
 _GITHUB_BANDS = ((100_000, 3), (30_000, 2), (5_000, 1))
 STRONG_SCORE = 2  # score >= this votes "strong"
@@ -102,6 +107,72 @@ def parse_github(payload) -> int | None:
     if isinstance(payload, dict) and isinstance(payload.get("stargazers_count"), int):
         return payload["stargazers_count"]
     return None
+
+
+# ---------- StackShare structured-data extraction (his HAR, 2026-09-13) ----------
+# The /firebase document is a bare Next.js shell (zero counts, zero mentions);
+# the SEO copy ('3226 companies reportedly use...') is crawler-served only.
+# Real data flows through tRPC endpoints + Algolia inside the browser:
+#   tools.getToolAdoptionSparkline (toolId) -> {'data': [...], 'total': N, 'weeks': 52}
+#   Algolia Search_production popularity score (public search creds captured
+#   from the page's own requests).
+
+def _extract_tool_id(request_urls: list[str]) -> str | None:
+    from urllib.parse import unquote
+    for u in request_urls:
+        m = re.search(r'"toolId"\s*:\s*(\d+)', unquote(u))
+        if m:
+            return m.group(1)
+    return None
+
+
+def _extract_sparkline_total(responses: list[tuple[str, str]]) -> int | None:
+    for u, body in responses:
+        if "getToolAdoptionSparkline" not in u:
+            continue
+        try:
+            payload = json.loads(body)
+        except Exception:
+            continue
+        items = payload if isinstance(payload, list) else [payload]
+        for item in items:
+            j = ((item or {}).get("result") or {}).get("data", {}).get("json")
+            if isinstance(j, dict) and isinstance(j.get("total"), int):
+                return j["total"]
+    return None
+
+
+def _extract_algolia_creds(request_urls: list[str]) -> tuple[str, str] | None:
+    from urllib.parse import parse_qs, urlparse
+    for u in request_urls:
+        if "algolia" not in u:
+            continue
+        q = parse_qs(urlparse(u).query)
+        if q.get("x-algolia-api-key") and q.get("x-algolia-application-id"):
+            return (q["x-algolia-application-id"][0], q["x-algolia-api-key"][0])
+    return None
+
+
+def _stackshare_result_data(data: dict, slug: str) -> dict:
+    """Pick the best available metric: Algolia popularity > 52-week new-stack
+    total > markup copy (companies/developers/legacy stacks)."""
+    html = data.get("html", "")
+    if ("Vercel Security Checkpoint" in html or "Failed to verify your browser" in html
+            or "cf-chl" in html or "Just a moment" in html):
+        raise RefreshError("StackShare's bot checkpoint rejected the fetch")
+    if data.get("popularity") is not None:
+        value, metric = int(round(data["popularity"])), "algolia_popularity"
+    elif data.get("stacks_52wk") is not None:
+        value, metric = data["stacks_52wk"], "stacks_52wk"
+    else:
+        parsed = parse_stackshare(html, slug)
+        if parsed is None:
+            raise RefreshError("page fetched but no adoption data found "
+                               "(shell-only page, no tRPC/Algolia capture)")
+        value, metric = parsed
+    score = _band(value, _STACKSHARE_BANDS[metric])
+    return {"found": True, "value": value, "metric": metric, "score": score,
+            "vote": "strong" if score >= STRONG_SCORE else "weak"}
 
 
 # ---------- source fetchers ----------
@@ -208,8 +279,25 @@ class _StackShareBrowser:
                 pass
             return None
 
-    def fetch(self, slug: str) -> str:
+    def fetch(self, slug: str, name: str) -> dict:
+        """Load the tool page, INTERCEPTING its own structured traffic (his
+        HAR, 2026-09-13: the document is a bare shell; data flows via tRPC +
+        Algolia). Returns {'html', 'tool_id', 'stacks_52wk', 'popularity'}
+        with whatever was captured; _stackshare_result_data picks the best
+        metric, markup copy as last resort."""
+        captured_requests: list[str] = []
+        captured_responses: list[tuple[str, str]] = []
         page = self._ctx.new_page()
+        page.on("request", lambda req: captured_requests.append(req.url))
+
+        def _on_response(resp):
+            u = resp.url
+            if "/api/trpc/" in u or "algolia" in u:
+                try:
+                    captured_responses.append((u, resp.text()[:200_000]))
+                except Exception:
+                    pass
+        page.on("response", _on_response)
         try:
             for attempt in (1, 2):  # one retry: his first run saw stray goto timeouts
                 try:
@@ -220,16 +308,76 @@ class _StackShareBrowser:
                     if attempt == 2 or "Timeout" not in type(exc).__name__ + str(exc):
                         raise
                     page.wait_for_timeout(4000)
-            page.wait_for_timeout(1500 + random.uniform(0, 1000))  # let counts render
-            html = page.content()
+            page.wait_for_timeout(2000 + random.uniform(0, 1000))  # let tRPC fire
+            data = {"html": page.content()}
         except Exception as exc:
             raise RefreshError(f"browser fetch failed: {exc}") from exc
         finally:
             page.close()
-        if "cf-chl" in html or "Just a moment" in html or "Vercel Security Checkpoint" in html:
-            raise RefreshError("StackShare's bot checkpoint rejected the automated browser "
-                               "(passed Cloudflare/Vercel checks need a cleaner fingerprint)")
-        return html
+        data["tool_id"] = _extract_tool_id(captured_requests)
+        total = _extract_sparkline_total(captured_responses)
+        if total is not None:
+            data["stacks_52wk"] = total
+        creds = _extract_algolia_creds(captured_requests)
+        if creds:
+            pop = self._algolia_popularity(creds, slug, name)
+            if pop is not None:
+                data["popularity"] = pop
+        if "popularity" not in data and "stacks_52wk" not in data and data["tool_id"]:
+            total = self._sparkline_total(data["tool_id"])
+            if total is not None:
+                data["stacks_52wk"] = total
+        return data
+
+    def _algolia_popularity(self, creds: tuple[str, str], slug: str, name: str) -> float | None:
+        """Query the site's own search index from INSIDE the browser context
+        (same-origin fetch carries the session; the search-only creds are the
+        page's own, captured from its traffic - never hardcoded)."""
+        app, key = creds
+        script = """async ([app, key, slug, name]) => {
+            const body = {requests: [{indexName: 'Search_production', query: name,
+                hitsPerPage: 8, filters: 'type:Service',
+                attributesToRetrieve: ['name', 'canonical_url', 'popularity']}]};
+            const resp = await fetch(`https://${app}-dsn.algolia.net/1/indexes/*/queries`, {
+                method: 'POST',
+                headers: {'content-type': 'application/json',
+                          'x-algolia-api-key': key, 'x-algolia-application-id': app},
+                body: JSON.stringify(body)});
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            const hits = (data.results && data.results[0] && data.results[0].hits) || [];
+            const exact = hits.find(h => h.canonical_url === '/' + slug) || hits[0];
+            return exact && typeof exact.popularity === 'number' ? exact.popularity : null;
+        }"""
+        page = self._ctx.new_page()
+        try:
+            page.goto(STACKSHARE_PAGE.format(slug=quote(slug)),
+                      wait_until="domcontentloaded", timeout=45000)
+            return page.evaluate(script, [app, key, slug, name])
+        except Exception:
+            return None
+        finally:
+            page.close()
+
+    def _sparkline_total(self, tool_id: str) -> int | None:
+        page = self._ctx.new_page()
+        try:
+            page.goto("https://stackshare.io/", wait_until="domcontentloaded", timeout=45000)
+            return page.evaluate("""async (toolId) => {
+                const input = encodeURIComponent(JSON.stringify(
+                    {'0': {json: {toolId: Number(toolId), weeks: 52}}}));
+                const resp = await fetch(
+                    `/api/trpc/tools.getToolAdoptionSparkline?batch=1&input=${input}`);
+                if (!resp.ok) return null;
+                const data = await resp.json();
+                const j = data[0] && data[0].result && data[0].result.data &&
+                          data[0].result.data.json;
+                return j && typeof j.total === 'number' ? j.total : null;
+            }""", tool_id)
+        except Exception:
+            return None
+        finally:
+            page.close()
 
     def close(self):
         for closer in (self._ctx.close, self._browser.close, self._pw.stop):
@@ -308,7 +456,7 @@ def _refresh_service_rows(rows, exclude, db_ranks, stats, changes, failures,
             try:
                 if source == "stackshare":
                     if browser is not None:
-                        result = _stackshare_result(browser.fetch(ident), ident)
+                        result = _stackshare_result_data(browser.fetch(ident, name), ident)
                     else:
                         result = _stackshare_result(
                             _fetch_page(STACKSHARE_PAGE.format(slug=quote(ident)),

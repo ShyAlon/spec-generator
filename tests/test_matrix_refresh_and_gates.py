@@ -418,13 +418,13 @@ def test_shared_package_fetched_once():
 # ---------- 8. StackShare headless browser path (his 2026-09-13 call) ----------
 
 class _FakeBrowser:
-    def __init__(self, html=None, exc=None):
-        self.html = html; self.exc = exc; self.fetched = []; self.closed = False
-    def fetch(self, slug):
+    def __init__(self, data=None, exc=None):
+        self.data = data or {}; self.exc = exc; self.fetched = []; self.closed = False
+    def fetch(self, slug, name=""):
         self.fetched.append(slug)
         if self.exc:
             raise self.exc
-        return self.html
+        return self.data
     def close(self):
         self.closed = True
 
@@ -432,7 +432,8 @@ class _FakeBrowser:
 def test_browser_path_used_when_available():
     data = {"technologies": [
         {"name": "Firebase", "service": {"stackshare": "firebase"}}]}
-    fake = _FakeBrowser(html="<div><span>12,400</span> companies reportedly use <b>Firebase</b> in their tech stacks</div>")
+    fake = _FakeBrowser(data={"html": "<div><span>12,400</span> companies reportedly use "
+                                      "<b>Firebase</b> in their tech stacks</div>"})
     changes, failures, stats = ss.refresh_services(
         data, today=date(2026, 9, 13), _sleep=lambda s: None,
         _browser_factory=lambda log: fake)
@@ -500,3 +501,55 @@ def test_parse_stackshare_current_phrasings():
     assert ss.parse_stackshare(developers, "firebase") == (37412, "developers")
     assert ss._stackshare_result(companies, "firebase")["score"] == 2
     assert ss._stackshare_result(developers, "firebase")["score"] == 3
+
+
+# ---------- 9. StackShare structured-data path (his HAR, 2026-09-13) ----------
+
+HAR_SPARKLINE = ('https://stackshare.io/api/trpc/a,tools.getToolAdoptionSparkline?batch=1&input=x',
+                 '[{"result":{"data":{"json":{"pros":[]}}}},'
+                 '{"result":{"data":{"json":{"data":[17,23],"total":184,"weeks":52}}}}]')
+HAR_TRPC_REQ = ("https://stackshare.io/api/trpc/tools.getToolAdoptionSparkline?batch=1"
+                "&input=%7B%220%22%3A%7B%22json%22%3A%7B%22toolId%22%3A116%7D%7D%7D")
+HAR_ALGOLIA_REQ = ("https://km8652f2eg-dsn.algolia.net/1/indexes/*/queries"
+                   "?x-algolia-api-key=KEY123&x-algolia-application-id=APP9")
+
+
+def test_extract_tool_id_from_percent_encoded_trpc_url():
+    assert ss._extract_tool_id([HAR_TRPC_REQ]) == "116"
+    assert ss._extract_tool_id(["https://stackshare.io/firebase"]) is None
+
+
+def test_extract_sparkline_total_from_har_shape():
+    assert ss._extract_sparkline_total([HAR_SPARKLINE]) == 184
+    assert ss._extract_sparkline_total([("x/other", "not json")]) is None
+
+
+def test_extract_algolia_creds_from_page_traffic():
+    assert ss._extract_algolia_creds([HAR_ALGOLIA_REQ]) == ("APP9", "KEY123")
+    assert ss._extract_algolia_creds(["https://stackshare.io/api/trpc/x"]) is None
+
+
+def test_result_data_priority_popularity_over_sparkline_over_markup():
+    r = ss._stackshare_result_data({"popularity": 45678.9, "stacks_52wk": 184,
+                                    "html": "no counts here"}, "firebase")
+    assert (r["value"], r["metric"], r["score"]) == (45679, "algolia_popularity", 2)
+    r = ss._stackshare_result_data({"stacks_52wk": 184, "html": "x"}, "firebase")
+    assert (r["value"], r["metric"], r["score"]) == (184, "stacks_52wk", 1)
+    r = ss._stackshare_result_data(
+        {"html": "<span>3226</span> companies reportedly use <b>Firebase</b> in their tech stacks"},
+        "firebase")
+    assert (r["value"], r["metric"]) == (3226, "companies")
+    with pytest.raises(rr.RefreshError, match="no adoption data"):
+        ss._stackshare_result_data({"html": "<div>bare shell</div>"}, "firebase")
+
+
+def test_browser_popularity_flows_to_metrics():
+    data = {"technologies": [
+        {"name": "Firebase", "service": {"stackshare": "firebase"}}]}
+    fake = _FakeBrowser(data={"html": "shell", "popularity": 45678.9, "tool_id": "116"})
+    changes, failures, stats = ss.refresh_services(
+        data, today=date(2026, 9, 13), _sleep=lambda s: None,
+        _browser_factory=lambda log: fake)
+    sm = data["technologies"][0]["service_metrics"]["sources"]["stackshare"]
+    assert sm["value"] == 45679 and sm["metric"] == "algolia_popularity"
+    assert failures == []
