@@ -234,3 +234,62 @@ def test_default_outdir_env_override_and_explicit_resume_note(tmp_path, monkeypa
     intent = tmp_path / "intent.json"; intent.write_text("{}")
     out = cli._default_outdir(intent, "20260910-164100-abc")
     assert out == (tmp_path / "custom" / "artifacts-2026-09-10_16-41-00").resolve()
+
+
+def _run_cli(monkeypatch, intent_file, baseline_file, outdir):
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir),
+                                      "--system-baseline", str(baseline_file)])
+    main()
+
+
+def test_baseline_change_invalidates_architecture_downstream(monkeypatch, tmp_path, capsys):
+    # 2026-09-13: the poisoned overnight run (six-repo baseline) was resumed
+    # with --greenfield; the checkpoint said all stages complete, NOTHING
+    # re-ran, and the CLI printed "System baseline updated" - re-labeling the
+    # wrong-system bundle as greenfield-anchored. A baseline change on resume
+    # MUST invalidate architecture and everything downstream, never re-label.
+    box = {}
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    intent_file = tmp_path / "intent_model.json"
+    intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
+    b1 = tmp_path / "b1.json"; b1.write_text(json.dumps(SYSTEM_BASELINE))
+    b2 = tmp_path / "b2.json"
+    # a DIFFERENT system anchor (id differs; repo shape preserved so the
+    # FakeModel's canned architecture still grounds against repo:spec-generator
+    # - greenfield authoring itself is not what this regression targets)
+    b2.write_text(json.dumps(dict(SYSTEM_BASELINE, baseline_id="other-system-v1")))
+    outdir = tmp_path / "bundle"
+    _run_cli(monkeypatch, intent_file, b1, outdir)
+    capsys.readouterr()
+    assert (outdir / "architecture.json").exists()
+
+    _run_cli(monkeypatch, intent_file, b2, outdir)
+    err = capsys.readouterr().err
+    # both anchors named, invalidation explained, needs/srs preserved
+    assert "WARNING: the --system-baseline for this run differs" in err
+    assert "id=test-baseline" in err and "id=other-system-v1" in err
+    assert "invalidating them" in err
+    # architecture (6 slot calls) and everything downstream re-fired; needs/srs did not
+    assert box["needs"].calls == 1 and box["srs"].calls == 1
+    assert box["architecture"].calls == 12 and box["items"].calls == 2
+    assert box["tests"].calls == 2 and box["review"].calls == 2
+    # the resumed state carries the NEW baseline
+    assert json.loads((outdir / "system-baseline.json").read_text())["baseline_id"] == "other-system-v1"
+
+
+def test_same_baseline_resume_relabels_nothing(monkeypatch, tmp_path, capsys):
+    box = {}
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    intent_file = tmp_path / "intent_model.json"
+    intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
+    b1 = tmp_path / "b1.json"; b1.write_text(json.dumps(SYSTEM_BASELINE))
+    outdir = tmp_path / "bundle"
+    _run_cli(monkeypatch, intent_file, b1, outdir)
+    capsys.readouterr()
+    _run_cli(monkeypatch, intent_file, b1, outdir)
+    err = capsys.readouterr().err
+    assert "WARNING: the --system-baseline" not in err
+    assert box["architecture"].calls == 6  # unchanged: completed stages are NOT re-run
+    assert box["items"].calls == 1

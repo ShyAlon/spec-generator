@@ -563,17 +563,45 @@ def main() -> None:
         if written:
             print(f"Artifacts for already-completed stages written to the bundle dir ({', '.join(written)}).",
                   file=sys.stderr)
-    if resume and prior.get("system_baseline") != baseline:
+    if resume and prior.get("system_baseline") is not None and prior["system_baseline"] != baseline:
+        # A completed stage is only "completed" under the baseline it was
+        # built with. Resuming under a DIFFERENT anchor must never silently
+        # re-label old output (2026-09-13: the poisoned overnight six-repo
+        # bundle re-bundled as "greenfield" and nearly shipped). needs/srs
+        # never read the baseline; architecture and everything downstream do
+        # - invalidate from architecture, loudly, and re-run.
+        old_b = prior["system_baseline"]
+        print("WARNING: the --system-baseline for this run differs from the checkpoint's:", file=sys.stderr)
+        print(f"  checkpoint: id={old_b.get('baseline_id')}, mode={old_b.get('mode')}, "
+              f"{len(old_b.get('repositories') or [])} repos", file=sys.stderr)
+        print(f"  this run:   id={baseline['baseline_id']}, mode={baseline['mode']}, "
+              f"{len(baseline['repositories'])} repos", file=sys.stderr)
+        print("  architecture and everything downstream were built under the old anchor - "
+              "invalidating them (needs/srs do not depend on the baseline and are preserved).",
+              file=sys.stderr)
+        graph.update_state(cfg, {"system_baseline": baseline, **_CLEAR_DOWNSTREAM["architecture"]},
+                           as_node=_predecessor("architecture", args.review))
+        for key in _PARTIAL_DOWNSTREAM.get("architecture", ()):
+            saved = partials.load(key) or {}
+            if len(saved):
+                print(f"  discarding {len(saved)} preserved item(s) ({key}) - they will be regenerated "
+                      "under the new baseline.", file=sys.stderr)
+            partials.clear(key)
+        for stale in ("architecture.json", "architecture.md", "items.json", "tests.json",
+                      "AGENTS.md", "manifest.json", "traceability.json", "review-fixes.json"):
+            (outdir / stale).unlink(missing_ok=True)
+        for stale in (outdir / "specs").glob("SPEC-*.md"):
+            stale.unlink()
+        print("  stale downstream artifacts removed from the bundle dir; re-running from 'architecture'.",
+              file=sys.stderr)
+    elif resume and prior.get("system_baseline") is None:
         # --system-baseline is authoritative for THIS invocation. Old
         # checkpoints predate the baseline feature entirely (the 2026-09-12
         # --from architecture KeyError 'system_baseline'): merge the flag
         # value into the resumed state so baseline-consuming stages see it.
         graph.update_state(cfg, {"system_baseline": baseline})
-        if prior.get("system_baseline") is None:
-            print("System baseline merged into the resumed run (its checkpoint predates the baseline feature).",
-                  file=sys.stderr)
-        else:
-            print("System baseline updated from --system-baseline for this run.", file=sys.stderr)
+        print("System baseline merged into the resumed run (its checkpoint predates the baseline feature).",
+              file=sys.stderr)
     if args.from_stage:
         _invalidate_from(graph, cfg, args.from_stage, args.review)
         for key in _PARTIAL_DOWNSTREAM.get(args.from_stage, ()):
