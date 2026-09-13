@@ -30,12 +30,36 @@ def _fills_by_id(fills, key: str) -> dict:
     return by_id
 
 
+# Future-phase commitments (founder decision 2026-09-13): a need the founder
+# deferred IN the interview ('we WILL have a community feature - in the
+# future') is recorded as deferred, never as a current requirement, and never
+# left reading as a contradiction between the needs and the SRS scope.
+_FUTURE_MARKERS = ("in the future", "future phase", "future release", "phase 2",
+                   "phase two", "phase ii", "post-mvp", "post mvp", "down the road",
+                   "later on", "later we", "in a later", "after launch", "eventually",
+                   "someday", "not yet", "for now,")
+
+
+def is_future_commitment(text: str) -> bool:
+    """Deterministic deferred-detection from the need's own words."""
+    t = str(text).lower()
+    return any(m in t for m in _FUTURE_MARKERS)
+
+
+def deferred_needs(needs: dict) -> list[dict]:
+    return [n for n in (needs.get("needs") or []) if is_future_commitment(n.get("statement", ""))]
+
+
 def build_srs_skeleton(needs: dict) -> list[dict]:
-    """One requirement slot per stakeholder need, R-n in need order."""
+    """One requirement slot per CURRENT stakeholder need, R-n in need order.
+    Deferred (future-phase) needs drive no slots: they are commitments about
+    LATER, recorded in the SRS scope's deferred block (srs_document_data)."""
     slots = []
     for i, n in enumerate(needs.get("needs") or [], start=1):
+        if is_future_commitment(n.get("statement", "")):
+            continue
         slots.append({
-            "requirement_id": f"R-{i}",
+            "requirement_id": f"R-{len(slots) + 1}",
             "kind": n.get("kind"),
             "need_ids": [n.get("need_id")],
             "intent_fields": list(n.get("intent_fields") or []),

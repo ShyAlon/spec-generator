@@ -34,9 +34,12 @@ from vmodel_contracts import (
 from pydantic import ValidationError
 
 from . import model_config
+from difflib import SequenceMatcher
+
 from .tech_candidates import (KIND_LEXICONS, PLATFORM_CHECKED_KINDS,
                               SLOT_KEY_SUBSTR, TECH_CANDIDATES,
-                              TECH_CANDIDATES_AS_OF, tech_row)
+                              TECH_CANDIDATES_AS_OF, primary_row_in_text,
+                              tech_row)
 from .tools import tools_enabled
 from .skeleton import (ModelStructureError, assign_architecture_ids,
                                    build_srs_skeleton, build_test_skeleton,
@@ -246,6 +249,22 @@ def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
     data["constraints"] = intent.constraints
     data["assumptions"] = [a.model_dump(mode="json") for a in intent.assumption_items]
     data["open_questions"] = intent.open_questions
+    # Future-phase commitments (founder decision 2026-09-13): a need deferred
+    # IN the interview drives NO current requirement (build_srs_skeleton skips
+    # it) and is recorded HERE, in the scope, as what it is - a later
+    # commitment, not a contradiction ('the app WILL have a community feature
+    # - in the future' vs scope 'community: OUT' read as a pipeline bug in his
+    # 2026-09-13 habit-app bundle). Code-owned block: stripped and rewritten
+    # so the review gate's re-validation stays idempotent.
+    from .skeleton import is_future_commitment
+    deferred = [n.statement for n in intent.stakeholder_needs if is_future_commitment(n.statement)]
+    if deferred:
+        summary = _re.sub(r"\n*Deferred to a future phase.*$", "",
+                          str(data.get("scope_summary", "")), flags=_re.S).rstrip()
+        data["scope_summary"] = (summary + "\n\nDeferred to a future phase (interview "
+                                 "commitments, NOT current scope - no requirements derive "
+                                 "from these yet):\n"
+                                 + "\n".join(f"- {st}" for st in deferred))
     return data
 
 
@@ -929,6 +948,99 @@ def _merge_adr_slots(required: list[dict], optional: list[dict]) -> list[dict]:
     return slots
 
 
+def _adr_subject(title: str) -> str:
+    t = _re.sub(r"^(adopt|use|choose|select|migrate( to)?|switch to)\s+", "", title.strip().lower())
+    return _re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
+def _same_decision_tech(b1: dict, b2: dict) -> str | None:
+    """P2 duplicate verdict + reason (2026-09-13 founder choice: string
+    distance, matrix-normalized FIRST). Each ADR's technology resolves to its
+    matrix row; the same row = a duplicate. DISTINCT rows are never
+    duplicates (React vs React Native is the canonical near-name false
+    positive - high string similarity, genuinely different tech). Only when
+    the matrix knows NEITHER does raw string distance decide, at a strict
+    0.9: kind/platform evidence is unavailable for unknown tech, so the bar
+    is higher, not lower."""
+    r1 = primary_row_in_text(b1["title"] + " " + b1["decision"])
+    r2 = primary_row_in_text(b2["title"] + " " + b2["decision"])
+    if r1 and r2:
+        return (f"same technology: {r1['name']}") if r1["name"] == r2["name"] else None
+    if r1 or r2:
+        return None  # one known, one not - cannot prove duplication
+    s1, s2 = _adr_subject(b1["title"]), _adr_subject(b2["title"])
+    if not s1 or not s2:
+        return None
+    # Real duplicates name the same tech and differ only in trailing
+    # qualifiers ("Adopt Redis" / "Adopt Redis for caching"): token
+    # containment catches those. Near-spellings fall back to strict
+    # distance. Both require the tech name itself to match, so distinct
+    # unknown techs ("AcmeSearch" / "ZyphoraDB") never merge.
+    t1, t2 = set(s1.split()), set(s2.split())
+    if t1 and t2 and (t1 <= t2 or t2 <= t1):
+        return f"same decision subject ('{s1}' ~ '{s2}')"
+    if s1 != s2 and SequenceMatcher(None, s1, s2).ratio() >= 0.9:
+        return f"near-identical decision subjects ('{s1}' ~ '{s2}')"
+    return None
+
+
+def _dedupe_adr_slots(slots: list[dict], bodies: dict) -> list[str]:
+    """P2 (2026-09-13, his pick): two OPTIONAL ADRs deciding the SAME
+    technology are merged deterministically - the overnight run emitted
+    1~6, 4~5, 8~9. Migration (pipeline-required) slots are never merged:
+    each owns a distinct departure. The merged ADR keeps both drivers
+    (founder_constraint wins; the other is preserved in the rationale) and
+    the union of considered options. Ids renumber gapless; entry/component
+    migration_adr_id links are assigned at ASSEMBLY from the slots, so
+    renumbering here cannot orphan a link."""
+    notes: list[str] = []
+    required = [sl for sl in slots if sl["migration"]]
+    optional = [sl for sl in slots if not sl["migration"]]
+    groups: list[list[dict]] = []
+    for slot in optional:
+        for g in groups:
+            if _same_decision_tech(bodies[g[0]["decision_id"]], bodies[slot["decision_id"]]):
+                g.append(slot)
+                break
+        else:
+            groups.append([slot])
+    kept_optional = []
+    for g in groups:
+        keep = g[0]
+        if len(g) > 1:
+            body = bodies[keep["decision_id"]]
+            for dup in g[1:]:
+                db = bodies.pop(dup["decision_id"])
+                notes.append(f"{dup['decision_id']} '{dup['slug']}' merged into "
+                             f"{keep['decision_id']} '{keep['slug']}'")
+                if db["rationale"] and db["rationale"] not in body["rationale"]:
+                    extra = db["rationale"]
+                    if db["driver"] != body["driver"]:
+                        extra += f" (driver: {db['driver']})"
+                    body["rationale"] = body["rationale"].rstrip() + "\n\nAlso decided here: " + extra
+                if db["driver"] == "founder_constraint":
+                    body["driver"] = "founder_constraint"
+                seen = {o.get("option", "").lower() for o in body["options_considered"]
+                        if isinstance(o, dict)}
+                for o in db["options_considered"]:
+                    if isinstance(o, dict) and o.get("option", "").lower() not in seen:
+                        body["options_considered"].append(o)
+                        seen.add(o.get("option", "").lower())
+                body["baseline_refs"] = sorted(set(body["baseline_refs"]) | set(db["baseline_refs"]))
+        kept_optional.append(keep)
+    if notes:
+        merged = required + kept_optional
+        new_bodies = {}
+        for i, slot in enumerate(merged, start=1):
+            new_id = f"ADR-{i}"
+            new_bodies[new_id] = bodies.pop(slot["decision_id"])
+            slot["decision_id"] = new_id
+        bodies.clear()
+        bodies.update(new_bodies)
+        slots[:] = merged
+    return notes
+
+
 def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
                            comp_slots: list, comp_bodies: dict, adr_slots: list,
                            adr_bodies: dict, nfr: dict) -> dict:
@@ -1438,6 +1550,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         feedback = None
         if fb:
             feedback = "FOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
+        from .skeleton import deferred_needs as _deferred_needs
+        _def = _deferred_needs(state["needs"])
+        if _def:
+            model_config._console_line(
+                f"   future-phase: {len(_def)} need(s) deferred in the interview "
+                f"({', '.join(n.get('need_id', '?') for n in _def)}) - recorded in the SRS scope, "
+                "driving no current requirements")
         data = _run_srs_fill_stage(state, feedback)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
@@ -1808,6 +1927,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     log, progress, validate=_v_adr,
                     schema=arch_adr_body_schema(valid_refs, repo_names),
                     stream_items=False, item_label=f"{did} {slot['slug']}")
+                _save()
+
+            # P2 ADR dedupe (deterministic, his 2026-09-13 pick): merge
+            # same-technology ADRs BEFORE assembly; the merge log is visible.
+            _merges = _dedupe_adr_slots(part["adr_slots"], adr_bodies)
+            for _m in _merges:
+                model_config._console_line(f"     - ADR dedupe: {_m}")
+            if _merges:
                 _save()
 
             # 7. One micro-call per non-functional requirement: the position.

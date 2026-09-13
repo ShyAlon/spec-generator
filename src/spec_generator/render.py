@@ -63,9 +63,12 @@ def render_spec_file(item: ItemSpec) -> str:
 
 
 def render_needs(needs: StakeholderNeedsSet) -> str:
+    from .skeleton import is_future_commitment
     L = ["# Stakeholder needs", ""]
     for n in needs.needs:
-        L.append(f"**{n.need_id}** ({n.stakeholder}): {n.statement}")
+        marker = " _(deferred - future phase, drives no current requirements)_" \
+            if is_future_commitment(n.statement) else ""
+        L.append(f"**{n.need_id}** ({n.stakeholder}): {n.statement}{marker}")
     return "\n".join(L)
 
 
@@ -105,6 +108,49 @@ def render_srs(srs: SRSDocument) -> str:
           "_Solution-agnostic by design: observable outcomes only. Executable checks "
           "(endpoints, selectors, probes) live in the test specifications._"]
     return "\n".join(L)
+
+
+def architecture_challenges(arch: ArchitectureOverview) -> list[str]:
+    """The deterministic OPTIMIZATION LAYER (founder decision 2026-09-13, his
+    words: 'I prefer it to be deterministic code'). Computed from the
+    candidate matrix's capability tags - flags land in the review output as
+    NAMED CHALLENGES, never silent changes:
+    - capability overlap: two chosen technologies provide the same capability
+      (his example: Django alongside Firebase Auth + Firestore + FCM);
+    - tooling spread: every runtime is its own toolchain, CI and dependency
+      surface (his minimal-dependencies preference).
+    Unknown (novel) technologies contribute nothing - a matrix miss is never
+    a verdict."""
+    from .tech_candidates import tech_row
+    rows = [(e, tech_row(e.value)) for e in arch.stack_entries]
+    rows = [(e, r) for e, r in rows if r]
+    flags: list[str] = []
+    caps: dict[str, list[tuple[str, str]]] = {}
+    for e, r in rows:
+        for c in r.get("capabilities", []):
+            caps.setdefault(c, []).append((e.key, r["name"]))
+
+    def _family(a: str, b: str) -> bool:
+        """Composition, not redundancy: a product family covering its own
+        sub-service (Firebase + Firebase Cloud Messaging) or a framework +
+        its own ORM (Django + Django ORM) is ONE choice, not two."""
+        a, b = a.lower(), b.lower()
+        return a.startswith(b) or b.startswith(a)
+
+    for c, holders in sorted(caps.items()):
+        holders = [h for h in holders
+                   if not any(h is not o and _family(h[1], o[1]) for o in holders)]
+        if len(holders) > 1:
+            flags.append(f"capability overlap: {c} is provided by "
+                         + " + ".join(f"{name} ({key})" for key, name in holders)
+                         + " - one owner per capability keeps the build small; if both "
+                         "stay, an ADR should say why")
+    runtimes = sorted({r["runtime"] for _, r in rows if r.get("runtime")})
+    if len(runtimes) > 2:
+        flags.append(f"tooling spread: {len(runtimes)} runtimes ({', '.join(runtimes)}) - "
+                     "each is its own toolchain, CI and dependency surface "
+                     "(minimal-dependencies preference)")
+    return flags
 
 
 def render_architecture(arch: ArchitectureOverview, greenfield: bool = False) -> str:
@@ -160,5 +206,9 @@ def render_architecture(arch: ArchitectureOverview, greenfield: bool = False) ->
     if arch.non_functionals:
         lines.append("\n## Non-functional positions")
         lines += [f"- **{k}**: {v}" for k, v in arch.non_functionals.items()]
+    flags = architecture_challenges(arch)
+    if flags:
+        lines.append("\n## Deterministic challenges (review these before approving)")
+        lines += [f"- {f}" for f in flags]
     return "\n".join(lines) + "\n"
 

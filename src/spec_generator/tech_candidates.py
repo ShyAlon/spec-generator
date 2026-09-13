@@ -29,6 +29,12 @@ TECH_CANDIDATES_PATH = Path(__file__).with_name("tech_candidates.json")
 
 PLATFORMS = ("web", "ios", "android", "cloud", "desktop", "any")
 
+# What a technology PROVIDES (the optimization layer's input, 2026-09-13):
+# capability overlap across a chosen stack is computable from these tags
+# (Django's auth alongside Firebase's auth is the founder's example).
+CAPABILITIES = ("api", "auth", "charts", "ci", "database", "health", "hosting",
+                "orm", "push", "queue", "realtime", "storage", "validation")
+
 # Kinds where the platform attribute is a real constraint: a wrong-platform
 # technology CANNOT answer these slots without explicit justification.
 PLATFORM_CHECKED_KINDS = ("framework", "mobile_framework", "visualization",
@@ -111,6 +117,60 @@ def validate_artifact(data) -> list[str]:
             seen_aliases[a] = name
         if name.lower() not in [a for a in r.get("aliases", [])]:
             problems.append(f"{name!r}: aliases must contain the row's own lowercase name")
+        caps = r.get("capabilities", [])
+        declared_caps = data.get("capabilities", [])
+        if not isinstance(caps, list) or any(c not in declared_caps for c in caps):
+            problems.append(f"{name!r}: capabilities must come from the artifact's declared list")
+        pkg = r.get("package")
+        if pkg is not None:
+            if (not isinstance(pkg, dict)
+                    or pkg.get("registry") not in ("npm", "pypi")
+                    or not str(pkg.get("name", "")).strip()):
+                problems.append(f"{name!r}: package must be "
+                                "{registry: npm|pypi, name: str} or absent (curated row)")
+        m = r.get("metrics")
+        if m is not None:
+            if pkg is None:
+                problems.append(f"{name!r}: metrics on a curated row - "
+                                "metrics belong only to registry-backed rows")
+            elif not isinstance(m, dict):
+                problems.append(f"{name!r}: metrics must be an object")
+            else:
+                if not isinstance(m.get("weekly_downloads"), int) or m["weekly_downloads"] < 0:
+                    problems.append(f"{name!r}: metrics.weekly_downloads must be an int >= 0")
+                for dkey in ("published", "fetched"):
+                    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", str(m.get(dkey, ""))):
+                        problems.append(f"{name!r}: metrics.{dkey} must be an ISO date")
+                if not str(m.get("version", "")).strip():
+                    problems.append(f"{name!r}: metrics.version must be non-empty")
+                if m.get("monthly_downloads") is not None and (
+                        not isinstance(m["monthly_downloads"], int) or m["monthly_downloads"] < 0):
+                    problems.append(f"{name!r}: metrics.monthly_downloads must be an int >= 0")
+        svc = r.get("service")
+        if svc is not None:
+            if pkg is not None:
+                problems.append(f"{name!r}: a row is either registry-backed (package) "
+                                "or service-ranked (service), never both")
+            if (not isinstance(svc, dict) or not svc
+                    or any(k not in ("stackshare", "db_engines", "github") for k in svc)
+                    or any(not str(v).strip() for v in svc.values())):
+                problems.append(f"{name!r}: service must map known source names "
+                                "(stackshare, db_engines, github) to identifiers")
+        sm = r.get("service_metrics")
+        if sm is not None:
+            if svc is None:
+                problems.append(f"{name!r}: service_metrics without a service mapping")
+            elif not isinstance(sm, dict) or not isinstance(sm.get("sources"), dict):
+                problems.append(f"{name!r}: service_metrics.sources must be an object")
+            else:
+                for src, contrib in sm["sources"].items():
+                    if not isinstance(contrib, dict) or not isinstance(contrib.get("score"), int) \
+                            or not 0 <= contrib["score"] <= 3:
+                        problems.append(f"{name!r}: service_metrics {src} score must be an int 0-3")
+                    if contrib.get("vote") not in ("strong", "weak"):
+                        problems.append(f"{name!r}: service_metrics {src} vote must be strong|weak")
+                    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", str(contrib.get("fetched", ""))):
+                        problems.append(f"{name!r}: service_metrics {src} fetched must be an ISO date")
     for k, n in sorted(per_kind.items()):
         if not (3 <= n <= 40):
             problems.append(f"kind {k!r}: needs 3-40 rows (got {n})")
@@ -164,8 +224,23 @@ TECH_CANDIDATES_AS_OF, TECH_KINDS, TECH_ROWS = _load()
 # order follows the artifact's DECLARED kind list, never set iteration:
 # _wrong_kind returns the first matching kind, and hash-seed-dependent
 # verdicts would break ADR-0022 replayability.
+def _rank_key(r: dict) -> tuple:
+    # 2026-09-13 two-sourced matrix: within a kind, registry-backed rows rank
+    # by weekly downloads DESC (his primary sort key), then service-ranked
+    # rows by majority-vote consensus DESC, then unranked curated rows
+    # alphabetically.
+    m = r.get("metrics")
+    if m:
+        return (0, -m["weekly_downloads"], r["name"].lower())
+    sm = r.get("service_metrics")
+    if sm and sm.get("consensus") is not None:
+        return (1, -sm["consensus"], r["name"].lower())
+    return (2, 0, r["name"].lower())
+
+
 TECH_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
-    k: tuple((r["name"], r["note"]) for r in TECH_ROWS if k in r["kinds"])
+    k: tuple((r["name"], r["note"]) for r in
+             sorted((r for r in TECH_ROWS if k in r["kinds"]), key=_rank_key))
     for k in TECH_KINDS}
 
 # kind -> (lowercase name + aliases, ...) - the slot-fitness gate's lexicons,
@@ -182,6 +257,28 @@ def tech_row(value: str) -> dict | None:
     """The matrix row for a technology name or alias (case-insensitive), or
     None for novel tech - a matrix miss is never a verdict by itself."""
     return _BY_ALIAS.get(value.strip().lower())
+
+
+def rows_in_text(text: str) -> list[dict]:
+    """Matrix rows whose alias word-matches the text, most specific match
+    first (longest alias): 'use React Native for the app' resolves to the
+    React Native row, not React. Used by the ADR dedupe gate."""
+    import re as _re
+    hits = []
+    for r in TECH_ROWS:
+        best = max((a for a in r["aliases"]
+                    if _re.search(rf"(?<![\w+.#]){_re.escape(a)}(?![\w])", text.lower())),
+                   key=len, default=None)
+        if best:
+            hits.append((len(best), r))
+    return [r for _, r in sorted(hits, key=lambda t: -t[0])]
+
+
+def primary_row_in_text(text: str) -> dict | None:
+    """The SINGLE most specific technology a text is about (dedupe grouping
+    key); None when the matrix knows none of it."""
+    rows = rows_in_text(text)
+    return rows[0] if rows else None
 
 
 def candidate_kind(key: str, exact_map: dict[str, str]) -> str | None:
