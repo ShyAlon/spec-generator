@@ -125,6 +125,40 @@ def architecture_challenges(arch: ArchitectureOverview) -> list[str]:
     rows = [(e, tech_row(e.value)) for e in arch.stack_entries]
     rows = [(e, r) for e, r in rows if r]
     flags: list[str] = []
+
+    # Stack-entry hygiene (2026-09-13 greenfield defects, deterministic):
+    # (a) a vendor/technology answering a STRATEGY slot
+    #     ('resource_utilization_strategy: Firebase' - the question asked for
+    #     an approach, not a product);
+    for e, r in rows:
+        if any(m in e.key.lower() for m in ("strategy", "approach", "pattern", "policy")):
+            flags.append(f"strategy slot answered with a vendor: {e.key} = {r['name']} - "
+                         "a strategy slot wants an approach (cache-first, serverless, "
+                         "in-house...); the vendor belongs in a technology slot")
+    # (b) cross-key duplication: the SAME matrix row answering two different
+    #     keys (database_system and data_persistence_service both PostgreSQL).
+    by_row: dict[str, list[str]] = {}
+    for e, r in rows:
+        by_row.setdefault(r["name"], []).append(e.key)
+    for name, keys in sorted(by_row.items()):
+        if len(keys) > 1:
+            flags.append(f"same technology under two keys: {name} answers "
+                         + " and ".join(sorted(keys))
+                         + " - merge the slots or let each ADR justify why both exist")
+    # (c) vendor concentration (the Django+Firebase defect mutated: Firebase
+    #     picked 3x - FCM, Auth, resource strategy). Same product family
+    #     across 3+ slots must be justified per-slot or consolidated.
+    by_family: dict[str, list[str]] = {}
+    for e, r in rows:
+        family = r["name"].lower().split()[0]
+        by_family.setdefault(family, []).append(f"{r['name']} ({e.key})")
+    for family, holders in sorted(by_family.items()):
+        if len(holders) >= 3:
+            flags.append(f"vendor concentration: the {family} family holds {len(holders)} slots ("
+                         + ", ".join(sorted(holders))
+                         + ") - each slot's ADR must justify the same-vendor choice, "
+                         "or consolidate")
+
     caps: dict[str, list[tuple[str, str]]] = {}
     for e, r in rows:
         for c in r.get("capabilities", []):

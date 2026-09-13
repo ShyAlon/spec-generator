@@ -613,9 +613,18 @@ def _founder_named_techs(intent_model: dict) -> list[str]:
     preference naming nothing known injects nothing and gates nothing."""
     vocab = {t for terms in _KIND_LEXICONS.values() for t in terms}
     vocab |= {n.lower() for c in TECH_CANDIDATES.values() for n, _ in c}
+    # Founder tech mentions live in TWO places (2026-09-13 greenfield defect:
+    # 'the app should use free resources like Supabase where possible' was
+    # need N-8, not a tech_preference, and the extraction missed it entirely
+    # - no candidate injection, no enforced verdict): stated preferences AND
+    # need statements. A need naming a technology IS a founder constraint on
+    # that technology.
+    texts = [str(pref.get("preference", ""))
+             for pref in (intent_model.get("tech_preferences") or [])]
+    texts += [str(n.get("statement", ""))
+              for n in (intent_model.get("stakeholder_needs") or [])]
     out = set()
-    for pref in (intent_model.get("tech_preferences") or []):
-        text = str(pref.get("preference", ""))
+    for text in texts:
         for v in vocab:
             if _tech_in_text(v, text):
                 out.add(v)
@@ -1039,6 +1048,62 @@ def _dedupe_adr_slots(slots: list[dict], bodies: dict) -> list[str]:
         bodies.update(new_bodies)
         slots[:] = merged
     return notes
+
+
+# Open-question resolution (2026-09-13 greenfield defect): the SRS carried
+# 'Specific data storage solution for persisting user points' as OPEN after
+# the architecture had decided PostgreSQL - a stale contradiction across
+# artifacts. A question is answered when it (a) asks for a choice
+# ('specific', 'which', 'what', 'choose') about (b) a technology topic the
+# stack now owns. Conservative by design: feature questions ('which UI
+# elements...') stay open - wrongly closing a real question is worse.
+_QUESTION_TOPICS = {
+    ("storage", "database", "data store", "persist"): ("database", "persistence", "storage"),
+    ("framework",): ("framework",),
+    ("library",): ("library", "visualization", "orm"),
+    ("chart", "graph", "visualization"): ("visualization", "chart"),
+    ("push", "notification"): ("notification", "push"),
+    ("queue",): ("queue",),
+    ("hosting", "provider"): ("hosting", "provider", "backend"),
+    ("ci", "deployment"): ("ci", "deploy"),
+}
+_QUESTION_CHOICE_MARKERS = ("specific", "which", "what", "choose", "choice of")
+
+
+def _resolve_answered_open_questions(state: dict, persist) -> list[str]:
+    """Drop architecture-answered open questions from the SRS artifact and
+    say which stack entry answered each. Returns the resolution lines."""
+    srs = state.get("srs") or {}
+    questions = srs.get("open_questions") or []
+    if not questions:
+        return []
+    entries = (state.get("architecture") or {}).get("stack_entries") or []
+    if not entries:
+        return []
+    keys = [str(e.get("key", "")).lower() for e in entries]
+    resolved, kept = [], []
+    for q in questions:
+        ql = str(q).lower()
+        answered_by = None
+        if any(m in ql for m in _QUESTION_CHOICE_MARKERS):
+            for topics, markers in _QUESTION_TOPICS.items():
+                if any(t in ql for t in topics):
+                    hit = next((e for e, k in zip(entries, keys)
+                                if any(m in k for m in markers)), None)
+                    if hit:
+                        answered_by = hit
+                        break
+        if answered_by:
+            resolved.append(f"'{q}' -> {answered_by['key']} = {answered_by['value']}")
+        else:
+            kept.append(q)
+    if resolved:
+        srs["open_questions"] = kept
+        for line in resolved:
+            model_config._console_line(f"     - open question resolved by architecture: {line}")
+        if persist:
+            persist("srs", srs, state)
+    return resolved
 
 
 def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
@@ -1999,6 +2064,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         data = merged
         if persist:
             persist("architecture", data, state)
+        _resolve_answered_open_questions(state, persist)
         return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}
 
     def node_items(state: GenState) -> dict:
