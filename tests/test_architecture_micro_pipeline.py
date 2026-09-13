@@ -635,3 +635,106 @@ def test_d3js_accepted_for_a_visualization_slot_end_to_end():
     assert viz["value"] == "D3.js"
     assert viz["migration_adr_id"] is not None
     monkeypatch.undo()
+
+
+GREENFIELD_BASELINE = {"contract_version": "0.13.0", "baseline_id": "gf-test",
+                       "system_name": "New product", "mode": "greenfield",
+                       "repositories": [], "immutable_decisions": []}
+
+
+class _GreenfieldModel(_MicroModel):
+    """Greenfield answers: empty refs everywhere, and - the poison from his
+    2026-09-13 live run - components planned with migration=true because the
+    old prompt said 'new component = migration'."""
+    def stream(self, messages):
+        props = set(self.schema.get("properties", {}))
+        if self.stage == "architecture" and props == {"value", "baseline_refs"}:
+            yield AIMessage(content=json.dumps({"value": "Swift", "baseline_refs": []}))
+            return
+        if self.stage == "architecture" and self.schema.get("type") == "array":
+            item_props = set(self.schema["items"].get("properties", {}))
+            if "slug" in item_props:
+                yield AIMessage(content=json.dumps([{"slug": "offline-first"}]))
+            else:
+                yield AIMessage(content=json.dumps(
+                    [{"name": "api", "requirement_ids": ["R-1"],
+                      "baseline_refs": [], "migration": True}]))  # the old prompt's teaching
+            return
+        yield from super().stream(messages)
+
+
+def _run_greenfield(monkeypatch, calls, partials=None):
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **k: _GreenfieldModel(
+                            stage, k.get("schema") or {}, calls, plan_keys=["language"]))
+    return build_graph(UsageLog("s"), partials=partials).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": GREENFIELD_BASELINE},
+        {"configurable": {"thread_id": "gf"}})
+
+
+def test_greenfield_component_plan_migration_is_code_owned():
+    # the plan prompt taught 'new component = migration=true'; on an empty
+    # baseline that makes the whole-arch gate reject a CORRECT run
+    # ('greenfield architecture is new design, not a migration'). Code owns
+    # the flag: greenfield components are always new design.
+    from spec_generator.graph import _validate_component_plan
+    slots = _validate_component_plan(
+        [{"name": "api", "requirement_ids": ["R-1"], "baseline_refs": [], "migration": True}],
+        ["R-1"], existing=False)
+    assert slots[0]["migration"] is False
+    # existing mode keeps the model's flag untouched
+    slots = _validate_component_plan(
+        [{"name": "api", "requirement_ids": ["R-1"], "baseline_refs": ["repo:x"], "migration": True}],
+        ["R-1"], existing=True)
+    assert slots[0]["migration"] is True
+
+
+def test_greenfield_full_architecture_passes_the_gate(monkeypatch):
+    r = _run_greenfield(monkeypatch, [])
+    arch = r["architecture"]
+    assert all(not c["migration"] and c["migration_adr_title"] is None
+               for c in arch["components"])
+    assert all(not d["migration"] for d in arch["decisions"])  # initial decisions, no migration framing
+    assert all(not e["baseline_refs"] and e["migration_adr_id"] is None
+               for e in arch["stack_entries"])
+
+
+def test_greenfield_resume_normalizes_persisted_component_slots(monkeypatch, tmp_path):
+    # his actual failure: slots persisted under the OLD prompt (migration=true)
+    # made the resume re-evaluate the gate and die with ZERO model calls. The
+    # persisted slots are normalized in place - no re-plan, no re-ask.
+    partials = _make_partials(tmp_path)
+    partials.save("architecture", {
+        "stack_entries": {"language": {"key": "language", "value": "Swift",
+                                       "baseline_refs": []}},
+        "component_slots": [{"name": "api", "requirement_ids": ["R-1"],
+                             "baseline_refs": [], "migration": True}],
+    })
+    calls = []
+    r = _run_greenfield(monkeypatch, calls, partials=partials)
+    assert all(not c["migration"] for c in r["architecture"]["components"])
+    # the component plan was NOT re-asked (persisted slots kept, normalized)
+    assert not any(c == {"stack_keys"} for c in calls)
+
+
+def test_brownfield_still_requires_cite_or_migrate(monkeypatch):
+    # unchanged: on an existing baseline, a component with no refs and no
+    # migration is still rejected at the gate (existing tests pin the happy
+    # path; this pins that the greenfield relaxation did not leak)
+    from spec_generator.graph import _check_baseline_reconciliation
+    from vmodel_contracts import ArchitectureOverview
+    from conftest import SYSTEM_BASELINE
+    arch = ArchitectureOverview.model_validate({
+        "contract_version": "0.13.0", "session_id": "s", "baseline_id": "test-baseline",
+        "stack_entries": [{"key": "language", "value": "ts",
+                           "baseline_refs": ["repo:spec-generator"], "migration_adr_id": None}],
+        "components": [{"name": "api", "responsibility": "serve", "requirement_ids": ["R-1"],
+                        "baseline_refs": [], "migration": False, "migration_adr_title": None}],
+        "decisions": [], "non_functionals": {}})
+    from spec_generator.skeleton import ModelStructureError
+    from vmodel_contracts import SystemBaseline
+    try:
+        _check_baseline_reconciliation(arch, SystemBaseline.model_validate(SYSTEM_BASELINE))
+        assert False, "brownfield component without refs or migration must be rejected"
+    except ModelStructureError as e:
+        assert "requires baseline refs" in str(e)

@@ -587,7 +587,12 @@ def _check_baseline_reconciliation(arch: ArchitectureOverview, baseline: SystemB
                 or any(c.baseline_refs for c in arch.components)):
             raise ModelStructureError("greenfield architecture cannot cite nonexistent baseline refs or migration ADRs")
         if any(c.migration or c.migration_adr_title for c in arch.components) or migration_adrs:
-            raise ModelStructureError("greenfield architecture is new design, not a migration")
+            offenders = ([f"component {c.name}" for c in arch.components
+                          if c.migration or c.migration_adr_title]
+                         + [f"{d.decision_id} {d.title}" for d in migration_list])
+            raise ModelStructureError(
+                "greenfield architecture is new design, not a migration - nothing exists to "
+                f"migrate FROM; re-frame as initial decisions: {', '.join(offenders)}")
     for d in arch.decisions:
         check_refs(f"{d.decision_id} {d.title}", d.baseline_refs)
         if d.migration:
@@ -642,9 +647,15 @@ def _validate_stack_plan(d: dict) -> dict:
     return {"stack_keys": keys}
 
 
-def _validate_component_plan(d, req_ids: list[str]) -> list[dict]:
+def _validate_component_plan(d, req_ids: list[str], existing: bool = True) -> list[dict]:
     """Plan call B result: component slots. The grammar enum-constrains
-    requirement refs; here: unique names, real coverage, sane shape."""
+    requirement refs; here: unique names, real coverage, sane shape.
+    Greenfield normalization (2026-09-13 his live run): the plan prompt says
+    'migration=true for a new/replaced component', so on an EMPTY baseline
+    the model marks every component migration=true - and the whole-arch gate
+    then rejects 'greenfield architecture is new design, not a migration'.
+    A correct run could never pass. Migration means departing from an
+    existing baseline; with none, code owns the flag: forced False."""
     if not isinstance(d, list) or not d:
         raise ModelStructureError("component plan must be a non-empty array of slots")
     slots = []
@@ -657,7 +668,7 @@ def _validate_component_plan(d, req_ids: list[str]) -> list[dict]:
         slots.append({"name": name,
                       "requirement_ids": [str(r) for r in s.get("requirement_ids") or []],
                       "baseline_refs": [str(r) for r in s.get("baseline_refs") or []],
-                      "migration": bool(s.get("migration"))})
+                      "migration": bool(s.get("migration")) if existing else False})
     if len(names) != len(set(names)):
         raise ModelStructureError(f"duplicate component names: {sorted({n for n in names if names.count(n) > 1})}")
     covered = {r for s in slots for r in s["requirement_ids"]}
@@ -1340,9 +1351,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         "(you cited baseline facts but named no value)")
                 raise ModelStructureError(
                     f"stack.{key}: an empty value decides nothing - if no baseline fact fits "
-                    "this key, name a concrete technology anyway with baseline_refs []; it "
-                    "becomes a proposed migration automatically and the pipeline generates "
-                    "the authorizing ADR itself")
+                    "this key, name a concrete technology anyway with baseline_refs []"
+                    + ("; it becomes a proposed migration automatically and the pipeline "
+                       "generates the authorizing ADR itself" if existing else
+                       " - in greenfield mode that is simply the new design, no migration "
+                       "framing"))
             entry = {"key": key, "value": value, "baseline_refs": refs}
             if existing and entry["baseline_refs"] and not _value_grounded(entry["value"], baseline_vocab):
                 raise ModelStructureError(
@@ -1403,10 +1416,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 "architecture",
                 context + "\n\nREQUIREMENT IDS TO COVER: " + json.dumps(req_ids)
                 + "\n\n" + ARCH_COMPONENT_PLAN + feedback,
-                log, progress, validate=lambda d: _validate_component_plan(d, req_ids),
+                log, progress, validate=lambda d: _validate_component_plan(d, req_ids, existing),
                 schema=arch_component_plan_schema(req_ids, valid_refs),
                 stream_items=False, item_label="plan: component slots")
             _save()
+
+        # Persisted component slots must ALSO satisfy the current mode's
+        # semantics on resume (his 2026-09-13 rerun: slots persisted with
+        # migration=true under the old prompt failed the greenfield gate
+        # immediately, with no re-ask). Greenfield: nothing exists to migrate
+        # FROM - the flag is code-owned, normalized, never re-asked.
+        if not existing:
+            for slot in part.get("component_slots", []):
+                slot["migration"] = False
 
         # 4. One micro-call per component: responsibility prose.
         comp_bodies = part.setdefault("component_bodies", {})

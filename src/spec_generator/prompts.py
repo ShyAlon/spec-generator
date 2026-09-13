@@ -123,9 +123,11 @@ ARCH_STACK_ENTRY = """Decide ONE stack entry: the chosen technology for the give
 baseline refs that ground it. Exactly TWO legal answers:
 (a) the technology is recorded in the baseline facts - name it and cite every ref that
 records it;
-(b) it is NOT - name a concrete technology ANYWAY with baseline_refs []: that is a proposed
-migration, and the pipeline generates the authorizing decision record itself. Choosing (b) is
-normal and expected whenever the baseline records no fact for this key.
+(b) it is NOT - name a concrete technology ANYWAY with baseline_refs []: in existing mode
+that is a proposed migration and the pipeline generates the authorizing decision record
+itself; in greenfield mode (empty baseline) it is simply the new design - nothing exists to
+migrate from, so never use migration framing. Choosing (b) is normal and expected whenever
+the baseline records no fact for this key.
 When you cite baseline facts (answer a), the value must be the fact's VERBATIM text or a
 composition of cited fact texts: if the baseline fact is 'python -m spec_generator.cli',
 the value is exactly that string - not a paraphrase, not a description, never an invented
@@ -146,7 +148,9 @@ uses only exact strings from the VALID BASELINE REFS list, nothing else."""
 ARCH_COMPONENT_PLAN = """List the software components of this architecture. For each: a short
 unique name, the requirement ids (R-n) it realizes, the baseline refs proving where it already
 exists (existing mode: a preserved component NEEDS refs), and migration=true only for a
-new/replaced component. Cover every requirement id across the components.
+new/replaced component IN EXISTING MODE. In greenfield mode (empty baseline) every component
+is new design: migration is ALWAYS false there - migration means departing from an existing
+baseline, and there is none. Cover every requirement id across the components.
 FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
 STRICT JSON array of {name, requirement_ids, baseline_refs, migration} - names unique, ids and
 refs only from the supplied lists."""
