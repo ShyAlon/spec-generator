@@ -281,7 +281,8 @@ def test_majority_vote_logic():
             return _Resp_html(DB_ENGINES_HTML)
         raise rr.RefreshError("no fake")
     changes, failures, stats = ss.refresh_services(
-        data, opener=opener, today=date(2026, 9, 13), _sleep=lambda s: None)
+        data, opener=opener, today=date(2026, 9, 13), _sleep=lambda s: None,
+        _browser_factory=lambda log: None)
     sm = data["technologies"][0]["service_metrics"]
     # github 2 + stackshare 2 strong, db_engines absent weak -> majority of 3 = strong
     assert sm["strong"] is True and sm["consensus"] > 1
@@ -379,7 +380,8 @@ def test_stackshare_down_keeps_previous_and_reports():
                              "strong": False, "fetched": "2026-06-01"}}]}
     opener = _Flaky429(99, "never")
     changes, failures, stats = ss.refresh_services(
-        data, opener=opener, today=date(2026, 9, 13), _sleep=lambda s: None)
+        data, opener=opener, today=date(2026, 9, 13), _sleep=lambda s: None,
+        _browser_factory=lambda log: None)
     assert stats["stackshare"]["failed"] == 1
     assert "rate-limited" in failures[0] and "kept previous" in failures[0]
     row = data["technologies"][0]["service_metrics"]["sources"]["stackshare"]
@@ -411,3 +413,80 @@ def test_shared_package_fetched_once():
     changes, failures = rr.refresh_artifact(data, fetcher=fetcher, today=date(2026, 9, 13))
     assert calls == ["Django"] and failures == [] and len(changes) == 2
     assert data["technologies"][1]["metrics"]["version"] == "6"
+
+
+# ---------- 8. StackShare headless browser path (his 2026-09-13 call) ----------
+
+class _FakeBrowser:
+    def __init__(self, html=None, exc=None):
+        self.html = html; self.exc = exc; self.fetched = []; self.closed = False
+    def fetch(self, slug):
+        self.fetched.append(slug)
+        if self.exc:
+            raise self.exc
+        return self.html
+    def close(self):
+        self.closed = True
+
+
+def test_browser_path_used_when_available():
+    data = {"technologies": [
+        {"name": "Firebase", "service": {"stackshare": "firebase"}}]}
+    fake = _FakeBrowser(html="<div>55K</div> stacks")
+    changes, failures, stats = ss.refresh_services(
+        data, today=date(2026, 9, 13), _sleep=lambda s: None,
+        _browser_factory=lambda log: fake)
+    assert fake.fetched == ["firebase"] and fake.closed
+    sm = data["technologies"][0]["service_metrics"]["sources"]["stackshare"]
+    assert sm["value"] == 55_000 and sm["score"] == 2
+    assert failures == []
+
+
+def test_browser_failure_falls_to_keep_previous_not_crash():
+    data = {"technologies": [
+        {"name": "Firebase", "service": {"stackshare": "firebase"},
+         "service_metrics": {"sources": {"stackshare": {"value": 50_000, "score": 2,
+                                                        "vote": "strong",
+                                                        "fetched": "2026-06-01"}},
+                             "contributors": ["stackshare"], "consensus": 2.0,
+                             "strong": False, "fetched": "2026-06-01"}}]}
+    fake = _FakeBrowser(exc=rr.RefreshError("bot checkpoint rejected the automated browser"))
+    changes, failures, stats = ss.refresh_services(
+        data, today=date(2026, 9, 13), _sleep=lambda s: None,
+        _browser_factory=lambda log: fake)
+    assert stats["stackshare"]["failed"] == 1
+    assert data["technologies"][0]["service_metrics"]["sources"]["stackshare"]["value"] == 50_000
+
+
+def test_no_browser_falls_back_to_headers_with_install_hint():
+    data = {"technologies": [
+        {"name": "Firebase", "service": {"stackshare": "firebase"}}]}
+    logs = []
+    def factory(log):
+        log("  source stackshare: headless browser not installed - plain HTTP fallback.")
+        log("    to enable the browser path: pip install playwright")
+        log("    then fetch the browser once: playwright install chromium")
+        return None
+    opener = _Flaky429(99, "never")
+    changes, failures, stats = ss.refresh_services(
+        data, opener=opener, today=date(2026, 9, 13), _sleep=lambda s: None,
+        log=logs.append, _browser_factory=factory)
+    assert any("pip install playwright" in l for l in logs)
+    assert any("playwright install chromium" in l for l in logs)
+    assert stats["stackshare"]["failed"] == 1  # headers fallback still 429s
+
+
+def test_vercel_checkpoint_html_classified_not_markup():
+    with pytest.raises(rr.RefreshError, match="Vercel bot checkpoint"):
+        ss._stackshare_result("<title>Vercel Security Checkpoint</title>", "firebase")
+
+
+def test_try_start_without_playwright_logs_install_commands(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "playwright", None)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
+    logs = []
+    result = ss._StackShareBrowser.try_start(logs.append)
+    assert result is None
+    assert any("pip install playwright" in l for l in logs)
+    assert any("playwright install chromium" in l for l in logs)

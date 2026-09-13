@@ -93,6 +93,8 @@ def parse_github(payload) -> int | None:
 # ---------- source fetchers ----------
 
 def _stackshare_result(html_text: str, slug: str) -> dict:
+    if "Vercel Security Checkpoint" in html_text or "Failed to verify your browser" in html_text:
+        raise RefreshError("StackShare's Vercel bot checkpoint rejected the fetch")
     stacks = parse_stackshare(html_text, slug)
     if stacks is None:
         raise RefreshError("page fetched but no stacks count found - markup changed?")
@@ -152,9 +154,73 @@ def _fetch_page(url: str, opener, _sleep, retries_429: int = 1) -> str:
     raise RefreshError("unreachable")  # pragma: no cover
 
 
+class _StackShareBrowser:
+    """Headless Chromium for StackShare ONLY (his 2026-09-13 call: an
+    automated Chrome is fine - he runs the refresh manually from his own
+    Mac on a residential IP). npm/PyPI/GitHub/DB-Engines stay on plain
+    HTTP - they work, no browser cost. One browser session serves every
+    stackshare row, with the same polite pacing as the headers path.
+    Unavailable (Playwright or the Chromium binary missing) = fall back to
+    the headers path; the install commands print ONCE per run."""
+
+    def __init__(self, pw, browser, context):
+        self._pw, self._browser, self._ctx = pw, browser, context
+
+    @classmethod
+    def try_start(cls, log):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            log("  source stackshare: headless browser not installed - plain HTTP fallback.")
+            log("    to enable the browser path: pip install playwright")
+            log("    then fetch the browser once: playwright install chromium")
+            return None
+        pw = None
+        try:
+            pw = sync_playwright().start()
+            browser = pw.chromium.launch(headless=True)
+            context = browser.new_context(user_agent=_BROWSER_HEADERS["User-Agent"],
+                                          locale="en-US")
+            log("  source stackshare: headless Chromium session started")
+            return cls(pw, browser, context)
+        except Exception as exc:
+            log(f"  source stackshare: browser failed to start ({exc}) - plain HTTP fallback.")
+            log("    if the browser binary is missing: playwright install chromium")
+            try:
+                if pw:
+                    pw.stop()
+            except Exception:
+                pass
+            return None
+
+    def fetch(self, slug: str) -> str:
+        page = self._ctx.new_page()
+        try:
+            page.goto(STACKSHARE_PAGE.format(slug=quote(slug)),
+                      wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(1500 + random.uniform(0, 1000))  # let counts render
+            html = page.content()
+        except Exception as exc:
+            raise RefreshError(f"browser fetch failed: {exc}") from exc
+        finally:
+            page.close()
+        if "cf-chl" in html or "Just a moment" in html or "Vercel Security Checkpoint" in html:
+            raise RefreshError("StackShare's bot checkpoint rejected the automated browser "
+                               "(passed Cloudflare/Vercel checks need a cleaner fingerprint)")
+        return html
+
+    def close(self):
+        for closer in (self._ctx.close, self._browser.close, self._pw.stop):
+            try:
+                closer()
+            except Exception:
+                pass
+
+
 def refresh_services(data: dict, opener=default_opener, today: date | None = None,
                      log=lambda msg: None, _sleep=time.sleep,
-                     exclude: frozenset[str] = frozenset()):
+                     exclude: frozenset[str] = frozenset(),
+                     _browser_factory=_StackShareBrowser.try_start):
     """Refresh service_metrics on rows carrying a ``service`` mapping.
     Returns (changes, failures). Per source per row: a fresh result REPLACES
     that source's contribution; a failure KEEPS the previous contribution
@@ -193,6 +259,20 @@ def refresh_services(data: dict, opener=default_opener, today: date | None = Non
             log(f"  source db_engines: FAILED - kept previous values ({exc})")
         _sleep(1.0)
 
+    browser = None
+    if any("stackshare" in r["service"] and "stackshare" not in exclude for r in rows):
+        browser = _browser_factory(log)
+    try:
+        _refresh_service_rows(rows, exclude, db_ranks, stats, changes, failures,
+                              today, log, _sleep, opener, browser)
+    finally:
+        if browser:
+            browser.close()
+    return changes, failures, stats
+
+
+def _refresh_service_rows(rows, exclude, db_ranks, stats, changes, failures,
+                          today, log, _sleep, opener, browser):
     for i, row in enumerate(rows):
         name = row["name"]
         mapping = row["service"]
@@ -205,9 +285,12 @@ def refresh_services(data: dict, opener=default_opener, today: date | None = Non
             log(f"  {name}: {source} ({ident})...")
             try:
                 if source == "stackshare":
-                    result = _stackshare_result(
-                        _fetch_page(STACKSHARE_PAGE.format(slug=quote(ident)),
-                                    opener, _sleep), ident)
+                    if browser is not None:
+                        result = _stackshare_result(browser.fetch(ident), ident)
+                    else:
+                        result = _stackshare_result(
+                            _fetch_page(STACKSHARE_PAGE.format(slug=quote(ident)),
+                                        opener, _sleep), ident)
                     _sleep(random.uniform(3.0, 6.0))  # seconds, jittered: their 429 wall
                 elif source == "github":
                     result = _github_result(
@@ -253,7 +336,6 @@ def refresh_services(data: dict, opener=default_opener, today: date | None = Non
                             "contributors": sm["contributors"]})
         if i and i % 8 == 7:
             _sleep(2.0)  # pacing breather between batches of services
-    return changes, failures, stats
 
 
 def services_diff_lines(changes: list[dict], failures: list[str]) -> list[str]:
