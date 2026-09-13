@@ -606,17 +606,29 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 58751,
+      "value": 58752,
+      "metric": "stars",
       "score": 2,
       "vote": "strong",
+      "reason": "github stars 58752, band >= 30000 -> score 2 strong",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 45193,
+      "metric": "algolia_popularity",
+      "score": 3,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 45193, band >= 40000 -> score 3 strong",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "github"
+     "github",
+     "stackshare"
     ],
-    "consensus": 2.0,
-    "strong": false,
+    "consensus": 2.5,
+    "strong": true,
     "fetched": "2026-09-13"
    }
   },
@@ -647,9 +659,11 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 84951,
+      "value": 84952,
+      "metric": "stars",
       "score": 2,
       "vote": "strong",
+      "reason": "github stars 84952, band >= 30000 -> score 2 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -688,17 +702,29 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 60242,
+      "value": 60241,
+      "metric": "stars",
       "score": 2,
       "vote": "strong",
+      "reason": "github stars 60241, band >= 30000 -> score 2 strong",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 11114,
+      "metric": "algolia_popularity",
+      "score": 2,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 11114, band >= 10000 -> score 2 strong",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "github"
+     "github",
+     "stackshare"
     ],
     "consensus": 2.0,
-    "strong": false,
+    "strong": true,
     "fetched": "2026-09-13"
    }
   },
@@ -870,16 +896,28 @@
      "github": {
       "found": true,
       "value": 178927,
+      "metric": "stars",
       "score": 3,
       "vote": "strong",
+      "reason": "github stars 178927, band >= 100000 -> score 3 strong",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 43744,
+      "metric": "algolia_popularity",
+      "score": 3,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 43744, band >= 40000 -> score 3 strong",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "github"
+     "github",
+     "stackshare"
     ],
     "consensus": 3.0,
-    "strong": false,
+    "strong": true,
     "fetched": "2026-09-13"
    }
   },
@@ -943,6 +981,25 @@
    ],
    "service": {
     "stackshare": "firebase"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 100816,
+      "metric": "algolia_popularity",
+      "score": 3,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 100816, band >= 40000 -> score 3 strong",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 3.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -975,16 +1032,28 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 109106,
+      "value": 109105,
+      "metric": "stars",
       "score": 3,
       "vote": "strong",
+      "reason": "github stars 109105, band >= 100000 -> score 3 strong",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 895,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 895, band >= 500 -> score 1 weak",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "github"
+     "github",
+     "stackshare"
     ],
-    "consensus": 3.0,
+    "consensus": 2.0,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1016,16 +1085,20 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 22089,
+      "value": 22090,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 22090, band >= 5000 -> score 1 weak",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 4,
+      "metric": "rank",
       "score": 3,
       "vote": "strong",
+      "reason": "db_engines rank 4, band <= 5 -> score 3 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -1064,15 +1137,19 @@
      "github": {
       "found": true,
       "value": 12423,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 12423, band >= 5000 -> score 1 weak",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 2,
+      "metric": "rank",
       "score": 3,
       "vote": "strong",
+      "reason": "db_engines rank 2, band <= 5 -> score 3 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -1111,15 +1188,19 @@
      "github": {
       "found": true,
       "value": 10464,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 10464, band >= 5000 -> score 1 weak",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 10,
+      "metric": "rank",
       "score": 2,
       "vote": "strong",
+      "reason": "db_engines rank 10, band <= 20 -> score 2 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -1159,15 +1240,19 @@
      "github": {
       "found": true,
       "value": 28556,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 28556, band >= 5000 -> score 1 weak",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 5,
+      "metric": "rank",
       "score": 3,
       "vote": "strong",
+      "reason": "db_engines rank 5, band <= 5 -> score 3 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -1206,15 +1291,19 @@
      "github": {
       "found": true,
       "value": 76351,
+      "metric": "stars",
       "score": 2,
       "vote": "strong",
+      "reason": "github stars 76351, band >= 30000 -> score 2 strong",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 8,
+      "metric": "rank",
       "score": 2,
       "vote": "strong",
+      "reason": "db_engines rank 8, band <= 20 -> score 2 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -1254,15 +1343,27 @@
      "db_engines": {
       "found": true,
       "value": 18,
+      "metric": "rank",
       "score": 2,
       "vote": "strong",
+      "reason": "db_engines rank 18, band <= 20 -> score 2 strong",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 9552,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 9552, band >= 500 -> score 1 weak",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "db_engines"
+     "db_engines",
+     "stackshare"
     ],
-    "consensus": 2.0,
+    "consensus": 1.5,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1293,15 +1394,19 @@
      "github": {
       "found": true,
       "value": 10090,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 10090, band >= 5000 -> score 1 weak",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 12,
+      "metric": "rank",
       "score": 2,
       "vote": "strong",
+      "reason": "db_engines rank 12, band <= 20 -> score 2 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -1339,16 +1444,20 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 8212,
+      "value": 8213,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 8213, band >= 5000 -> score 1 weak",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 13,
+      "metric": "rank",
       "score": 2,
       "vote": "strong",
+      "reason": "db_engines rank 13, band <= 20 -> score 2 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -1388,15 +1497,19 @@
      "github": {
       "found": true,
       "value": 77913,
+      "metric": "stars",
       "score": 2,
       "vote": "strong",
+      "reason": "github stars 77913, band >= 30000 -> score 2 strong",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 11,
+      "metric": "rank",
       "score": 2,
       "vote": "strong",
+      "reason": "db_engines rank 11, band <= 20 -> score 2 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -1434,16 +1547,20 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 49871,
+      "value": 49873,
+      "metric": "stars",
       "score": 2,
       "vote": "strong",
+      "reason": "github stars 49873, band >= 30000 -> score 2 strong",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 26,
+      "metric": "rank",
       "score": 1,
       "vote": "weak",
+      "reason": "db_engines rank 26, band <= 50 -> score 1 weak",
       "fetched": "2026-09-13"
      }
     },
@@ -1482,15 +1599,19 @@
      "github": {
       "found": true,
       "value": 17226,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 17226, band >= 5000 -> score 1 weak",
       "fetched": "2026-09-13"
      },
      "db_engines": {
       "found": true,
       "value": 20,
+      "metric": "rank",
       "score": 2,
       "vote": "strong",
+      "reason": "db_engines rank 20, band <= 20 -> score 2 strong",
       "fetched": "2026-09-13"
      }
     },
@@ -1693,8 +1814,10 @@
      "github": {
       "found": true,
       "value": 6471,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 6471, band >= 5000 -> score 1 weak",
       "fetched": "2026-09-13"
      }
     },
@@ -1831,6 +1954,25 @@
    ],
    "service": {
     "stackshare": "github-actions"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 73735,
+      "metric": "algolia_popularity",
+      "score": 3,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 73735, band >= 40000 -> score 3 strong",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 3.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -1853,6 +1995,25 @@
    ],
    "service": {
     "stackshare": "gitlab-ci"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 5172,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 5172, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -1880,16 +2041,28 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 26541,
+      "value": 26542,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 26542, band >= 5000 -> score 1 weak",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 140767,
+      "metric": "algolia_popularity",
+      "score": 3,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 140767, band >= 40000 -> score 3 strong",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "github"
+     "github",
+     "stackshare"
     ],
-    "consensus": 1.0,
+    "consensus": 2.0,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -1914,6 +2087,25 @@
    ],
    "service": {
     "stackshare": "circleci"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 29502,
+      "metric": "algolia_popularity",
+      "score": 2,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 29502, band >= 10000 -> score 2 strong",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 2.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -1936,6 +2128,25 @@
    ],
    "service": {
     "stackshare": "travis-ci"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 49380,
+      "metric": "algolia_popularity",
+      "score": 3,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 49380, band >= 40000 -> score 3 strong",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 3.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -1957,6 +2168,25 @@
    ],
    "service": {
     "stackshare": "azure-devops"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 3660,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 3660, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -1978,6 +2208,25 @@
    ],
    "service": {
     "stackshare": "buildkite"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 581,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 581, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -1999,6 +2248,25 @@
    ],
    "service": {
     "stackshare": "teamcity"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 3022,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 3022, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -2025,9 +2293,11 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 7863,
+      "value": 7865,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 7865, band >= 5000 -> score 1 weak",
       "fetched": "2026-09-13"
      }
     },
@@ -2058,6 +2328,25 @@
    ],
    "service": {
     "stackshare": "auth0"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 4283,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 4283, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -2086,15 +2375,27 @@
      "github": {
       "found": true,
       "value": 36749,
+      "metric": "stars",
       "score": 2,
       "vote": "strong",
+      "reason": "github stars 36749, band >= 30000 -> score 2 strong",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 2587,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 2587, band >= 500 -> score 1 weak",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "github"
+     "github",
+     "stackshare"
     ],
-    "consensus": 2.0,
+    "consensus": 1.5,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -2118,6 +2419,25 @@
    ],
    "service": {
     "stackshare": "okta"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 1512,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 1512, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -2140,6 +2460,25 @@
    ],
    "service": {
     "stackshare": "amazon-cognito"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 1889,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 1889, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -2161,6 +2500,25 @@
    ],
    "service": {
     "stackshare": "clerk"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 95,
+      "metric": "algolia_popularity",
+      "score": 0,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 95, below band >= 500 -> score 0 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 0.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -2427,15 +2785,27 @@
      "github": {
       "found": true,
       "value": 13849,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 13849, band >= 5000 -> score 1 weak",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 52487,
+      "metric": "algolia_popularity",
+      "score": 3,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 52487, band >= 40000 -> score 3 strong",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "github"
+     "github",
+     "stackshare"
     ],
-    "consensus": 1.0,
+    "consensus": 2.0,
     "strong": false,
     "fetched": "2026-09-13"
    }
@@ -2466,17 +2836,29 @@
     "sources": {
      "github": {
       "found": true,
-      "value": 33714,
+      "value": 33715,
+      "metric": "stars",
       "score": 2,
       "vote": "strong",
+      "reason": "github stars 33715, band >= 30000 -> score 2 strong",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 59200,
+      "metric": "algolia_popularity",
+      "score": 3,
+      "vote": "strong",
+      "reason": "stackshare algolia_popularity 59200, band >= 40000 -> score 3 strong",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "github"
+     "github",
+     "stackshare"
     ],
-    "consensus": 2.0,
-    "strong": false,
+    "consensus": 2.5,
+    "strong": true,
     "fetched": "2026-09-13"
    }
   },
@@ -2501,6 +2883,25 @@
    ],
    "service": {
     "stackshare": "amazon-sqs"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 6476,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 6476, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -2588,13 +2989,25 @@
      "github": {
       "found": true,
       "value": 20697,
+      "metric": "stars",
       "score": 1,
       "vote": "weak",
+      "reason": "github stars 20697, band >= 5000 -> score 1 weak",
+      "fetched": "2026-09-13"
+     },
+     "stackshare": {
+      "found": true,
+      "value": 1129,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 1129, band >= 500 -> score 1 weak",
       "fetched": "2026-09-13"
      }
     },
     "contributors": [
-     "github"
+     "github",
+     "stackshare"
     ],
     "consensus": 1.0,
     "strong": false,
@@ -3141,6 +3554,25 @@
    ],
    "service": {
     "stackshare": "firebase-cloud-messaging"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 846,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 846, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
@@ -3204,6 +3636,25 @@
    ],
    "service": {
     "stackshare": "onesignal"
+   },
+   "service_metrics": {
+    "sources": {
+     "stackshare": {
+      "found": true,
+      "value": 1075,
+      "metric": "algolia_popularity",
+      "score": 1,
+      "vote": "weak",
+      "reason": "stackshare algolia_popularity 1075, band >= 500 -> score 1 weak",
+      "fetched": "2026-09-13"
+     }
+    },
+    "contributors": [
+     "stackshare"
+    ],
+    "consensus": 1.0,
+    "strong": false,
+    "fetched": "2026-09-13"
    }
   },
   {
