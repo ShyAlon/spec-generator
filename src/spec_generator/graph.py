@@ -452,6 +452,33 @@ def _entry_point_slot(key: str) -> bool:
     return bool(_ENTRY_POINT_KEY.search(key))
 
 
+def _experiment_cap(name: str, items: list, label: str,
+                    progress=None) -> list:
+    """VMODEL_CAP_<name> (env or the shared .env): deterministic scope cap for
+    scope-limited experiment runs (his 2026-09-13 three-speed design: MEDIUM =
+    capped end-to-end smoke in minutes, FULL = the uncapped acceptance run).
+    A cap TRUNCATES the named list and announces itself - a silent cap would
+    fake the very quality signal the experiment measures."""
+    raw = model_config._env(f"VMODEL_CAP_{name}")
+    if not raw:
+        return items
+    try:
+        cap = int(raw)
+    except ValueError:
+        raise ModelStructureError(
+            f"VMODEL_CAP_{name}={raw!r} is not an integer - fix the shared .env "
+            "or unset it (caps are for experiment runs only)")
+    if cap < 1 or len(items) <= cap:
+        return items
+    if progress is not None:
+        from .progress import ProgressEvent
+        import time as _t
+        progress.emit(ProgressEvent("experiment", "", "item", _t.time(), None,
+                                    f"experiment cap: {label} {len(items)} -> {cap} "
+                                    f"(VMODEL_CAP_{name}); FULL runs stay uncapped"))
+    return items[:cap]
+
+
 # P3 layer 2, deterministic (founder directive 2026-09-12: deterministic logic
 # over LLM judgment wherever possible). A stack value that matches a KNOWN
 # technology lexicon of one kind cannot answer a slot of another kind
@@ -1213,6 +1240,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                           validate=_check(lambda d: StakeholderNeedsSet.model_validate(
                               {**_strip_pipeline_owned(d), "session_id": intent.session_id})))
         data.setdefault("session_id", intent.session_id)
+        capped = _experiment_cap("NEEDS", list(data.get("needs") or []), "needs", progress)
+        if len(capped) != len(data.get("needs") or []):
+            data["needs"] = capped
         if persist:
             persist("needs", data, state)
         return {"needs": data}
@@ -1328,7 +1358,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                               log, progress, validate=_validate_stack_plan,
                               schema=arch_stack_plan_schema(), stream_items=False,
                               item_label="plan: stack slots")
-            part["stack_keys"] = plan["stack_keys"]
+            part["stack_keys"] = _experiment_cap("STACK_SLOTS", plan["stack_keys"],
+                                                 "stack slots", progress)
             _save()
 
         # 2. One micro-call per stack entry: value + grounding refs. The
@@ -1654,7 +1685,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         unit/module tests pair with item specs."""
         # ADR-0020: one slot per SRS acceptance criterion (acceptance level)
         # + one per item spec (unit level); T-ids and links are code-owned.
-        slots = build_test_skeleton(state["srs"], state["items"])
+        slots = _experiment_cap("TESTS", build_test_skeleton(state["srs"], state["items"]),
+                                "test slots (traceability gaps are expected under a cap)",
+                                progress)
         if tools_enabled():
             from .tools import VerificationToolbox, run_tool_loop
             from .prompts import TOOL_PROMPTS
