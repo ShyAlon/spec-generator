@@ -18,3 +18,5 @@ run.log
 llm-calls.jsonl
 usage_summary.json
 *.partial.json
+artifacts*
+.DS_Store
