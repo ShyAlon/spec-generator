@@ -579,6 +579,19 @@ def main() -> None:
     prior = graph.get_state(cfg).values
     resume = bool(prior)
     if resume:
+        prior_conops = prior.get("conops")
+        if prior_conops != conops:
+            if prior_conops and conops:
+                reason = "the supplied Concept of Operations differs from the checkpoint"
+            elif conops:
+                reason = "this legacy checkpoint predates the supplied Concept of Operations"
+            else:
+                reason = "the checkpoint has a Concept of Operations but this command omitted --conops"
+            raise UserFacingError(
+                "cannot resume with a different Concept of Operations constraint.",
+                reason + "; completed Stakeholder Needs and downstream artifacts are grounded in the prior concept state.",
+                "start a new output directory for this concept, or rerun the original command with the same --conops file."
+            )
         print("Checkpoint found - resuming; completed stages are NOT re-run.", file=sys.stderr)
         # backfill-persist artifacts for stages completed BEFORE incremental
         # persistence shipped: resume skips completed stages (persist never
