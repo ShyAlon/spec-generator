@@ -148,14 +148,17 @@ def test_maturity_driver_uses_matrix_registry_downloads():
 
 def test_unmeasured_or_non_popularity_drivers_stay_unverified():
     base = {"session_id": "s", "stack_entries": [], "components": [], "non_functionals": {}}
-    for decision in [
-        {"title": "Adopt NovelDB", "decision": "Use NovelDB", "rationale": "mature",
-         "driver": "ecosystem_maturity", "options_considered": []},
-        {"title": "Adopt PostgreSQL", "decision": "Use PostgreSQL", "rationale": "easy",
-         "driver": "simplicity", "options_considered": []},
-    ]:
-        md = render_architecture(_arch({**base, "decisions": [decision]}))
-        assert "model judgment - unverified; challenge here" in md
+    novel = {"title": "Adopt NovelDB", "decision": "Use NovelDB", "rationale": "mature",
+             "driver": "ecosystem_maturity", "options_considered": []}
+    md = render_architecture(_arch({**base, "decisions": [novel]}))
+    assert "model judgment - unverified; challenge here" in md
+
+    measured_but_non_popularity = {
+        "title": "Adopt PostgreSQL", "decision": "Use PostgreSQL", "rationale": "easy",
+        "driver": "simplicity", "options_considered": []}
+    md = render_architecture(_arch({**base, "decisions": [measured_but_non_popularity]}))
+    assert "model judgment - unverified" in md
+    assert "adoption signal only, not proof of simplicity" in md
 
 
 def test_alternative_in_rationale_cannot_lend_matrix_evidence():
@@ -166,3 +169,12 @@ def test_alternative_in_rationale_cannot_lend_matrix_evidence():
         "non_functionals": {}}))
     assert "model judgment - unverified; challenge here" in md
     assert "matrix: 2 sources" not in md
+
+
+def test_non_adoption_driver_still_shows_matrix_without_claiming_it_proves_simplicity():
+    md = render_architecture(_arch({"session_id": "s", "stack_entries": [], "components": [],
+        "decisions": [{"title": "Adopt Supabase", "decision": "Use Supabase",
+                       "rationale": "It is simple.", "driver": "simplicity",
+                       "options_considered": []}], "non_functionals": {}}))
+    assert "Driver: simplicity (model judgment - unverified; matrix: 2 sources" in md
+    assert "adoption signal only, not proof of simplicity" in md

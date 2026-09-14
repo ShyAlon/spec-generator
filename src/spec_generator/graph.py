@@ -1102,7 +1102,7 @@ _QUESTION_TOPICS = {
 _QUESTION_CHOICE_MARKERS = ("specific", "which", "what", "choose", "choice of")
 
 
-def _resolve_answered_open_questions(state: dict, persist) -> list[str]:
+def _resolve_answered_open_questions(state: dict, persist, *, architecture: dict | None = None) -> list[str]:
     """Drop architecture-answered open questions from the SRS artifact and
     say which stack entry answered each. Returns the resolution lines."""
     srs = state.get("srs") or {}
@@ -1117,7 +1117,13 @@ def _resolve_answered_open_questions(state: dict, persist) -> list[str]:
     questions = [q for q in questions if q not in already_resolved]
     if not questions:
         return []
-    entries = (state.get("architecture") or {}).get("stack_entries") or []
+    # During node_architecture, `data` is the newly assembled architecture but
+    # LangGraph has not merged the node return into state yet. A resume from
+    # architecture has deliberately cleared state["architecture"], so reading
+    # state alone makes resolution a production-only no-op. The caller passes
+    # the just-assembled artifact explicitly.
+    entries = (architecture if architecture is not None
+               else state.get("architecture") or {}).get("stack_entries") or []
     if not entries:
         return []
     keys = [str(e.get("key", "")).lower() for e in entries]
@@ -2115,7 +2121,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         data = merged
         if persist:
             persist("architecture", data, state)
-        resolved_questions = _resolve_answered_open_questions(state, persist)
+        resolved_questions = _resolve_answered_open_questions(state, persist, architecture=data)
         result = {"architecture": data,
                   "gate_feedback": _clear_feedback(state, "architecture")}
         # Nested mutation is not a LangGraph state update. Return the changed

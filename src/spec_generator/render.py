@@ -192,19 +192,10 @@ def architecture_challenges(arch: ArchitectureOverview) -> list[str]:
 
 
 
-def _driver_evidence(decision) -> str:
-    """Deterministically ground popularity/maturity drivers in the committed
-    matrix. Other driver kinds remain model judgment: usage data cannot prove
-    simplicity, team fit, or a founder constraint."""
-    if decision.driver is None or decision.driver.value not in {
-            "ecosystem_maturity", "community_adoption"}:
-        return "model judgment - unverified; challenge here"
-    from .tech_candidates import primary_row_in_text
-    # Ground the selected technology only. Alternatives or comparisons in the
-    # rationale must not lend their metrics to the chosen decision.
-    row = primary_row_in_text(" ".join((decision.title, decision.decision)))
+def _matrix_evidence(row: dict | None) -> str | None:
+    """Compact observed matrix signal for one selected technology."""
     if not row:
-        return "model judgment - unverified; challenge here"
+        return None
     sm = row.get("service_metrics") or {}
     contributors = sm.get("contributors") or []
     score = sm.get("consensus")
@@ -219,7 +210,28 @@ def _driver_evidence(decision) -> str:
     metrics = row.get("metrics") or {}
     if metrics.get("weekly_downloads") is not None:
         return f"matrix: registry weekly downloads {metrics['weekly_downloads']:,}"
+    return None
+
+
+def _driver_evidence(decision) -> str:
+    """Show observed evidence without laundering it into proof of a driver.
+
+    Adoption/maturity drivers may be grounded by adoption metrics. For other
+    drivers, retain the unverified label but still show the selected
+    technology's matrix signal. This makes the retrieval visible at review
+    while saying exactly what it cannot prove (for example, popularity does
+    not prove simplicity).
+    """
+    from .tech_candidates import primary_row_in_text
+    row = primary_row_in_text(" ".join((decision.title, decision.decision)))
+    matrix = _matrix_evidence(row)
+    driver = decision.driver.value if decision.driver is not None else None
+    if driver in {"ecosystem_maturity", "community_adoption"} and matrix:
+        return matrix
+    if matrix:
+        return f"model judgment - unverified; {matrix} (adoption signal only, not proof of {driver.replace('_', ' ')})"
     return "model judgment - unverified; challenge here"
+
 
 def render_architecture(arch: ArchitectureOverview, greenfield: bool = False,
                         conops_present: bool = True) -> str:

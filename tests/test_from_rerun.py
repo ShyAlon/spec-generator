@@ -293,3 +293,85 @@ def test_same_baseline_resume_relabels_nothing(monkeypatch, tmp_path, capsys):
     assert "WARNING: the --system-baseline" not in err
     assert box["architecture"].calls == 6  # unchanged: completed stages are NOT re-run
     assert box["items"].calls == 1
+
+
+def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(monkeypatch, tmp_path):
+    """Regression for the 2026-09-14 acceptance bundle.
+
+    Exercise the actual checkpoint rewind -> architecture node -> incremental
+    persistence path. Unit helpers missed that the new architecture is not in
+    LangGraph state until the node returns.
+    """
+    from spec_generator.cli import _make_persist
+
+    question = "Specific data storage solution for persisting user points across devices"
+
+    class AcceptanceModel(FakeModel):
+        def invoke(self, messages):
+            prompt = messages[-1].content
+            if self.stage == "srs" and "Author ONE requirement fill" in prompt:
+                from langchain_core.messages import AIMessage
+                self.calls += 1
+                return AIMessage(content=json.dumps(PAYLOADS["srs"]["fills"]["R-1"]))
+            if self.stage == "items" and "Write the body of ONE item spec" in prompt:
+                from langchain_core.messages import AIMessage
+                self.calls += 1
+                return AIMessage(content=json.dumps({"body_markdown": "# Persistence\nUse Supabase."}))
+            if self.stage == "tests" and "TEST SLOT (fill its prose)" in prompt:
+                from langchain_core.messages import AIMessage
+                import re
+                self.calls += 1
+                tid = re.search(r'"test_id":\s*"([^"]+)"', prompt).group(1)
+                fill = next(iter(PAYLOADS["tests"]["fills"].values()))
+                return AIMessage(content=json.dumps({"fills": {tid: fill}}))
+            return super().invoke(messages)
+
+        def _architecture_answer(self, prompt: str):
+            if "THE STACK KEY TO DECIDE" in prompt:
+                return {"value": "Supabase", "baseline_refs": []}
+            if "THE COMPONENT SLOT" in prompt:
+                return {"responsibility": "Persist points across devices"}
+            if "THE ADR SLOT" in prompt:
+                return {"title": "Adopt Supabase", "decision": "Use Supabase for persistence",
+                        "rationale": "One managed backend.", "driver": "simplicity",
+                        "options_considered": [{"option": "Firebase", "reason": "Second backend"}],
+                        "baseline_refs": [], "evidence": [], "affected_repositories": []}
+            if "THE NON-FUNCTIONAL REQUIREMENT" in prompt:
+                return {"position": "No special position"}
+            if "Plan the OPTIONAL architecture decision records" in prompt:
+                return [{"slug": "adopt-supabase"}]
+            if "PIPELINE-REQUIRED MIGRATION ADRS" in prompt:
+                return []
+            if "REQUIREMENT IDS TO COVER" in prompt:
+                return [{"name": "persistence", "requirement_ids": ["R-1"],
+                         "baseline_refs": [], "migration": False}]
+            return {"stack_keys": ["data_persistence_service"]}
+
+    box = {}
+    monkeypatch.delenv("SPEC_GENERATOR_BULK", raising=False)
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **kw: box.setdefault(stage, AcceptanceModel(stage)))
+    db = str(tmp_path / "checkpoints.sqlite")
+    outdir = tmp_path / "bundle"; outdir.mkdir(); (outdir / "specs").mkdir()
+    intent = {**INTENT, "open_questions": [question]}
+    g = build_graph(UsageLog("s"),
+                    checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)),
+                    persist=_make_persist(intent, outdir, greenfield=True))
+    cfg = {"configurable": {"thread_id": "s"}}
+    g.invoke({"intent_model": intent,
+              "system_baseline": {**SYSTEM_BASELINE, "mode": "greenfield", "repositories": []}}, cfg)
+
+    # Recreate the stale pre-fix checkpoint/artifact, then take the exact
+    # production resume path requested by `--from architecture`.
+    prior = g.get_state(cfg).values
+    stale_srs = dict(prior["srs"]); stale_srs.pop("_resolved_open_questions", None)
+    g.update_state(cfg, {"srs": stale_srs})
+    _invalidate_from(g, cfg, "architecture", review_mode=False)
+    result = g.invoke(None, cfg)
+
+    stored = g.get_state(cfg).values
+    assert stored["srs"]["_resolved_open_questions"] == [question]
+    assert question not in json.loads((outdir / "srs.json").read_text())["open_questions"]
+    architecture_md = (outdir / "architecture.md").read_text()
+    assert "Driver: simplicity (model judgment - unverified; matrix: 2 sources" in architecture_md
+    assert question not in result["bundle"]["_srs"]["open_questions"]
