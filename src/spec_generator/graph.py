@@ -245,10 +245,14 @@ def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
     review gate (validating hand edits)."""
     intent = IntentModel.model_validate(intent_model)
     data = dict(srs_body)
+    # Architecture may answer an interview-time question after the SRS stage.
+    # Keep the exact resolved questions as code-owned state, but never leak the
+    # private marker into the SRSDocument contract.
+    resolved = set(data.pop("_resolved_open_questions", []))
     data["definitions"] = intent.glossary
     data["constraints"] = intent.constraints
     data["assumptions"] = [a.model_dump(mode="json") for a in intent.assumption_items]
-    data["open_questions"] = intent.open_questions
+    data["open_questions"] = [q for q in intent.open_questions if q not in resolved]
     # Future-phase commitments (founder decision 2026-09-13): a need deferred
     # IN the interview drives NO current requirement (build_srs_skeleton skips
     # it) and is recorded HERE, in the scope, as what it is - a later
@@ -1074,7 +1078,15 @@ def _resolve_answered_open_questions(state: dict, persist) -> list[str]:
     """Drop architecture-answered open questions from the SRS artifact and
     say which stack entry answered each. Returns the resolution lines."""
     srs = state.get("srs") or {}
-    questions = srs.get("open_questions") or []
+    # open_questions is code-owned by the intent model, so the LLM-authored
+    # SRS state normally does not contain it. The old implementation looked
+    # only in srs and therefore became a no-op in production even though its
+    # unit fixture (incorrectly) put open_questions there.
+    intent_questions = (state.get("intent_model") or {}).get("open_questions")
+    questions = list(intent_questions if intent_questions is not None
+                     else srs.get("open_questions") or [])
+    already_resolved = set(srs.get("_resolved_open_questions") or [])
+    questions = [q for q in questions if q not in already_resolved]
     if not questions:
         return []
     entries = (state.get("architecture") or {}).get("stack_entries") or []
@@ -1098,7 +1110,11 @@ def _resolve_answered_open_questions(state: dict, persist) -> list[str]:
         else:
             kept.append(q)
     if resolved:
-        srs["open_questions"] = kept
+        if intent_questions is None:  # backwards-compatible direct helper use
+            srs["open_questions"] = kept
+        srs["_resolved_open_questions"] = sorted(already_resolved | {
+            q for q in questions if q not in kept
+        })
         for line in resolved:
             model_config._console_line(f"     - open question resolved by architecture: {line}")
         if persist:
@@ -1570,6 +1586,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         body = {"purpose": overview["purpose"], "scope_summary": overview["scope_summary"],
                 "fills": fills}
         merged = merge_srs_fills(slots, body)
+        # A review-driven SRS rewrite happens after architecture. Preserve the
+        # code-owned record of interview questions architecture already
+        # answered, or deterministic assembly would resurrect them.
+        if (state.get("srs") or {}).get("_resolved_open_questions"):
+            merged["_resolved_open_questions"] = list(
+                state["srs"]["_resolved_open_questions"])
         sid = state["intent_model"]["session_id"]
         SRSDocument.model_validate(srs_document_data(
             state["intent_model"], {**merged, "session_id": sid, "intent_model_ref": sid}))
@@ -2064,8 +2086,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         data = merged
         if persist:
             persist("architecture", data, state)
-        _resolve_answered_open_questions(state, persist)
-        return {"architecture": data, "gate_feedback": _clear_feedback(state, "architecture")}
+        resolved_questions = _resolve_answered_open_questions(state, persist)
+        result = {"architecture": data,
+                  "gate_feedback": _clear_feedback(state, "architecture")}
+        # Nested mutation is not a LangGraph state update. Return the changed
+        # SRS explicitly so the resolution marker survives the checkpoint and
+        # deterministic assembly, including --from architecture resumes.
+        if resolved_questions:
+            result["srs"] = state["srs"]
+        return result
 
     def node_items(state: GenState) -> dict:
         # Bulk proposal, code disposes (same doctrine as architecture): the

@@ -121,17 +121,21 @@ def architecture_challenges(arch: ArchitectureOverview) -> list[str]:
       surface (his minimal-dependencies preference).
     Unknown (novel) technologies contribute nothing - a matrix miss is never
     a verdict."""
-    from .tech_candidates import tech_row
-    rows = [(e, tech_row(e.value)) for e in arch.stack_entries]
-    rows = [(e, r) for e, r in rows if r]
+    from .tech_candidates import primary_row_in_text, tech_row
+    resolved_rows = [(e, tech_row(e.value) or primary_row_in_text(e.value))
+                     for e in arch.stack_entries]
+    rows = [(e, r) for e, r in resolved_rows if r]
     flags: list[str] = []
 
     # Stack-entry hygiene (2026-09-13 greenfield defects, deterministic):
     # (a) a vendor/technology answering a STRATEGY slot
     #     ('resource_utilization_strategy: Firebase' - the question asked for
     #     an approach, not a product);
-    for e, r in rows:
-        if any(m in e.key.lower() for m in ("strategy", "approach", "pattern", "policy")):
+    # Do this from the unfiltered entries, independently of later grouping.
+    # That keeps the flag alive even when another check normalizes/merges the
+    # same vendor family (the overnight Firebase shape exposed that coupling).
+    for e, r in resolved_rows:
+        if r and any(m in e.key.lower() for m in ("strategy", "approach", "pattern", "policy")):
             flags.append(f"strategy slot answered with a vendor: {e.key} = {r['name']} - "
                          "a strategy slot wants an approach (cache-first, serverless, "
                          "in-house...); the vendor belongs in a technology slot")
@@ -187,6 +191,36 @@ def architecture_challenges(arch: ArchitectureOverview) -> list[str]:
     return flags
 
 
+
+def _driver_evidence(decision) -> str:
+    """Deterministically ground popularity/maturity drivers in the committed
+    matrix. Other driver kinds remain model judgment: usage data cannot prove
+    simplicity, team fit, or a founder constraint."""
+    if decision.driver is None or decision.driver.value not in {
+            "ecosystem_maturity", "community_adoption"}:
+        return "model judgment - unverified; challenge here"
+    from .tech_candidates import primary_row_in_text
+    # Ground the selected technology only. Alternatives or comparisons in the
+    # rationale must not lend their metrics to the chosen decision.
+    row = primary_row_in_text(" ".join((decision.title, decision.decision)))
+    if not row:
+        return "model judgment - unverified; challenge here"
+    sm = row.get("service_metrics") or {}
+    contributors = sm.get("contributors") or []
+    score = sm.get("consensus")
+    if contributors and score is not None:
+        n = len(contributors)
+        if n >= 2:
+            verdict = "consensus strong" if sm.get("strong") else "consensus mixed/weak"
+        else:
+            verdict = "strong one-source signal" if score >= 2 else "weak one-source signal"
+        shown = int(score) if float(score).is_integer() else score
+        return f"matrix: {n} source{'s' if n != 1 else ''}, score {shown}, {verdict}"
+    metrics = row.get("metrics") or {}
+    if metrics.get("weekly_downloads") is not None:
+        return f"matrix: registry weekly downloads {metrics['weekly_downloads']:,}"
+    return "model judgment - unverified; challenge here"
+
 def render_architecture(arch: ArchitectureOverview, greenfield: bool = False) -> str:
     """Human-readable architecture for the founder review gate (ADR-0019) and
     the bundle's architecture.md. greenfield=True labels ungrounded entries as
@@ -219,11 +253,10 @@ def render_architecture(arch: ArchitectureOverview, greenfield: bool = False) ->
         lines.append("\n## Decisions (ADRs)")
         for d in arch.decisions:
             lines.append(f"- **{d.decision_id} {d.title}** - {d.decision}")
-            # ADR-0021: drivers/reasons are local-model judgment until retrieval
-            # grounding lands (ADR-0019 Part 3) - labeled so the gate can veto.
             if d.driver is not None:
-                lines.append(f"  Driver: {d.driver.value.replace('_', ' ')} "
-                             f"(model judgment - unverified; challenge here)")
+                driver = d.driver.value.replace("_", " ")
+                lines.append(f"  Driver: {driver} "
+                             f"({_driver_evidence(d)})")
             else:
                 lines.append("  Driver: (not recorded - pre-0.8.0 artifact)")
             lines.append(f"  Why: {d.rationale}")

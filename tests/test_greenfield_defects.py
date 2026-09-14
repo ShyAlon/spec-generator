@@ -143,3 +143,45 @@ def test_no_architecture_no_resolution():
              "architecture": {}}
     assert _resolve_answered_open_questions(state, persist=None) == []
     assert state["srs"]["open_questions"] == ["Specific data storage solution?"]
+
+
+def test_answered_open_question_resolves_from_real_production_state_shape():
+    # Production keeps interview questions in intent_model, not in the
+    # LLM-authored srs body. This is the exact shape the old fixture missed.
+    question = "Specific data storage solution for persisting user points across devices"
+    state = {"intent_model": {"open_questions": [question]},
+             "srs": {"purpose": "p", "scope_summary": "s"},
+             "architecture": {"stack_entries": [
+                 {"key": "data_persistence_service", "value": "Supabase"}]}}
+    calls = []
+    resolved = _resolve_answered_open_questions(
+        state, persist=lambda stage, data, whole: calls.append((stage, dict(data))))
+    assert resolved == [f"'{question}' -> data_persistence_service = Supabase"]
+    assert state["srs"]["_resolved_open_questions"] == [question]
+    assert calls and calls[0][0] == "srs"
+
+    from spec_generator.graph import srs_document_data
+    intent = {"session_id": "s", "problem_statement": "p", "target_users": ["u"],
+              "core_value_proposition": "v", "tech_preferences": [],
+              "stakeholder_needs": [{"need_id": "SN-1", "statement": "Persist points",
+                                      "kind": "functional", "source_turns": [1]}],
+              "in_scope": [], "out_of_scope": [],
+              "external_integrations": [], "constraints": [],
+              "open_questions": [question, "Which UI elements?"], "source_turns": {}}
+    doc = srs_document_data(intent, state["srs"])
+    assert doc["open_questions"] == ["Which UI elements?"]
+    assert "_resolved_open_questions" not in doc
+
+
+def test_exact_overnight_strategy_shape_is_flagged_in_rendered_markdown():
+    from spec_generator.render import render_architecture
+    arch = _arch({"session_id": "s", "stack_entries": [
+        {"key": "backend_framework", "value": "Supabase"},
+        {"key": "data_persistence_service", "value": "Supabase"},
+        {"key": "database_system", "value": "Supabase"},
+        {"key": "notification_service", "value": "Firebase Cloud Messaging"},
+        {"key": "permissions_management", "value": "Firebase Authentication"},
+        {"key": "resource_utilization_strategy", "value": "Firebase"}],
+        "components": [], "decisions": [], "non_functionals": {}})
+    md = render_architecture(arch, greenfield=True)
+    assert "strategy slot answered with a vendor: resource_utilization_strategy = Firebase" in md

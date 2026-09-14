@@ -76,9 +76,9 @@ def test_grammar_narrows_driver_to_the_closed_enum():
     assert "driver" in dec["required"] and "options_considered" in dec["required"]
 
 
-def test_gate_render_shows_driver_options_and_the_unverified_label():
+def test_gate_render_shows_driver_options_and_matrix_evidence():
     md = render_architecture(_arch(ARCH))
-    assert "Driver: ecosystem maturity (model judgment - unverified; challenge here)" in md
+    assert "Driver: ecosystem maturity (matrix: registry weekly downloads" in md
     assert "Considered: Angular - rejected: More ceremony for a solo build." in md
 
 
@@ -127,3 +127,42 @@ def test_existing_mode_keeps_legacy_migration_label():
                                                         "baseline_refs": []}],
                   "components": [], "decisions": []})
     assert "(migration: see ADRs)" in render_architecture(arch)
+
+
+def test_maturity_driver_uses_matrix_service_votes():
+    md = render_architecture(_arch({"session_id": "s", "stack_entries": [], "components": [],
+        "decisions": [{"title": "Adopt PostgreSQL", "decision": "Use PostgreSQL",
+                       "rationale": "Its ecosystem is mature.", "driver": "ecosystem_maturity",
+                       "options_considered": []}], "non_functionals": {}}))
+    assert "Driver: ecosystem maturity (matrix: 2 sources, score 2, consensus mixed/weak)" in md
+    assert "model judgment - unverified" not in md
+
+
+def test_maturity_driver_uses_matrix_registry_downloads():
+    md = render_architecture(_arch({"session_id": "s", "stack_entries": [], "components": [],
+        "decisions": [{"title": "Adopt Django", "decision": "Use Django",
+                       "rationale": "Its ecosystem is mature.", "driver": "community_adoption",
+                       "options_considered": []}], "non_functionals": {}}))
+    assert "Driver: community adoption (matrix: registry weekly downloads" in md
+
+
+def test_unmeasured_or_non_popularity_drivers_stay_unverified():
+    base = {"session_id": "s", "stack_entries": [], "components": [], "non_functionals": {}}
+    for decision in [
+        {"title": "Adopt NovelDB", "decision": "Use NovelDB", "rationale": "mature",
+         "driver": "ecosystem_maturity", "options_considered": []},
+        {"title": "Adopt PostgreSQL", "decision": "Use PostgreSQL", "rationale": "easy",
+         "driver": "simplicity", "options_considered": []},
+    ]:
+        md = render_architecture(_arch({**base, "decisions": [decision]}))
+        assert "model judgment - unverified; challenge here" in md
+
+
+def test_alternative_in_rationale_cannot_lend_matrix_evidence():
+    md = render_architecture(_arch({"session_id": "s", "stack_entries": [], "components": [],
+        "decisions": [{"title": "Adopt NovelDB", "decision": "Use NovelDB",
+                       "rationale": "Unlike PostgreSQL, it fits our custom protocol.",
+                       "driver": "ecosystem_maturity", "options_considered": []}],
+        "non_functionals": {}}))
+    assert "model judgment - unverified; challenge here" in md
+    assert "matrix: 2 sources" not in md
