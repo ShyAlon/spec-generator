@@ -89,3 +89,51 @@ def test_main_prints_the_chosen_baseline(capsys):
     import inspect
     src = inspect.getsource(__import__("spec_generator.cli", fromlist=["main"]).main)
     assert "System baseline:" in src and "baseline_id" in src and "mode=" in src
+
+
+def test_stale_system_baseline_names_exact_migration_command(tmp_path):
+    import json
+
+    from spec_generator.cli import _load_system_baseline
+    from spec_generator.errors import UserFacingError
+
+    baseline = {
+        "contract_version": "0.13.2",
+        "baseline_id": "stale-baseline",
+        "system_name": "Stale system",
+        "mode": "greenfield",
+        "repositories": [],
+        "constraints": [],
+    }
+    path = tmp_path / "greenfield baseline.json"
+    path.write_text(json.dumps(baseline))
+
+    with pytest.raises(UserFacingError) as ei:
+        _load_system_baseline(path)
+
+    rendered = ei.value.render()
+    assert "ContractVersionMismatch" not in rendered
+    assert "Next: migrate this file" in rendered
+    assert f"python -m vmodel_contracts.migrate '{path}'" in rendered
+
+
+def test_stale_intent_names_exact_migration_command(tmp_path, capsys, monkeypatch):
+    import json
+    import sys
+
+    from spec_generator.cli import main
+    from spec_generator.errors import run_cli
+
+    path = tmp_path / "old intent.json"
+    path.write_text(json.dumps({
+        "contract_version": "0.13.2",
+        "session_id": "old-1",
+        "problem_statement": "p",
+    }))
+    monkeypatch.setattr(sys, "argv", ["prog", str(path)])
+
+    with pytest.raises(SystemExit):
+        run_cli(main)
+
+    rendered = capsys.readouterr().err
+    assert f"python -m vmodel_contracts.migrate '{path}'" in rendered

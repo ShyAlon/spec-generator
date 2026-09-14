@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import sys
 from datetime import datetime
@@ -338,6 +339,11 @@ def _default_outdir(intent_path: Path, session_id: str) -> Path:
     return artifacts_root(model_config._env("VMODEL_ARTIFACTS_DIR")) / f"artifacts-{stamp:%Y-%m-%d_%H-%M-%S}"
 
 
+def _migration_command(path: Path) -> str:
+    """Copy-pasteable repair for a version-stale contract artifact."""
+    return f"python -m vmodel_contracts.migrate {shlex.quote(str(path))}"
+
+
 def _load_system_baseline(path: Path) -> dict:
     if not path.is_file():
         raise UserFacingError(
@@ -347,9 +353,15 @@ def _load_system_baseline(path: Path) -> dict:
         )
     try:
         raw = json.loads(path.read_text())
-        from vmodel_contracts import check_compatible
+        from vmodel_contracts import ContractVersionMismatch, check_compatible
         check_compatible(raw)
         return SystemBaseline.model_validate(raw).model_dump(mode="json")
+    except ContractVersionMismatch as e:
+        raise UserFacingError(
+            f"system baseline was produced against vmodel-contracts {e.have}, but this spec-generator reads {e.want.split('.')[0]}.{e.want.split('.')[1]}.x.",
+            "the baseline was created before a contract upgrade.",
+            f"migrate this file, then run the spec-generator command again: {_migration_command(path)}",
+        ) from e
     except Exception as e:
         raise UserFacingError(
             f"system baseline is invalid: {path}.",
@@ -509,8 +521,8 @@ def main() -> None:
         raise UserFacingError(
             f"this intent model was produced against vmodel-contracts {e.have}, but this spec-generator reads {e.want.split('.')[0]}.{e.want.split('.')[1]}.x.",
             "the interview ran before a contract upgrade.",
-            "if the schema is otherwise compatible, re-stamp it: python -m vmodel_contracts.migrate "
-            f"{args.intent_model} (it validates against the current schema first and refuses on real drift); "
+            f"if the schema is otherwise compatible, re-stamp it: {_migration_command(args.intent_model)} "
+            "(it validates against the current schema first and refuses on real drift); "
             "otherwise re-run the interview (minutes on a local model) to regenerate the intent model.",
         ) from e
     conops = None
