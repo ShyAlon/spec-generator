@@ -16,6 +16,7 @@ tmp+rename - a late failure leaves all completed work on disk):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shlex
@@ -465,6 +466,106 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     print(f"Stage '{args.only_stage}' written to {outdir}. Source unchanged.")
 
 
+
+_SEMANTIC_EQUIVALENCE_VERSION = "1"
+
+
+def _semantic_hash(value) -> str:
+    """Hash contract meaning, not rendering or retrieval annotations.
+
+    Version 1 deliberately excludes only evidence metadata. Open questions and
+    every requirement/architecture decision remain semantic, so resolving a
+    question stales downstream rather than being waved through as presentation.
+    """
+    def canonical(v):
+        if isinstance(v, dict):
+            return {k: canonical(val) for k, val in sorted(v.items())
+                    if k not in {"evidence", "_resolved_open_questions"}}
+        if isinstance(v, list):
+            return [canonical(x) for x in v]
+        return v
+    payload = json.dumps(canonical(value), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _reconcile_artifacts(intent: dict, baseline: dict, source: Path,
+                         target: Path | None = None, *, conops_present: bool = True) -> dict:
+    """Re-run deterministic cross-artifact rules and views with zero LLM calls."""
+    from .graph import _resolve_answered_open_questions
+
+    source = source.resolve()
+    if not source.is_dir():
+        raise UserFacingError(
+            f"artifact directory not found: {source}.",
+            "reconciliation needs an existing completed or partial bundle.",
+            "pass -o <artifact-directory> for the run you want to reconcile.")
+    required = [source / "srs.json", source / "architecture.json"]
+    missing = [str(p) for p in required if not p.is_file()]
+    if missing:
+        raise UserFacingError(
+            "cannot reconcile: source artifacts are missing.",
+            "the run did not reach both SRS and architecture.",
+            "missing: " + ", ".join(missing))
+    destination = target.resolve() if target else source
+    if target:
+        if destination.exists():
+            raise UserFacingError(
+                f"reconciliation output already exists: {destination}.",
+                "a comparison generation must never overwrite another directory.",
+                "choose a fresh --reconcile-out path.")
+        shutil.copytree(source, destination, ignore=shutil.ignore_patterns("checkpoints.sqlite*", "*.partial.json"))
+
+    old_srs = json.loads((source / "srs.json").read_text())
+    architecture_data = json.loads((source / "architecture.json").read_text())
+    old_architecture = dict(architecture_data)
+    state = {"intent_model": intent, "srs": dict(old_srs), "architecture": architecture_data}
+    resolved = _resolve_answered_open_questions(state, persist=None, architecture=architecture_data)
+    new_srs = srs_document_data(intent, state["srs"])
+    new_srs.setdefault("session_id", intent["session_id"])
+    new_srs.setdefault("intent_model_ref", intent["session_id"])
+    srs = SRSDocument.model_validate(coerce_for_model(new_srs, SRSDocument))
+    architecture = ArchitectureOverview.model_validate(coerce_for_model(architecture_data, ArchitectureOverview))
+
+    # Compare canonical contract instances so defaulted fields and version
+    # stamps cannot create false semantic changes.
+    old_srs_contract = SRSDocument.model_validate(coerce_for_model(old_srs, SRSDocument)).model_dump(mode="json")
+    old_arch_contract = ArchitectureOverview.model_validate(
+        coerce_for_model(old_architecture, ArchitectureOverview)).model_dump(mode="json")
+    before = {"srs": _semantic_hash(old_srs_contract), "architecture": _semantic_hash(old_arch_contract)}
+    after = {"srs": _semantic_hash(srs.model_dump(mode="json")),
+             "architecture": _semantic_hash(architecture.model_dump(mode="json"))}
+    changed = [name for name in before if before[name] != after[name]]
+    render_changed = []
+    rendered_srs = render_srs(srs)
+    rendered_arch = render_architecture(architecture, greenfield=baseline["mode"] == "greenfield",
+                                       conops_present=conops_present)
+    for name, text in (("srs.md", rendered_srs), ("architecture.md", rendered_arch)):
+        old = (source / name).read_text() if (source / name).exists() else ""
+        if old != text: render_changed.append(name)
+
+    _atomic_write(destination / "srs.json", json.dumps(new_srs, indent=2))
+    _atomic_write(destination / "srs.md", rendered_srs)
+    _atomic_write(destination / "architecture.json", architecture.model_dump_json(indent=2))
+    _atomic_write(destination / "architecture.md", rendered_arch)
+    cause = ("semantic basis changed during deterministic reconciliation: " + ", ".join(changed)
+             if changed else "deterministic views refreshed; semantic basis unchanged")
+    status_path = destination / "artifact-status.json"
+    status = json.loads(status_path.read_text()) if status_path.exists() else {"artifacts": {}}
+    if changed:
+        for name in ("items.json", "tests.json", "specs", "AGENTS.md", "traceability.json", "manifest.json"):
+            status["artifacts"][name] = {"state": "stale", "cause": cause,
+                                             "basis_hashes_before": before,
+                                             "basis_hashes_after": after}
+    _atomic_write(status_path, json.dumps(status, indent=2))
+    audit = {"event": "artifacts.reconciled", "actor": "local user", "at": datetime.now().astimezone().isoformat(),
+             "equivalence_version": _SEMANTIC_EQUIVALENCE_VERSION, "source": str(source),
+             "destination": str(destination), "semantic_changed": changed,
+             "render_changed": render_changed, "resolved_questions": resolved,
+             "downstream": "stale" if changed else "valid"}
+    with (destination / "audit.jsonl").open("a") as fh:
+        fh.write(json.dumps(audit, sort_keys=True) + "\n")
+    return audit
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("intent_model", type=Path)
@@ -477,6 +578,12 @@ def main() -> None:
                     help="rewind the checkpoint: re-run STAGE and everything after it under the "
                          "current code, earlier stages preserved (stages: needs, srs, architecture, "
                          "items, tests, review, assemble)")
+    ap.add_argument("--to", dest="to_stage", choices=("needs", "srs", "architecture", "items", "tests"),
+                    help="stop after this stage; completed state remains resumable")
+    ap.add_argument("--reconcile-artifacts", action="store_true",
+                    help="zero-LLM deterministic reconciliation of existing SRS/architecture and views")
+    ap.add_argument("--reconcile-out", type=Path, default=None,
+                    help="write reconciliation to a fresh comparison generation instead of the live bundle")
     ap.add_argument("--only-stage", choices=tuple(_ONLY_STAGE_INPUTS), default=None,
                     help="run exactly one stage from an existing completed artifact set; never mutates source")
     ap.add_argument("--source-artifacts", type=Path, default=None,
@@ -492,6 +599,10 @@ def main() -> None:
         ap.error("--only-stage cannot be combined with --from")
     if args.only_stage and args.review:
         ap.error("--only-stage cannot be combined with --review")
+    if args.reconcile_out and not args.reconcile_artifacts:
+        ap.error("--reconcile-out requires --reconcile-artifacts")
+    if args.reconcile_artifacts and (args.from_stage or args.only_stage or args.to_stage or args.review):
+        ap.error("--reconcile-artifacts cannot be combined with --from, --to, --only-stage, or --review")
 
     if not args.intent_model.exists():
         raise UserFacingError(
@@ -558,6 +669,13 @@ def main() -> None:
         _run_only_stage(args, intent, sid)
         return
     outdir = args.out if args.out is not None else _default_outdir(args.intent_model, sid)
+    if args.reconcile_artifacts:
+        audit = _reconcile_artifacts(intent, baseline, outdir, args.reconcile_out,
+                                     conops_present=conops is not None)
+        print("Reconciled artifacts with ZERO LLM calls.", file=sys.stderr)
+        print(f"Semantic changes: {', '.join(audit['semantic_changed']) or '(none)'}", file=sys.stderr)
+        print(f"Downstream: {audit['downstream']} ({audit['destination']})", file=sys.stderr)
+        return
     outdir.mkdir(parents=True, exist_ok=True)
     (outdir / "specs").mkdir(exist_ok=True)
     _atomic_write(outdir / "system-baseline.json", json.dumps(baseline, indent=2))
@@ -577,7 +695,7 @@ def main() -> None:
     graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review,
                         persist=_make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
                                               conops_present=conops is not None),
-                        partials=partials)
+                        partials=partials, stop_after=args.to_stage)
     from . import model_config as _mc
 
     if args.from_stage:
@@ -672,6 +790,10 @@ def main() -> None:
     else:
         result = graph.invoke(None, cfg) if resume else graph.invoke(
             {"intent_model": intent, "system_baseline": baseline, "conops": conops}, cfg)
+
+    if args.to_stage:
+        print(f"Stopped after stage '{args.to_stage}' as requested. Checkpoint and stage artifacts are resumable in {outdir}.")
+        return
 
     b = result["bundle"]
     try:

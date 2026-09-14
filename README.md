@@ -228,3 +228,24 @@ python -m spec_generator.cli intent_model.json \
   --only-stage architecture --source-artifacts artifacts-source \
   --system-baseline ../vmodel-spec-app/system-baseline.json
 ```
+
+## Fast experiments
+
+Stop a live regeneration after the artifact you are testing, keeping its checkpoint and incremental files:
+
+```bash
+python -m spec_generator.cli intent_model.json --system-baseline baseline.json \
+  --from architecture --to architecture
+```
+
+Continue later with `--from items` after reviewing the architecture.
+
+For deterministic code changes that do not need a model call, reconcile the existing SRS, architecture, matrix evidence, and rendered views in seconds:
+
+```bash
+python -m spec_generator.cli intent_model.json --system-baseline baseline.json \
+  -o artifacts-2026-09-12_20-18-37 --reconcile-artifacts \
+  --reconcile-out artifacts-2026-09-12_20-18-37-reconciled
+```
+
+The comparison directory is a new generation; the source stays untouched. Reconciliation writes `audit.jsonl` with actor, hashes, changes, and destination. It uses semantic-equivalence rule v1: evidence and rendering metadata can change without invalidating downstream work, but SRS or architecture meaning changes do. On a semantic change, `artifact-status.json` marks items, tests, specs, assembly, manifest, and traceability stale with the exact hash transition and cause, following archive policy B. Omit `--reconcile-out` only when you deliberately want to update the live directory.

@@ -15,7 +15,7 @@ from spec_generator.cli import _invalidate_from, main
 from spec_generator.errors import UserFacingError
 from spec_generator.graph import build_graph
 from spec_generator.telemetry import UsageLog
-from test_progress import INTENT, PAYLOADS, FakeModel
+from test_progress import CONTRACT_SRS, INTENT, PAYLOADS, FakeModel
 from vmodel_contracts import CONTRACT_VERSION
 
 
@@ -375,3 +375,84 @@ def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(mon
     architecture_md = (outdir / "architecture.md").read_text()
     assert "Driver: simplicity (model judgment - unverified; matrix: 2 sources" in architecture_md
     assert question not in result["bundle"]["_srs"]["open_questions"]
+
+
+def test_to_architecture_stops_real_checkpoint_before_downstream(monkeypatch, tmp_path):
+    """A live bounded experiment stops at architecture and later resumes."""
+    box = {}
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    db = sqlite3.connect(str(tmp_path / "to.sqlite"), check_same_thread=False)
+    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(db), stop_after="architecture")
+    cfg = {"configurable": {"thread_id": "to-s"}}
+    result = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
+    assert result["architecture"]
+    assert not result.get("items") and not result.get("tests") and not result.get("bundle")
+    assert set(box) == {"needs", "srs", "architecture"}
+    assert g.get_state(cfg).values["architecture"]
+
+
+def test_reconcile_artifacts_copy_hashes_semantics_stales_and_audits(tmp_path):
+    from spec_generator.cli import _reconcile_artifacts
+
+    source = tmp_path / "run"; source.mkdir()
+    question = "Specific data storage solution for persisting user points across devices"
+    intent = {**INTENT, "open_questions": [question]}
+    srs = {**CONTRACT_SRS, "open_questions": [question], "definitions": {},
+           "constraints": [], "assumptions": []}
+    architecture = {
+        "session_id": "s", "baseline_id": "test-baseline",
+        "stack_entries": [{"key": "data_persistence_service", "value": "Supabase",
+                           "baseline_refs": [], "migration_adr_id": None}],
+        "components": [],
+        "decisions": [{"decision_id": "ADR-1", "title": "Adopt Supabase",
+                       "decision": "Use Supabase", "rationale": "Simple managed backend",
+                       "driver": "simplicity", "options_considered": [], "baseline_refs": [],
+                       "migration": False, "evidence": [], "affected_repositories": [], "rejected": []}],
+        "non_functionals": {}}
+    (source / "srs.json").write_text(json.dumps(srs))
+    (source / "architecture.json").write_text(json.dumps(architecture))
+    (source / "srs.md").write_text("old")
+    (source / "architecture.md").write_text("old")
+    (source / "items.json").write_text("[]")
+    target = tmp_path / "generation-2"
+
+    audit = _reconcile_artifacts(intent, SYSTEM_BASELINE, source, target)
+    assert audit["semantic_changed"] == ["srs"] and audit["downstream"] == "stale"
+    assert question not in json.loads((target / "srs.json").read_text())["open_questions"]
+    assert "matrix: 2 sources" in (target / "architecture.md").read_text()
+    status = json.loads((target / "artifact-status.json").read_text())
+    assert status["artifacts"]["items.json"]["state"] == "stale"
+    assert "semantic basis changed" in status["artifacts"]["items.json"]["cause"]
+    assert json.loads((target / "audit.jsonl").read_text())["actor"] == "local user"
+    assert (source / "srs.md").read_text() == "old", "comparison mode never mutates live bundle"
+
+
+def test_reconcile_render_only_keeps_downstream_valid(tmp_path):
+    from spec_generator.cli import _reconcile_artifacts, srs_document_data
+    from spec_generator.render import render_srs
+    from vmodel_contracts import SRSDocument
+
+    source = tmp_path / "run"; source.mkdir()
+    intent = dict(INTENT)
+    srs = srs_document_data(intent, CONTRACT_SRS)
+    arch = PAYLOADS["architecture"]
+    (source / "srs.json").write_text(json.dumps(srs))
+    (source / "architecture.json").write_text(json.dumps(arch))
+    (source / "srs.md").write_text(render_srs(SRSDocument.model_validate(srs)))
+    (source / "architecture.md").write_text("stale rendering")
+    (source / "items.json").write_text("[]")
+    audit = _reconcile_artifacts(intent, SYSTEM_BASELINE, source)
+    assert audit["semantic_changed"] == [] and audit["downstream"] == "valid"
+    status = json.loads((source / "artifact-status.json").read_text())
+    assert status["artifacts"] == {}
+
+
+def test_semantic_hash_equivalence_v1_ignores_evidence_but_not_open_questions():
+    from spec_generator.cli import _semantic_hash
+
+    base = {"decision": "Use Supabase", "evidence": ["old citation"], "open_questions": []}
+    evidence_only = {**base, "evidence": ["new matrix citation"]}
+    semantic = {**base, "open_questions": ["Which storage?"]}
+    assert _semantic_hash(base) == _semantic_hash(evidence_only)
+    assert _semantic_hash(base) != _semantic_hash(semantic)

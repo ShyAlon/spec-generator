@@ -1527,7 +1527,7 @@ def _compact_test_context(state: GenState, slot: dict) -> dict:
 
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
                 review: bool = False, persist=None, partials=None,
-                only_stage: str | None = None):
+                only_stage: str | None = None, stop_after: str | None = None):
     """persist(stage, data, state): optional side-effect hook fired after each
     authoring stage completes - the CLI uses it to write the bundle
     incrementally, so a late failure leaves all completed work on disk.
@@ -2428,8 +2428,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         g.add_edge(only_stage, END)
         return g.compile(checkpointer=checkpointer or MemorySaver(serde=checkpoint_serde()))
 
+    stoppable = ("needs", "srs", "architecture", "items", "tests")
+    if stop_after is not None and stop_after not in stoppable:
+        raise ValueError(f"unsupported stop_after: {stop_after}")
+
+    def edge(source: str, destination: str) -> None:
+        g.add_edge(source, END if stop_after == source else destination)
+
     g.set_entry_point("needs")
-    g.add_edge("needs", "srs")
+    edge("needs", "srs")
     if review:
         from langgraph.types import interrupt
 
@@ -2445,19 +2452,25 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # contextmanager and would print a spurious FAILED line per pause.
         g.add_node("gate_srs", _make_gate("srs", "srs"))
         g.add_node("gate_architecture", _make_gate("architecture", "architecture"))
-        g.add_edge("srs", "gate_srs")
+        if stop_after == "srs":
+            g.add_edge("srs", END)
+        else:
+            g.add_edge("srs", "gate_srs")
         g.add_conditional_edges("gate_srs",
                                 lambda st: "srs" if _gate_feedback(st, "srs") else "architecture",
                                 {"srs": "srs", "architecture": "architecture"})
-        g.add_edge("architecture", "gate_architecture")
+        if stop_after == "architecture":
+            g.add_edge("architecture", END)
+        else:
+            g.add_edge("architecture", "gate_architecture")
         g.add_conditional_edges("gate_architecture",
                                 lambda st: "architecture" if _gate_feedback(st, "architecture") else "items",
                                 {"architecture": "architecture", "items": "items"})
     else:
-        g.add_edge("srs", "architecture")
-        g.add_edge("architecture", "items")
-    g.add_edge("items", "tests")
-    g.add_edge("tests", "review")
+        edge("srs", "architecture")
+        edge("architecture", "items")
+    edge("items", "tests")
+    edge("tests", "review")
     g.add_conditional_edges("review", route_review, {"apply_fixes": "apply_fixes", "assemble": "assemble"})
     g.add_edge("apply_fixes", "items")
     g.add_edge("assemble", END)
