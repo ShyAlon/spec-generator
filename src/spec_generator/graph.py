@@ -54,6 +54,7 @@ REVIEW_PASSES = 2  # independent review rounds; fixes applied by re-running the 
 class GenState(TypedDict, total=False):
     intent_model: dict
     system_baseline: dict
+    conops: dict               # founder-confirmed Concept of Operations; absent only for legacy sessions
     needs: dict
     srs: dict
     requirements: dict
@@ -1052,6 +1053,33 @@ def _dedupe_adr_slots(slots: list[dict], bodies: dict) -> list[str]:
         bodies.update(new_bodies)
         slots[:] = merged
     return notes
+
+
+# Concept of Operations execution gate. The founder's concept-level decision
+# outranks technology preferences: architecture implements it, never re-decides it.
+def _check_conops_execution(arch: ArchitectureOverview, conops: dict | None) -> None:
+    if not conops:
+        return  # legacy sessions degrade in the review renderer, not by failing
+    selected = str((conops.get("decision") or {}).get("selected_concept", "")).strip()
+    if not selected:
+        raise ModelStructureError("CONOPS has no selected concept")
+    text = " ".join([*(e.value for e in arch.stack_entries),
+                     *(d.title + " " + d.decision + " " + d.rationale for d in arch.decisions)]).lower()
+    normalized = _re.sub(r"[^a-z0-9+]+", " ", selected.lower()).strip()
+    # Canonical concept discriminators avoid requiring the exact display phrase
+    # when implementation names it naturally ("native mobile application").
+    discriminators = {
+        "native app": ("native",), "native application": ("native",),
+        "pwa": ("pwa", "progressive web app"),
+        "progressive web app": ("pwa", "progressive web app"),
+        "web app": ("web app", "web application"),
+        "web plus native bridge": ("bridge", "hybrid"),
+        "web + native bridge": ("bridge", "hybrid"),
+    }.get(normalized, (normalized,))
+    if not any(term and term in text for term in discriminators):
+        raise ModelStructureError(
+            f"architecture does not execute founder-confirmed CONOPS concept {selected!r}; "
+            "name the concept in a stack entry or ADR and implement it rather than choosing a replacement")
 
 
 # Open-question resolution (2026-09-13 greenfield defect): the SRS carried
@@ -2062,6 +2090,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     "that fails the current contract is re-asked, not the whole stage; if the same gate error "
                     "repeats after the re-ask, report it: a persistent gate failure is a pipeline bug, not a model limit.",
                 ) from e
+            _check_conops_execution(arch, state.get("conops"))
             try:
                 _check_candidate_grounding(arch, state["intent_model"],
                                            contested=part.get("contested"))

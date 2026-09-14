@@ -150,7 +150,8 @@ _PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fill
                       "tests": ("tests_fills",)}
 
 
-def _make_persist(intent: dict, outdir: Path, greenfield: bool = False):
+def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
+                  conops_present: bool = True):
     """The incremental bundle writer (his ask 2026-09-09: 'persist them
     intermittently so we'll have some of the data'). Fires after each stage;
     the final assembly writes remain the canonical full bundle."""
@@ -171,7 +172,7 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False):
             body = _legacy_arch_fill({**data, "session_id": sid})  # pre-0.8.0 checkpoints lack the ADR-0021 fields
             _atomic_write(outdir / "architecture.json", json.dumps(body, indent=2))
             arch = ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
-            _atomic_write(outdir / "architecture.md", render_architecture(arch, greenfield=greenfield))
+            _atomic_write(outdir / "architecture.md", render_architecture(arch, greenfield=greenfield, conops_present=conops_present))
         elif stage == "items":
             _atomic_write(outdir / "items.json", json.dumps(data, indent=2))
             for i in data:
@@ -431,6 +432,8 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     state = _load_stage_state(source, intent, baseline, args.only_stage)
     _prepare_stage_iteration(source, outdir)
     _atomic_write(outdir / "system-baseline.json", json.dumps(baseline, indent=2))
+    if conops:
+        _atomic_write(outdir / "conops.json", json.dumps(conops, indent=2))
     loaded = [*(_ONLY_STAGE_INPUTS[args.only_stage])]
     print(f"Stage iteration: {args.only_stage}", file=sys.stderr)
     print(f"Loaded immutable source: {source}", file=sys.stderr)
@@ -468,6 +471,8 @@ def main() -> None:
                     help="completed artifacts directory supplying upstream inputs for --only-stage")
     ap.add_argument("--system-baseline", type=Path, default=None,
                     help="versioned SystemBaseline JSON; existing repo manifest or explicit greenfield declaration")
+    ap.add_argument("--conops", type=Path, default=None,
+                    help="founder-confirmed conops.json from interview-engine; omit only for legacy sessions")
     args = ap.parse_args()
     if bool(args.only_stage) != bool(args.source_artifacts):
         ap.error("--only-stage and --source-artifacts must be used together")
@@ -508,6 +513,24 @@ def main() -> None:
             f"{args.intent_model} (it validates against the current schema first and refuses on real drift); "
             "otherwise re-run the interview (minutes on a local model) to regenerate the intent model.",
         ) from e
+    conops = None
+    if args.conops is not None:
+        from vmodel_contracts import ConOpsDocument
+        try:
+            conops = ConOpsDocument.model_validate_json(args.conops.read_text()).model_dump(mode="json")
+        except Exception as e:
+            raise UserFacingError(
+                f"Concept of Operations file is invalid: {args.conops}.",
+                f"contract validation failed: {str(e)[:240]}",
+                "pass the conops.json written by interview-engine; do not hand-edit a concept decision.") from e
+        if conops["session_id"] != intent["session_id"]:
+            raise UserFacingError("Concept of Operations belongs to a different session.",
+                                  f"intent={intent['session_id']}, conops={conops['session_id']}",
+                                  "pass intent_model.json and conops.json from the same interview output directory.")
+    else:
+        print("WARNING: no Concept of Operations supplied (legacy session) - any product-concept "
+              "choice in architecture is unverified and must be challenged.", file=sys.stderr)
+
     if args.system_baseline is None:
         raise UserFacingError(
             "--system-baseline is required.",
@@ -540,7 +563,8 @@ def main() -> None:
     conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
     partials = _make_partials(outdir)
     graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review,
-                        persist=_make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield"),
+                        persist=_make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
+                                              conops_present=conops is not None),
                         partials=partials)
     from . import model_config as _mc
 
@@ -560,7 +584,8 @@ def main() -> None:
         # persistence shipped: resume skips completed stages (persist never
         # fires for them), so without this the bundle dir stays empty. State
         # is authoritative - overwrite any stale files.
-        written = _backfill_persist(_make_persist(intent, outdir), prior)
+        written = _backfill_persist(_make_persist(intent, outdir,
+                                                        conops_present=conops is not None), prior)
         if written:
             print(f"Artifacts for already-completed stages written to the bundle dir ({', '.join(written)}).",
                   file=sys.stderr)
@@ -621,7 +646,7 @@ def main() -> None:
         result = _run_with_gates(graph, cfg, intent, outdir, resume=resume)
     else:
         result = graph.invoke(None, cfg) if resume else graph.invoke(
-            {"intent_model": intent, "system_baseline": baseline}, cfg)
+            {"intent_model": intent, "system_baseline": baseline, "conops": conops}, cfg)
 
     b = result["bundle"]
     try:
@@ -643,7 +668,8 @@ def main() -> None:
     srs = SRSDocument.model_validate(coerce_for_model(b["_srs"], SRSDocument))
     (outdir / "srs.md").write_text(render_srs(srs))
     (outdir / "architecture.md").write_text(
-        render_architecture(arch, greenfield=baseline["mode"] == "greenfield"))
+        render_architecture(arch, greenfield=baseline["mode"] == "greenfield",
+                            conops_present=conops is not None))
     (outdir / "architecture.json").write_text(arch.model_dump_json(indent=2))
     for i in items:
         (outdir / "specs" / f"{i.spec_id}.md").write_text(render_spec_file(i))

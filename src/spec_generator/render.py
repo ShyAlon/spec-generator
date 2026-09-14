@@ -221,7 +221,8 @@ def _driver_evidence(decision) -> str:
         return f"matrix: registry weekly downloads {metrics['weekly_downloads']:,}"
     return "model judgment - unverified; challenge here"
 
-def render_architecture(arch: ArchitectureOverview, greenfield: bool = False) -> str:
+def render_architecture(arch: ArchitectureOverview, greenfield: bool = False,
+                        conops_present: bool = True) -> str:
     """Human-readable architecture for the founder review gate (ADR-0019) and
     the bundle's architecture.md. greenfield=True labels ungrounded entries as
     what they ARE - new design, not a migration (2026-09-13: his greenfield
@@ -229,6 +230,10 @@ def render_architecture(arch: ArchitectureOverview, greenfield: bool = False) ->
     entries, contradicting the greenfield no-migration semantics fixed the
     same morning)."""
     lines = ["# Architecture overview\n"]
+    if not conops_present:
+        lines += ["## Concept of Operations grounding",
+                  "- UNVERIFIED: no Concept of Operations artifact was supplied (legacy session). "
+                  "Any product-concept decision in this architecture must be challenged before approval.", ""]
     if arch.stack_entries:
         lines.append("## Stack")
         for e in arch.stack_entries:

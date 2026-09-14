@@ -377,7 +377,7 @@ def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monke
     from spec_generator.errors import UserFacingError
     from spec_generator.graph import checkpoint_serde
 
-    intent = {**INTENT, "contract_version": "0.13.0"}
+    intent = {**INTENT, "contract_version": "0.14.1"}
     intent_path = tmp_path / "intent.json"
     intent_path.write_text(json.dumps(intent))
     baseline_path = tmp_path / "baseline.json"
@@ -637,7 +637,7 @@ def test_d3js_accepted_for_a_visualization_slot_end_to_end():
     monkeypatch.undo()
 
 
-GREENFIELD_BASELINE = {"contract_version": "0.13.0", "baseline_id": "gf-test",
+GREENFIELD_BASELINE = {"contract_version": "0.14.1", "baseline_id": "gf-test",
                        "system_name": "New product", "mode": "greenfield",
                        "repositories": [], "immutable_decisions": []}
 
@@ -725,7 +725,7 @@ def test_brownfield_still_requires_cite_or_migrate(monkeypatch):
     from vmodel_contracts import ArchitectureOverview
     from conftest import SYSTEM_BASELINE
     arch = ArchitectureOverview.model_validate({
-        "contract_version": "0.13.0", "session_id": "s", "baseline_id": "test-baseline",
+        "contract_version": "0.14.1", "session_id": "s", "baseline_id": "test-baseline",
         "stack_entries": [{"key": "language", "value": "ts",
                            "baseline_refs": ["repo:spec-generator"], "migration_adr_id": None}],
         "components": [{"name": "api", "responsibility": "serve", "requirement_ids": ["R-1"],
