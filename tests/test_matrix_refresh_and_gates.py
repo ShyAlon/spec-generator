@@ -111,22 +111,15 @@ def _body(title, decision, driver="simplicity", options=None, rationale="r"):
             "driver": driver, "options_considered": options or [], "baseline_refs": []}
 
 
-def test_dedupe_merges_same_matrix_row():
+def test_dedupe_is_advisory_and_mutates_nothing():
     slots = [_slot(1, "use-fastapi"), _slot(2, "adopt-postgres"), _slot(3, "fastapi-api")]
-    bodies = {"ADR-1": _body("Adopt FastAPI", "Use FastAPI", options=[{"option": "Flask", "reason": "x"}]),
+    bodies = {"ADR-1": _body("Adopt FastAPI", "Use FastAPI"),
               "ADR-2": _body("Adopt PostgreSQL", "Use PostgreSQL"),
-              "ADR-3": _body("FastAPI for the API", "FastAPI serves the API",
-                             driver="founder_constraint", options=[{"option": "Django", "reason": "y"}],
-                             rationale="async")}
+              "ADR-3": _body("FastAPI for the API", "FastAPI serves the API")}
+    before=(json.loads(json.dumps(slots)),json.loads(json.dumps(bodies)))
     notes = _dedupe_adr_slots(slots, bodies)
-    assert len(notes) == 1
-    assert [s["decision_id"] for s in slots] == ["ADR-1", "ADR-2"]  # gapless
-    merged = bodies["ADR-1"]
-    assert merged["driver"] == "founder_constraint"
-    assert {o["option"] for o in merged["options_considered"]} == {"Flask", "Django"}
-    assert "async" in merged["rationale"]
-    assert _dedupe_adr_slots(slots, bodies) == []  # idempotent
-
+    assert len(notes)==1 and notes[0]["kind"]=="possible_duplicate_adr"
+    assert (slots,bodies)==before
 
 def test_dedupe_react_vs_react_native_never_merge():
     assert _same_decision_tech(_body("Adopt React", "Use React"),

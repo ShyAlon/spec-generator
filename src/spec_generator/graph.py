@@ -59,6 +59,7 @@ class GenState(TypedDict, total=False):
     srs: dict
     requirements: dict
     guard_flags: list[str]
+    architecture_advisories: list[dict]
     architecture: dict
     items: list[dict]
     tests: list[dict]
@@ -228,8 +229,9 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
             ) from parse_err
         if progress is not None:
             progress.emit(ProgressEvent(stage, "", "item", _t.time(), None,
-                                        ("model output failed the contract" if contract_err is not None
-                                         else "model output was not valid JSON") + " - retrying once with feedback"))
+                                        (("model output failed the contract: " + _contract_errors(contract_err))
+                                         if contract_err is not None else "model output was not valid JSON")
+                                        + " - retrying once with feedback"))
         if contract_err is not None:
             fb = ("Your previous reply failed the output contract: " + _contract_errors(contract_err) + ". "
                   "Return ONLY the complete corrected JSON payload - every required field present at every "
@@ -1001,61 +1003,24 @@ def _same_decision_tech(b1: dict, b2: dict) -> str | None:
     return None
 
 
-def _dedupe_adr_slots(slots: list[dict], bodies: dict) -> list[str]:
-    """P2 (2026-09-13, his pick): two OPTIONAL ADRs deciding the SAME
-    technology are merged deterministically - the overnight run emitted
-    1~6, 4~5, 8~9. Migration (pipeline-required) slots are never merged:
-    each owns a distinct departure. The merged ADR keeps both drivers
-    (founder_constraint wins; the other is preserved in the rationale) and
-    the union of considered options. Ids renumber gapless; entry/component
-    migration_adr_id links are assigned at ASSEMBLY from the slots, so
-    renumbering here cannot orphan a link."""
-    notes: list[str] = []
-    required = [sl for sl in slots if sl["migration"]]
-    optional = [sl for sl in slots if not sl["migration"]]
-    groups: list[list[dict]] = []
-    for slot in optional:
-        for g in groups:
-            if _same_decision_tech(bodies[g[0]["decision_id"]], bodies[slot["decision_id"]]):
-                g.append(slot)
-                break
-        else:
-            groups.append([slot])
-    kept_optional = []
-    for g in groups:
-        keep = g[0]
-        if len(g) > 1:
-            body = bodies[keep["decision_id"]]
-            for dup in g[1:]:
-                db = bodies.pop(dup["decision_id"])
-                notes.append(f"{dup['decision_id']} '{dup['slug']}' merged into "
-                             f"{keep['decision_id']} '{keep['slug']}'")
-                if db["rationale"] and db["rationale"] not in body["rationale"]:
-                    extra = db["rationale"]
-                    if db["driver"] != body["driver"]:
-                        extra += f" (driver: {db['driver']})"
-                    body["rationale"] = body["rationale"].rstrip() + "\n\nAlso decided here: " + extra
-                if db["driver"] == "founder_constraint":
-                    body["driver"] = "founder_constraint"
-                seen = {o.get("option", "").lower() for o in body["options_considered"]
-                        if isinstance(o, dict)}
-                for o in db["options_considered"]:
-                    if isinstance(o, dict) and o.get("option", "").lower() not in seen:
-                        body["options_considered"].append(o)
-                        seen.add(o.get("option", "").lower())
-                body["baseline_refs"] = sorted(set(body["baseline_refs"]) | set(db["baseline_refs"]))
-        kept_optional.append(keep)
-    if notes:
-        merged = required + kept_optional
-        new_bodies = {}
-        for i, slot in enumerate(merged, start=1):
-            new_id = f"ADR-{i}"
-            new_bodies[new_id] = bodies.pop(slot["decision_id"])
-            slot["decision_id"] = new_id
-        bodies.clear()
-        bodies.update(new_bodies)
-        slots[:] = merged
-    return notes
+def _dedupe_adr_slots(slots: list[dict], bodies: dict) -> list[dict]:
+    """Return advisory duplicate candidates without changing decisions.
+
+    Similarity is evidence for review, never authority to remove or rewrite an
+    architecture decision. Migration decisions are excluded because each owns
+    a distinct pipeline-computed departure.
+    """
+    findings=[]
+    optional=[sl for sl in slots if not sl["migration"]]
+    for i,left in enumerate(optional):
+        for right in optional[i+1:]:
+            reason=_same_decision_tech(bodies[left["decision_id"]],bodies[right["decision_id"]])
+            if reason:
+                findings.append({"kind":"possible_duplicate_adr","left_id":left["decision_id"],
+                                 "left_slug":left["slug"],"right_id":right["decision_id"],
+                                 "right_slug":right["slug"],"reason":reason,
+                                 "action":"Review at the architecture gate; merge only if they express the same decision."})
+    return findings
 
 
 # Concept of Operations execution gate. The founder's concept-level decision
@@ -2062,11 +2027,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
             # P2 ADR dedupe (deterministic, his 2026-09-13 pick): merge
             # same-technology ADRs BEFORE assembly; the merge log is visible.
-            _merges = _dedupe_adr_slots(part["adr_slots"], adr_bodies)
-            for _m in _merges:
-                model_config._console_line(f"     - ADR dedupe: {_m}")
-            if _merges:
-                _save()
+            _advisories = _dedupe_adr_slots(part["adr_slots"], adr_bodies)
+            for _a in _advisories:
+                model_config._console_line(
+                    f"     - ADR review advisory: {_a['left_id']} '{_a['left_slug']}' and "
+                    f"{_a['right_id']} '{_a['right_slug']}' may overlap ({_a['reason']}); "
+                    "nothing was merged")
 
             # 7. One micro-call per non-functional requirement: the position.
             nfr = part.setdefault("non_functionals", {})
@@ -2152,7 +2118,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if persist:
             persist("architecture", data, state)
         resolved_questions = _resolve_answered_open_questions(state, persist, architecture=data)
-        result = {"architecture": data,
+        result = {"architecture": data, "architecture_advisories": _advisories,
                   "gate_feedback": _clear_feedback(state, "architecture")}
         # Nested mutation is not a LangGraph state update. Return the changed
         # SRS explicitly so the resolution marker survives the checkpoint and
@@ -2472,7 +2438,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
         def _make_gate(stage_key: str, artifact_key: str):
             def node_gate(state: GenState) -> dict:
-                verdict = interrupt({"gate": stage_key, "artifact": state.get(artifact_key)})
+                verdict = interrupt({"gate": stage_key, "artifact": state.get(artifact_key),
+                                     "advisories": state.get("architecture_advisories", []) if stage_key == "architecture" else []})
                 if verdict.get("action") == "regenerate":
                     return {"gate_feedback": {stage_key: verdict["feedback"]}}
                 return {}  # accept (edits landed via update_state before resume)

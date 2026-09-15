@@ -265,6 +265,7 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             result = graph.invoke(None, cfg)
             continue
         gate, artifact = payload["gate"], payload["artifact"]
+        advisories = payload.get("advisories") or []
         title = "SRS (requirements + acceptance criteria)" if gate == "srs" else "architecture overview"
         try:
             md = _render_gate(gate, artifact, intent)
@@ -284,10 +285,17 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
                   "do NOT rerun the command.\n", file=sys.stderr)
             result = graph.invoke(initial_state, cfg)
             continue
+        if advisories:
+            md += "\n\n## Review advisories\n" + "\n".join(
+                f"- {a['left_id']} {a['left_slug']} and {a['right_id']} {a['right_slug']}: {a['reason']}. Nothing was merged; decide at this gate."
+                for a in advisories)
         (outdir / f"gate_{gate}.md").write_text(md)
         (outdir / f"gate_{gate}.json").write_text(json.dumps(artifact, indent=2))
+        (outdir / f"gate_{gate}.advisories.json").write_text(json.dumps({"gate":gate,"advisories":advisories},indent=2))
         print(f"\n===== REVIEW GATE: the {title} =====\n", file=sys.stderr)
         print(md, file=sys.stderr)
+        if advisories:
+            print(f"(review advisories: {outdir}/gate_{gate}.advisories.json)", file=sys.stderr)
         print(f"(full artifact: {outdir}/gate_{gate}.md | editable JSON: {outdir}/gate_{gate}.json)", file=sys.stderr)
         while True:
             action = input("[a]ccept / [e]dit / [f]eedback / [r]eject? ").strip().lower()
