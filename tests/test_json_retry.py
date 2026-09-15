@@ -158,4 +158,4 @@ def test_persistent_contract_drift_gets_friendly_error(monkeypatch):
     rendered = ei.value.render()
     assert "does not satisfy the contract" in rendered
     assert "title" in rendered
-    assert "SPEC_GENERATOR_MODEL_SRS" in rendered
+    assert "without a model upgrade" in rendered
