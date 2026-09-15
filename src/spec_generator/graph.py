@@ -34,7 +34,6 @@ from vmodel_contracts import (
 from pydantic import ValidationError
 
 from . import model_config
-from difflib import SequenceMatcher
 
 from .tech_candidates import (KIND_LEXICONS, PLATFORM_CHECKED_KINDS,
                               SLOT_KEY_SUBSTR, TECH_CANDIDATES,
@@ -969,37 +968,23 @@ def _adr_subject(title: str) -> str:
     return _re.sub(r"[^a-z0-9]+", " ", t).strip()
 
 
+ADVISORY_TOKEN_JACCARD_THRESHOLD = 0.80
+
+
 def _same_decision_tech(b1: dict, b2: dict) -> str | None:
-    """P2 duplicate verdict + reason (2026-09-13 founder choice: string
-    distance, matrix-normalized FIRST). Each ADR's technology resolves to its
-    matrix row; the same row = a duplicate. DISTINCT rows are never
-    duplicates (React vs React Native is the canonical near-name false
-    positive - high string similarity, genuinely different tech). Only when
-    the matrix knows NEITHER does raw string distance decide, at a strict
-    0.9: kind/platform evidence is unavailable for unknown tech, so the bar
-    is higher, not lower."""
-    # Dedupe only the decision SUBJECT. Decision prose often names several
-    # implementation technologies (a PWA ADR can mention Python/FastAPI), so
-    # scanning whole bodies makes incidental names collapse unrelated ADRs.
+    """Advisory only: registry identity first, normalized-token Jaccard >= .80."""
     r1 = primary_row_in_text(b1["title"])
     r2 = primary_row_in_text(b2["title"])
     if r1 and r2:
-        return (f"same technology: {r1['name']}") if r1["name"] == r2["name"] else None
+        return (f"same technology id: {r1['technology_id']}") if r1["technology_id"] == r2["technology_id"] else None
     if r1 or r2:
-        return None  # one known, one not - cannot prove duplication
-    s1, s2 = _adr_subject(b1["title"]), _adr_subject(b2["title"])
-    if not s1 or not s2:
         return None
-    # Real duplicates name the same tech and differ only in trailing
-    # qualifiers ("Adopt Redis" / "Adopt Redis for caching"): token
-    # containment catches those. Near-spellings fall back to strict
-    # distance. Both require the tech name itself to match, so distinct
-    # unknown techs ("AcmeSearch" / "ZyphoraDB") never merge.
-    t1, t2 = set(s1.split()), set(s2.split())
-    if t1 and t2 and (t1 <= t2 or t2 <= t1):
-        return f"same decision subject ('{s1}' ~ '{s2}')"
-    if s1 != s2 and SequenceMatcher(None, s1, s2).ratio() >= 0.9:
-        return f"near-identical decision subjects ('{s1}' ~ '{s2}')"
+    t1, t2 = set(_adr_subject(b1["title"]).split()), set(_adr_subject(b2["title"]).split())
+    if not t1 or not t2:
+        return None
+    score = len(t1 & t2) / len(t1 | t2)
+    if score >= ADVISORY_TOKEN_JACCARD_THRESHOLD:
+        return f"normalized-token Jaccard {score:.2f} >= {ADVISORY_TOKEN_JACCARD_THRESHOLD:.2f}"
     return None
 
 

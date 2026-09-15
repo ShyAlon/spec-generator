@@ -129,8 +129,8 @@ def test_dedupe_react_vs_react_native_never_merge():
 def test_dedupe_unknown_tech_containment_and_distance():
     assert _same_decision_tech(_body("Adopt Redis", "x"), _body("Adopt Redis for caching", "y"))
     # Redis IS matrix-known; both resolve to the same row. Unknown pairs:
-    assert _same_decision_tech(_body("Choose ZyphoraDB", "x"),
-                               _body("Adopt ZyphoraDB for data", "y"))
+    assert _same_decision_tech(_body("Choose ZyphoraDB data store", "x"),
+                               _body("Adopt ZyphoraDB data store", "y"))
     assert _same_decision_tech(_body("Choose AcmeSearch", "x"),
                                _body("Choose ZyphoraDB", "y")) is None
 
