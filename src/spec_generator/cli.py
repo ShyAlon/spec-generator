@@ -768,7 +768,13 @@ def main() -> None:
         # checkpoints predate the baseline feature entirely (the 2026-09-12
         # --from architecture KeyError 'system_baseline'): merge the flag
         # value into the resumed state so baseline-consuming stages see it.
-        graph.update_state(cfg, {"system_baseline": baseline})
+        # Write AS the last baseline-independent node. A bare update on a
+        # failed/interrupted review graph can fork from the failed architecture
+        # task and leave that task's state unchanged (the live 2026-09-15
+        # accepted-SRS resume did exactly that). Re-anchoring at gate_srs
+        # preserves needs + accepted SRS and schedules architecture next.
+        graph.update_state(cfg, {"system_baseline": baseline},
+                           as_node=_predecessor("architecture", args.review))
         print("System baseline merged into the resumed run (its checkpoint predates the baseline feature).",
               file=sys.stderr)
     if args.from_stage:

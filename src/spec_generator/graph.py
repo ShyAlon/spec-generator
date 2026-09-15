@@ -1639,6 +1639,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                           validate=_check(lambda d: StakeholderNeedsSet.model_validate(
                               {**_strip_pipeline_owned(d), "session_id": intent.session_id})))
         data.setdefault("session_id", intent.session_id)
+        from .skeleton import merge_duplicate_needs
+        before=len(data.get("needs") or [])
+        data=merge_duplicate_needs(data)
+        removed=before-len(data.get("needs") or [])
+        if removed:
+            model_config._console_line(f"   needs guard: merged {removed} high-confidence duplicate(s) before SRS slot creation")
         capped = _experiment_cap("NEEDS", list(data.get("needs") or []), "needs", progress)
         if len(capped) != len(data.get("needs") or []):
             data["needs"] = capped

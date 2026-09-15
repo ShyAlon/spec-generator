@@ -408,6 +408,38 @@ def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monke
     assert (outdir / "manifest.json").exists()  # downstream bundle assembled
 
 
+def test_review_resume_after_accepted_srs_merges_baseline_without_rerunning_srs(monkeypatch, tmp_path):
+    import sqlite3
+    import sys
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from langgraph.types import Command
+    from spec_generator import cli
+    from spec_generator.graph import checkpoint_serde
+
+    intent={**INTENT,"contract_version":"0.14.1"}
+    ip=tmp_path/"intent.json";ip.write_text(json.dumps(intent))
+    bp=tmp_path/"baseline.json";bp.write_text(json.dumps(SYSTEM_BASELINE))
+    out=tmp_path/"artifacts";out.mkdir();sid=intent["session_id"]
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k:_MicroModel(stage,k.get("schema") or {},[]))
+    conn=sqlite3.connect(str(out/"checkpoints.sqlite"),check_same_thread=False)
+    old=build_graph(UsageLog(sid),checkpointer=SqliteSaver(conn,serde=checkpoint_serde()),review=True)
+    old.invoke({"intent_model":intent},{"configurable":{"thread_id":sid}})
+    # accept the already-reviewed SRS; old architecture then fails because its
+    # checkpoint has no baseline, reproducing the production lineage.
+    with pytest.raises(UserFacingError,match="no system baseline"):
+        old.invoke(Command(resume={"action":"accept"}),{"configurable":{"thread_id":sid}})
+    calls=[]
+    model=_MicroModel("architecture",{},[])
+    def factory(stage,**k):
+        calls.append(stage);return _MicroModel(stage,k.get("schema") or {},[])
+    monkeypatch.setattr(model_config,"build_chat_model",factory)
+    monkeypatch.setattr("builtins.input",lambda prompt:"a")
+    monkeypatch.setattr(sys,"argv",["prog",str(ip),"--system-baseline",str(bp),"-o",str(out),"--review"])
+    cli.main()
+    assert "needs" not in calls and "srs" not in calls
+    assert json.loads((out/"architecture.json").read_text())["baseline_id"]==SYSTEM_BASELINE["baseline_id"]
+
+
 def test_verbatim_fact_text_is_grounded_not_rejected(monkeypatch):
     # the exact 2026-09-12 live rejection: the model COPIED the baseline fact
     # 'python -m spec_generator.cli' for stack:module_entry_points and the old

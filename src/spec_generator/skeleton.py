@@ -13,6 +13,8 @@ twice, slot missing) - a retryable model error; the retry feedback names it.
 """
 from __future__ import annotations
 
+import re
+
 
 class ModelStructureError(Exception):
     """The model's fills cannot be mapped onto the skeleton."""
@@ -48,6 +50,36 @@ def is_future_commitment(text: str) -> bool:
 
 def deferred_needs(needs: dict) -> list[dict]:
     return [n for n in (needs.get("needs") or []) if is_future_commitment(n.get("statement", ""))]
+
+def _words(text: str) -> set[str]:
+    stop={"the","a","an","and","or","for","to","of","in","on","with","should","shall","system","app","application"}
+    return {w for w in re.findall(r"[a-z0-9]+",str(text).lower()) if len(w)>2 and w not in stop}
+
+
+def merge_duplicate_needs(needs: dict, threshold: float = 0.72) -> dict:
+    """Deterministically collapse near-identical generated needs.
+
+    Needs are the structural source of SRS slots. If the needs model repeats
+    one capability, letting both through guarantees duplicate requirements.
+    Merge only high-confidence lexical duplicates of the same kind; preserve
+    first wording/order and union all trace ids/fields. Borderline semantic
+    overlap remains visible for human review rather than guessed away.
+    """
+    out=[]
+    for raw in needs.get("needs") or []:
+        item=dict(raw); words=_words(item.get("statement",""))
+        match=None
+        for prior in out:
+            pwords=_words(prior.get("statement",""))
+            score=(len(words&pwords)/len(words|pwords)) if words|pwords else 0
+            same_title=bool(words and pwords and words==pwords)
+            if prior.get("kind")==item.get("kind") and (score>=threshold or same_title):
+                match=prior;break
+        if match is None: out.append(item);continue
+        match["intent_fields"]=list(dict.fromkeys((match.get("intent_fields") or [])+(item.get("intent_fields") or [])))
+        match["intent_need_ids"]=list(dict.fromkeys((match.get("intent_need_ids") or [])+(item.get("intent_need_ids") or [])))
+    for i,item in enumerate(out,1): item["need_id"]=f"N-{i}"
+    return {**needs,"needs":out}
 
 
 def build_srs_skeleton(needs: dict) -> list[dict]:

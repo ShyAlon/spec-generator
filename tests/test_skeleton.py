@@ -126,3 +126,24 @@ def test_tests_merged_body_validated_at_stage(monkeypatch):
                       "definition": "not-an-object"}]}
     e = _run_until_stage_error(monkeypatch, "tests", bad)
     assert "tests" in e.render()
+
+
+def test_duplicate_needs_merge_before_they_create_duplicate_requirements():
+    from spec_generator.skeleton import merge_duplicate_needs
+    data={"session_id":"s","needs":[
+      {"need_id":"N-1","stakeholder":"manager","statement":"Predict shipment damage and delay risks before arrival","kind":"functional","intent_fields":["problem_statement"],"intent_need_ids":["SN-1"]},
+      {"need_id":"N-6","stakeholder":"manager","statement":"Predict shipment damage and delay risks before arrival","kind":"functional","intent_fields":["core_value_proposition"],"intent_need_ids":["SN-4"]},
+      {"need_id":"N-9","stakeholder":"operator","statement":"Scale horizontally for growing data volume","kind":"non_functional","intent_fields":[],"intent_need_ids":["SN-5"]}]}
+    merged=merge_duplicate_needs(data)
+    assert [n["need_id"] for n in merged["needs"]]==["N-1","N-2"]
+    assert merged["needs"][0]["intent_need_ids"]==["SN-1","SN-4"]
+    assert merged["needs"][0]["intent_fields"]==["problem_statement","core_value_proposition"]
+
+
+def test_borderline_or_cross_kind_needs_are_not_silently_merged():
+    from spec_generator.skeleton import merge_duplicate_needs
+    data={"needs":[
+      {"need_id":"N-1","statement":"Scale horizontally for growing daily data volume","kind":"non_functional","intent_fields":[],"intent_need_ids":[]},
+      {"need_id":"N-2","statement":"Process a few dozen MB of data each day","kind":"non_functional","intent_fields":[],"intent_need_ids":[]},
+      {"need_id":"N-3","statement":"Scale horizontally for growing daily data volume","kind":"functional","intent_fields":[],"intent_need_ids":[]}]}
+    assert len(merge_duplicate_needs(data)["needs"])==3
