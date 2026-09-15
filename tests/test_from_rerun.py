@@ -456,3 +456,28 @@ def test_semantic_hash_equivalence_v1_ignores_evidence_but_not_open_questions():
     semantic = {**base, "open_questions": ["Which storage?"]}
     assert _semantic_hash(base) == _semantic_hash(evidence_only)
     assert _semantic_hash(base) != _semantic_hash(semantic)
+
+
+def test_full_resume_reconnects_checkpoint_stopped_after_architecture(monkeypatch,tmp_path):
+    """Exact production bug: --to architecture leaves no pending SQLite task; full resume must add the edge."""
+    from spec_generator.cli import _resume_after_bounded_stop
+    box={}
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**kw:box.setdefault(stage,FakeModel(stage)))
+    db_path=str(tmp_path/"bounded.sqlite"); cfg={"configurable":{"thread_id":"bounded"}}
+    first=build_graph(UsageLog("bounded"),checkpointer=SqliteSaver(sqlite3.connect(db_path,check_same_thread=False)),stop_after="architecture")
+    stopped=first.invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},cfg)
+    assert stopped.get("architecture") and not stopped.get("bundle") and not first.get_state(cfg).next
+    full=build_graph(UsageLog("bounded"),checkpointer=SqliteSaver(sqlite3.connect(db_path,check_same_thread=False)))
+    prior=full.get_state(cfg).values
+    assert _resume_after_bounded_stop(full,cfg,prior)=="architecture"
+    resumed=full.invoke(None,cfg)
+    assert resumed.get("bundle") and resumed["items"] and resumed["tests"]
+
+
+def test_render_diagnostics_do_not_blame_model_for_none_bundle():
+    import inspect
+    from spec_generator import cli
+    source=inspect.getsource(cli.main)
+    assert "assembly produced no bundle" in source
+    assert "changing the model cannot fix a code exception" in source
+    assert "artifact '{label}'" in source

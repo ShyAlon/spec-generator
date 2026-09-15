@@ -326,6 +326,22 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
         result = graph.invoke(Command(resume={"action": "accept"}), cfg)
 
 
+def _resume_after_bounded_stop(graph, cfg: dict, prior: dict) -> str | None:
+    """Re-open a checkpoint intentionally ended by --to STAGE.
+
+    A stop-after graph records a complete state with no pending task. Rebuilding
+    the graph without --to cannot manufacture the missing edge from SQLite, so
+    explicitly replay the last completed node against the new full topology.
+    """
+    if prior.get("bundle") or graph.get_state(cfg).next:
+        return None
+    for stage, downstream in (("architecture", "items"), ("srs", "architecture"), ("needs", "srs")):
+        if prior.get(stage) and not prior.get(downstream):
+            graph.update_state(cfg, {}, as_node=stage)
+            return stage
+    return None
+
+
 def _default_outdir(intent_path: Path, session_id: str) -> Path:
     """Canonical stable output: <artifacts>/<session>/spec."""
     from . import model_config
@@ -724,6 +740,10 @@ def main() -> None:
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
     resume = bool(prior)
+    if resume and not args.to_stage:
+        bounded_stage = _resume_after_bounded_stop(graph, cfg, prior)
+        if bounded_stage:
+            print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through the full pipeline.", file=sys.stderr)
     if resume:
         prior_conops = prior.get("conops")
         if prior_conops != conops:
@@ -824,21 +844,44 @@ def main() -> None:
         print(f"Stopped after stage '{args.to_stage}' as requested. Checkpoint and stage artifacts are resumable in {outdir}.")
         return
 
-    b = result["bundle"]
-    try:
-        needs = StakeholderNeedsSet.model_validate(normalize_enums(coerce_for_model(b["_needs"], StakeholderNeedsSet), StakeholderNeedsSet))
-        reqs = RequirementSet.model_validate(normalize_enums(coerce_for_model(b["_requirements"], RequirementSet), RequirementSet))
-        arch = ArchitectureOverview.model_validate(coerce_for_model(b["_architecture"], ArchitectureOverview))
-        items = [ItemSpec.model_validate(coerce_for_model(i, ItemSpec)) for i in b["items"]]
-        manifest = SpecManifest.model_validate(coerce_for_model(b["_manifest"], SpecManifest))
-        punch = [PunchListItem.model_validate(coerce_for_model(p, PunchListItem)) for p in b["punch_list"]]
-    except Exception as e:
+    b = result.get("bundle")
+    if b is None:
+        state_keys = ", ".join(k for k, v in result.items() if v is not None)
         raise UserFacingError(
-            "a generated artifact fails the vmodel-contracts schema at render time.",
-            f"validation detail: {type(e).__name__}: {str(e)[:300]}",
-            "retry the run; if it repeats, route the failing stage to a stronger model "
-            "(SPEC_GENERATOR_MODEL_* env overrides) - authoring stages earn the strong model.",
-        ) from e
+            "assembly produced no bundle after the pipeline reported completion.",
+            f"code-level lifecycle error: terminal checkpoint contains [{state_keys}] but no bundle; "
+            "a bounded --to checkpoint may not have been reconnected to the full graph.",
+            "rerun the same command after updating spec-generator; do not change models or discard completed stages.",
+        )
+
+    def validate_artifact(label, fn):
+        try:
+            return fn()
+        except Exception as e:
+            from pydantic import ValidationError
+            category = "contract validation" if isinstance(e, ValidationError) else "code exception"
+            guidance = ("regenerate only that producing stage if the contract error persists; model escalation is optional"
+                        if isinstance(e, ValidationError) else
+                        "update/report spec-generator; changing the model cannot fix a code exception")
+            raise UserFacingError(
+                f"bundle render failed while validating artifact '{label}'.",
+                f"{category} in assemble/render: {type(e).__name__}: {str(e)[:300]}",
+                guidance + "; completed checkpoint stages remain preserved.",
+            ) from e
+
+    needs = validate_artifact("stakeholder needs", lambda: StakeholderNeedsSet.model_validate(
+        normalize_enums(coerce_for_model(b.get("_needs"), StakeholderNeedsSet), StakeholderNeedsSet)))
+    reqs = validate_artifact("requirements", lambda: RequirementSet.model_validate(
+        normalize_enums(coerce_for_model(b.get("_requirements"), RequirementSet), RequirementSet)))
+    arch = validate_artifact("architecture", lambda: ArchitectureOverview.model_validate(
+        coerce_for_model(b.get("_architecture"), ArchitectureOverview)))
+    items = validate_artifact("item specs", lambda: [ItemSpec.model_validate(coerce_for_model(i, ItemSpec))
+                                                       for i in b.get("items") or []])
+    manifest = validate_artifact("manifest", lambda: SpecManifest.model_validate(
+        coerce_for_model(b.get("_manifest"), SpecManifest)))
+    punch = validate_artifact("punch list", lambda: [PunchListItem.model_validate(coerce_for_model(x, PunchListItem))
+                                                       for x in b.get("punch_list") or []])
+
 
     (outdir / "needs.md").write_text(render_needs(needs))
     srs = SRSDocument.model_validate(coerce_for_model(b["_srs"], SRSDocument))
