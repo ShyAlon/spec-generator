@@ -562,10 +562,15 @@ def _ollama_think() -> bool:
 
 
 def build_chat_model(stage: str, structured: bool = True, schema: dict | None = None):
-    """structured=False builds the model WITHOUT the grammar format - required
-    for tool-calling loops (a format grammar would break tool-call emission).
-    schema= overrides the stage's static grammar (per-skeleton fill grammars,
-    schemas.srs_fill_schema / test_fill_schema)."""
+    """Build a live model, or a recorded-response replay when explicitly set.
+
+    structured=False builds WITHOUT the grammar format for tool calling.
+    schema= overrides the stage's static per-skeleton grammar.
+    """
+    replay = _env("VMODEL_REPLAY_DIR")
+    if replay:
+        from .replay import ReplayChatModel
+        return ReplayChatModel(stage, replay)
     cfg = for_stage(stage)
     _preflight(cfg, stage)
     if cfg.provider == "ollama" and structured and _structured_enabled():

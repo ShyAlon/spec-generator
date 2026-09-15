@@ -1,0 +1,1 @@
+{"requirement_id":"R-5","title":"Data scalability","statement":"The system shall handle the stated daily volume and horizontal scaling.","priority":"must","acceptance":["The stated daily volume is processed while horizontally scaled."]}

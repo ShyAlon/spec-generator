@@ -1,0 +1,1 @@
+{"requirement_id":"R-1","title":"Shipment risk identification","statement":"The system shall identify shipment damage or delay risk before arrival.","priority":"must","acceptance":["A risky shipment is identified before arrival."]}

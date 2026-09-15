@@ -1,0 +1,1 @@
+{"requirement_id":"R-2","title":"External risk data","statement":"The system shall ingest current external disruption data.","priority":"must","acceptance":["Current disruption data is available for assessment."]}

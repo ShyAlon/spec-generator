@@ -1,0 +1,1 @@
+Byte-exact `.raw.txt` completions from the production response shape that produced duplicate implied needs. The smoke intentionally stops after SRS: it proves real CLI seeding, deterministic needs carry-forward, review gate handling, and same-command checkpoint resume without Ollama.

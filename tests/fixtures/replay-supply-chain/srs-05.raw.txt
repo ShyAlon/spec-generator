@@ -1,0 +1,1 @@
+{"requirement_id":"R-4","title":"Risk assessment","statement":"The system shall calculate risk levels for monitored events.","priority":"must","acceptance":["Each monitored event has a risk level."]}

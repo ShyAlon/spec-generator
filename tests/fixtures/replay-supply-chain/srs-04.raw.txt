@@ -1,0 +1,1 @@
+{"requirement_id":"R-3","title":"Risk notifications","statement":"The system shall notify operators of newly predicted risk.","priority":"must","acceptance":["An operator receives a notification for a new risk."]}

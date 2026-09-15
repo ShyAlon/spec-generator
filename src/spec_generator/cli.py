@@ -596,6 +596,8 @@ def main() -> None:
                     help="versioned SystemBaseline JSON; existing repo manifest or explicit greenfield declaration")
     ap.add_argument("--conops", type=Path, default=None,
                     help="founder-confirmed conops.json from interview-engine; omit only for legacy sessions")
+    ap.add_argument("--preflight", action="store_true",
+                    help="validate inputs and checkpoint compatibility without building a model or spending a call")
     args = ap.parse_args()
     if bool(args.only_stage) != bool(args.source_artifacts):
         ap.error("--only-stage and --source-artifacts must be used together")
@@ -673,6 +675,27 @@ def main() -> None:
         _run_only_stage(args, intent, sid)
         return
     outdir = args.out if args.out is not None else _default_outdir(args.intent_model, sid)
+    if args.preflight:
+        import sqlite3
+        cp=outdir / "checkpoints.sqlite"
+        if cp.exists():
+            from langgraph.checkpoint.sqlite import SqliteSaver
+            conn=sqlite3.connect(str(cp),check_same_thread=False)
+            probe=build_graph(UsageLog(sid),checkpointer=SqliteSaver(conn,serde=checkpoint_serde()),review=args.review)
+            prior=probe.get_state({"configurable":{"thread_id":sid}}).values
+            if prior:
+                if prior.get("conops") != conops:
+                    raise UserFacingError("preflight: checkpoint Concept of Operations is incompatible.",
+                        "the existing output was started without this CONOPS or with a different one.",
+                        "choose a fresh -o directory, or pass the original CONOPS used by this checkpoint.")
+                if prior.get("system_baseline") not in (None,baseline):
+                    raise UserFacingError("preflight: checkpoint system baseline is incompatible.",
+                        "the existing output was generated under a different architecture anchor.",
+                        "choose a fresh -o directory, or explicitly rerun from architecture under the new baseline.")
+        print(f"Preflight OK: session={sid}; seed=intent_model,system_baseline,conops; "
+              f"baseline={baseline['baseline_id']}; conops={conops is not None}; "
+              f"checkpoint={'compatible' if cp.exists() else 'fresh'}")
+        return
     if args.reconcile_artifacts:
         audit = _reconcile_artifacts(intent, baseline, outdir, args.reconcile_out,
                                      conops_present=conops is not None)

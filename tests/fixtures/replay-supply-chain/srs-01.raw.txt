@@ -1,0 +1,1 @@
+{"purpose":"Predict shipment risks","scope_summary":"Monitor shipment disruption inputs and alert operators"}
