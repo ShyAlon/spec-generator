@@ -147,3 +147,14 @@ def test_borderline_or_cross_kind_needs_are_not_silently_merged():
       {"need_id":"N-2","statement":"Process a few dozen MB of data each day","kind":"non_functional","intent_fields":[],"intent_need_ids":[]},
       {"need_id":"N-3","statement":"Scale horizontally for growing daily data volume","kind":"functional","intent_fields":[],"intent_need_ids":[]}]}
     assert len(merge_duplicate_needs(data)["needs"])==3
+
+
+def test_approved_intent_needs_are_carried_one_to_one_without_implied_duplicates():
+    from spec_generator.skeleton import needs_from_intent
+    intent={"session_id":"s","stakeholder_needs":[
+      {"need_id":"SN-1","statement":"Identify damaged or delayed shipments beforehand","kind":"functional"},
+      {"need_id":"SN-5","statement":"Handle dozens of MB daily and scale horizontally","kind":"non_functional"}]}
+    out=needs_from_intent(intent)
+    assert [(n["need_id"],n["intent_need_ids"],n["statement"]) for n in out["needs"]]==[
+      ("N-1",["SN-1"],intent["stakeholder_needs"][0]["statement"]),
+      ("N-2",["SN-5"],intent["stakeholder_needs"][1]["statement"])]

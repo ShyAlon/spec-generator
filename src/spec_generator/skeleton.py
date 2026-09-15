@@ -51,6 +51,28 @@ def is_future_commitment(text: str) -> bool:
 def deferred_needs(needs: dict) -> list[dict]:
     return [n for n in (needs.get("needs") or []) if is_future_commitment(n.get("statement", ""))]
 
+def needs_from_intent(intent: dict) -> dict:
+    """Carry validated interview needs forward without asking a model.
+
+    The intent artifact already owns the substance, kind, identity and source
+    provenance. A model rewrite added untraceable "implied" needs in the live
+    supply-chain run, duplicating SN-1/SN-5 as N-6/N-9. One N slot per approved
+    SN is the deterministic V-model relation; no new need may appear without
+    founder evidence.
+    """
+    needs=[]
+    for i,source in enumerate(intent.get("stakeholder_needs") or [],1):
+        needs.append({
+            "need_id":f"N-{i}",
+            "stakeholder":"Founder",
+            "statement":source.get("statement"),
+            "kind":source.get("kind"),
+            "intent_fields":["stakeholder_needs"],
+            "intent_need_ids":[source.get("need_id")],
+        })
+    return {"session_id":intent.get("session_id"),"needs":needs}
+
+
 def _words(text: str) -> set[str]:
     stop={"the","a","an","and","or","for","to","of","in","on","with","should","shall","system","app","application"}
     return {w for w in re.findall(r"[a-z0-9]+",str(text).lower()) if len(w)>2 and w not in stop}

@@ -154,7 +154,7 @@ def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
                         lambda stage, **kw: fake_models.setdefault(stage, FakeModel(stage)))
     r = g2.invoke(None, cfg)
     assert "bundle" in r
-    assert fake_models["needs"].calls == 1, "needs stage must NOT be re-paid after resume"
+    assert "needs" not in fake_models, "needs are deterministically carried, never paid"
     assert fake_models["srs"].calls == 1
     monkeypatch.undo()
 

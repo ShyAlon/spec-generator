@@ -1635,16 +1635,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
     def node_needs(state: GenState) -> dict:
         intent = IntentModel.model_validate(state["intent_model"])
-        data = _call_json("needs", STAGE_PROMPTS["needs"] + "\n\nINTENT:\n" + json.dumps(_prompt_view(state["intent_model"])), log, progress,
-                          validate=_check(lambda d: StakeholderNeedsSet.model_validate(
-                              {**_strip_pipeline_owned(d), "session_id": intent.session_id})))
-        data.setdefault("session_id", intent.session_id)
-        from .skeleton import merge_duplicate_needs
-        before=len(data.get("needs") or [])
-        data=merge_duplicate_needs(data)
-        removed=before-len(data.get("needs") or [])
-        if removed:
-            model_config._console_line(f"   needs guard: merged {removed} high-confidence duplicate(s) before SRS slot creation")
+        # The approved IntentModel already has every legitimate stakeholder
+        # need. Re-authoring it added ungrounded "implied" N rows and duplicate
+        # SRS slots in production. Carry the relation 1:1 in code instead.
+        from .skeleton import needs_from_intent
+        data = needs_from_intent(intent.model_dump(mode="json"))
+        StakeholderNeedsSet.model_validate(data)
+        model_config._console_line(
+            f"   needs guard: carried {len(data['needs'])} approved SN need(s) 1:1; "
+            "model-added implied needs disabled")
         capped = _experiment_cap("NEEDS", list(data.get("needs") or []), "needs", progress)
         if len(capped) != len(data.get("needs") or []):
             data["needs"] = capped

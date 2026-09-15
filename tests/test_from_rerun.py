@@ -33,12 +33,12 @@ def test_from_items_reruns_downstream_only(monkeypatch, tmp_path):
     db = str(tmp_path / "cp.sqlite")
     g, cfg = _run_once(box, monkeypatch, db)
     counts = {k: v.calls for k, v in box.items()}
-    assert counts == {"needs": 1, "srs": 1, "architecture": 6, "items": 1, "tests": 1, "review": 1}  # architecture: 3 plans + 3 slot fills
+    assert counts == {"srs": 1, "architecture": 6, "items": 1, "tests": 1, "review": 1}  # architecture: 3 plans + 3 slot fills
 
     _invalidate_from(g, cfg, "items", review_mode=False)
     r = g.invoke(None, cfg)
     after = {k: v.calls for k, v in box.items()}
-    assert after["needs"] == 1 and after["srs"] == 1 and after["architecture"] == 6  # preserved
+    assert "needs" not in after and after["srs"] == 1 and after["architecture"] == 6  # preserved
     assert after["items"] == 2 and after["tests"] == 2 and after["review"] == 2      # re-fired
     assert "bundle" in r and r["bundle"]["items"][0]["spec_id"] == "SPEC-1"
 
@@ -271,7 +271,7 @@ def test_baseline_change_invalidates_architecture_downstream(monkeypatch, tmp_pa
     assert "id=test-baseline" in err and "id=other-system-v1" in err
     assert "invalidating them" in err
     # architecture (6 slot calls) and everything downstream re-fired; needs/srs did not
-    assert box["needs"].calls == 1 and box["srs"].calls == 1
+    assert "needs" not in box and box["srs"].calls == 1
     assert box["architecture"].calls == 12 and box["items"].calls == 2
     assert box["tests"].calls == 2 and box["review"].calls == 2
     # the resumed state carries the NEW baseline
@@ -388,7 +388,7 @@ def test_to_architecture_stops_real_checkpoint_before_downstream(monkeypatch, tm
     result = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     assert result["architecture"]
     assert not result.get("items") and not result.get("tests") and not result.get("bundle")
-    assert set(box) == {"needs", "srs", "architecture"}
+    assert set(box) == {"srs", "architecture"}
     assert g.get_state(cfg).values["architecture"]
 
 

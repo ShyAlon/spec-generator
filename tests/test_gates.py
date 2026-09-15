@@ -136,14 +136,14 @@ def test_cli_resume_does_not_repay_completed_stages(tmp_path, monkeypatch):
     cfg = {"configurable": {"thread_id": "resume1"}}
     g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     assert _interrupt_payload(g, cfg)["gate"] == "srs"
-    assert box["needs"].calls == 1 and box["srs"].calls == 1
+    assert "needs" not in box and box["srs"].calls == 1
 
     monkeypatch.setattr("builtins.input", lambda prompt="": "a")
     # the CLI's resume decision (checkpoint found -> resume=True) must not
     # re-pay completed stages; the gate re-asks from the same checkpoint
     result = _run_with_gates(g, cfg, dict(INTENT), tmp_path, resume=True)
     assert "bundle" in result
-    assert box["needs"].calls == 1, "needs must NOT be re-paid on resume"
+    assert "needs" not in box, "needs are deterministic and never paid"
     assert box["srs"].calls == 1, "srs must NOT be re-paid on resume"
     # micro-pipeline: plan + 1 entry + component plan + 1 body + ADR plan + 1 body
     assert box["architecture"].calls == 6  # ran once (as 6 slot calls) after the accepted gate
