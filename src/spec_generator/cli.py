@@ -117,7 +117,7 @@ def _atomic_write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def _make_partials(outdir: Path):
+def _make_partials(outdir: Path, architecture_lifecycle=None):
     """Per-item resume WITHIN an authoring stage (his ask 2026-09-10, after a
     Ctrl+C at T-34 of 36 reran everything): completed fills/bodies land in a
     partial file the moment they close; a rerun of the stage skips them, the
@@ -132,9 +132,13 @@ def _make_partials(outdir: Path):
     class _Partials:
         def load(self, key: str):
             p = outdir / FILES[key]
+            if key == "architecture" and architecture_lifecycle and p.exists():
+                architecture_lifecycle.guard_partial_read()
             return json.loads(p.read_text()) if p.exists() else None
 
         def save(self, key: str, data) -> None:
+            if key == "architecture" and architecture_lifecycle:
+                architecture_lifecycle.begin_or_checkpoint(data)
             _atomic_write(outdir / FILES[key], json.dumps(data, indent=2))
 
         def clear(self, key: str) -> None:
@@ -153,7 +157,7 @@ _PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fill
 
 
 def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
-                  conops_present: bool = True):
+                  conops_present: bool = True, architecture_lifecycle=None):
     """The incremental bundle writer (his ask 2026-09-09: 'persist them
     intermittently so we'll have some of the data'). Fires after each stage;
     the final assembly writes remain the canonical full bundle."""
@@ -172,9 +176,12 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
             _atomic_write(outdir / "srs.md", render_srs(srs))
         elif stage == "architecture":
             body = _legacy_arch_fill({**data, "session_id": sid})  # pre-0.8.0 checkpoints lack the ADR-0021 fields
-            _atomic_write(outdir / "architecture.json", json.dumps(body, indent=2))
             arch = ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
+            lifecycle_event = architecture_lifecycle.finalize(body) if architecture_lifecycle else None
+            _atomic_write(outdir / "architecture.json", json.dumps(body, indent=2))
             _atomic_write(outdir / "architecture.md", render_architecture(arch, greenfield=greenfield, conops_present=conops_present))
+            if architecture_lifecycle:
+                architecture_lifecycle.commit_finalize(lifecycle_event)
         elif stage == "items":
             _atomic_write(outdir / "items.json", json.dumps(data, indent=2))
             for i in data:
@@ -723,10 +730,13 @@ def main() -> None:
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
-    partials = _make_partials(outdir)
+    from .artifact_lifecycle import ArchitectureLifecycle
+    architecture_lifecycle = ArchitectureLifecycle(outdir, sid, baseline)
+    partials = _make_partials(outdir, architecture_lifecycle)
     graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion,
                         persist=_make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
-                                              conops_present=conops is not None),
+                                              conops_present=conops is not None,
+                                              architecture_lifecycle=architecture_lifecycle),
                         partials=partials, stop_after=args.to_stage)
     from . import model_config as _mc
 
@@ -740,9 +750,14 @@ def main() -> None:
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
     resume = bool(prior)
+    if resume and prior.get("architecture"):
+        architecture_lifecycle.bootstrap_complete(
+            prior["architecture"], prior.get("system_baseline") or baseline)
     if resume and not args.to_stage:
         bounded_stage = _resume_after_bounded_stop(graph, cfg, prior)
         if bounded_stage:
+            if bounded_stage == "architecture":
+                architecture_lifecycle.resume("gate_architecture" if args.review else "items")
             print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through the full pipeline.", file=sys.stderr)
     if resume:
         prior_conops = prior.get("conops")
@@ -763,8 +778,14 @@ def main() -> None:
         # persistence shipped: resume skips completed stages (persist never
         # fires for them), so without this the bundle dir stays empty. State
         # is authoritative - overwrite any stale files.
+        # Backfill under the checkpoint's anchor. A changed current anchor is
+        # recorded as stale/invalidate/restart immediately below; it must not
+        # relabel or rewrite the old complete architecture first.
+        checkpoint_lifecycle = ArchitectureLifecycle(
+            outdir, sid, prior.get("system_baseline") or baseline)
         written = _backfill_persist(_make_persist(intent, outdir,
-                                                        conops_present=conops is not None), prior)
+                                                        conops_present=conops is not None,
+                                                        architecture_lifecycle=checkpoint_lifecycle), prior)
         if written:
             print(f"Artifacts for already-completed stages written to the bundle dir ({', '.join(written)}).",
                   file=sys.stderr)
@@ -784,6 +805,7 @@ def main() -> None:
         print("  architecture and everything downstream were built under the old anchor - "
               "invalidating them (needs/srs do not depend on the baseline and are preserved).",
               file=sys.stderr)
+        architecture_lifecycle.reanchor(["architecture", "items", "tests", "assembly", "manifest", "traceability"])
         graph.update_state(cfg, {"system_baseline": baseline, **_CLEAR_DOWNSTREAM["architecture"]},
                            as_node=_predecessor("architecture", args.review))
         for key in _PARTIAL_DOWNSTREAM.get("architecture", ()):
