@@ -257,16 +257,23 @@ def arch_stack_plan_schema() -> dict:
 
 
 def arch_stack_entry_schema(valid_refs: list[str], technology_ids: list[str]) -> dict:
-    """One stack entry against its fixed key. Grounding refs are enum-
-    constrained to the canonical baseline refs (invented refs impossible by
-    construction); empty refs marks a departure, wired to an ADR in code."""
-    return {"type": "object",
-            "properties": {"technology": {"type": "string"},
-                           "off_list_justification": {"type": ["string", "null"]},
-                           "baseline_refs": {"type": "array",
-                                             "items": _enum_or_str(valid_refs)}},
-            "required": ["technology", "off_list_justification", "baseline_refs"],
-            "additionalProperties": False}
+    """One stack slot: a concrete technology, grounded research delegation, or genuine exclusion."""
+    concrete = {"type": "object", "properties": {
+        "technology": {"type": "string", "minLength": 1},
+        "off_list_justification": {"type": ["string", "null"]},
+        "baseline_refs": {"type": "array", "items": _enum_or_str(valid_refs)}},
+        "required": ["technology", "off_list_justification", "baseline_refs"], "additionalProperties": False}
+    research = {"type": "object", "properties": {
+        "status": {"const": "research_required"}, "research_brief": {"type": "string", "minLength": 1}},
+        "required": ["status", "research_brief"], "additionalProperties": False}
+    excluded = {"type": "object", "properties": {
+        "status": {"const": "not_applicable"}, "reason": {"type": "string", "minLength": 1}},
+        "required": ["status", "reason"], "additionalProperties": False}
+    # Keep concrete properties at the root for grammar adapters that inspect
+    # property names before honoring oneOf; branch required-sets still enforce
+    # the three legal shapes.
+    return {"properties": concrete["properties"],
+            "oneOf": [concrete, research, excluded]}
 
 
 def arch_component_plan_schema(requirement_ids: list[str], valid_refs: list[str]) -> dict:

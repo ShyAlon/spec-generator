@@ -32,6 +32,11 @@ def render_agents_md(
     ]
     for e in arch.stack_entries:
         L.append(f"- **{e.key}**: {e.value}")
+    for e in arch.stack_entry_dispositions:
+        if e.status.value == "research_required":
+            L.append(f"- **{e.key}**: RESEARCH REQUIRED - {e.research_brief}")
+        else:
+            L.append(f"- **{e.key}**: NOT APPLICABLE - {e.reason}")
     L += ["", "### Decisions and why", ""]
     for d in arch.decisions:
         L.append(f"**{d.decision_id} {d.title}.** {d.decision} Rationale: {d.rationale}")
@@ -259,6 +264,13 @@ def render_architecture(arch: ArchitectureOverview, greenfield: bool = False,
             else:
                 trace = " (migration: see ADRs)"  # healed pre-0.13.0 artifact - linked by ADR text
             lines.append(f"- **{e.key}**: {e.value}{trace}")
+    if arch.stack_entry_dispositions:
+        lines.append("\n## Considered stack slots without a technology selection")
+        for e in arch.stack_entry_dispositions:
+            if e.status.value == "research_required":
+                lines.append(f"- **{e.key}** - RESEARCH REQUIRED: {e.research_brief}")
+            else:
+                lines.append(f"- **{e.key}** - NOT APPLICABLE: {e.reason}")
     if arch.components:
         lines.append("\n## Components")
         for c in arch.components:

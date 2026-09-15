@@ -119,31 +119,11 @@ constraints, and the baseline - one short snake_case key per slot, no values yet
 FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
 STRICT JSON object {stack_keys: [strings]} - only the keys, 3 to 12 of them, no duplicates."""
 
-ARCH_STACK_ENTRY = """Decide ONE stack entry: the chosen technology for the given key, and the
-baseline refs that ground it. Exactly TWO legal answers:
-(a) the technology is recorded in the baseline facts - name it and cite every ref that
-records it;
-(b) it is NOT - name a concrete technology ANYWAY with baseline_refs []: in existing mode
-that is a proposed migration and the pipeline generates the authorizing decision record
-itself; in greenfield mode (empty baseline) it is simply the new design - nothing exists to
-migrate from, so never use migration framing. Choosing (b) is normal and expected whenever
-the baseline records no fact for this key.
-When you cite baseline facts (answer a), the value must be the fact's VERBATIM text or a
-composition of cited fact texts: if the baseline fact is 'python -m spec_generator.cli',
-the value is exactly that string - not a paraphrase, not a description, never an invented
-name.
-The value must ANSWER the slot's question with the right KIND of thing: a framework name
-for a framework slot, a CI tool for a ci slot, an encryption standard for an encryption
-slot. A checker rejects wrong-kind answers (a validation library is not an encryption
-standard; a command like 'python -m x' is not a framework or a CI tool). Entry-point-shaped
-values (commands, script paths, module:attr) are legal ONLY for entry-point slots.
-An empty value is NEVER a legal answer - a blank decides nothing. If no baseline fact fits,
-your job is to PROPOSE: pick the concrete technology the SRS and the founder's constraints
-imply. The value must be specific (a named product, framework or tool), never a category
-word, never "". In greenfield mode refs stay empty.
-FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
-STRICT JSON object {value: string, baseline_refs: [refs]} - value non-empty, baseline_refs
-uses only exact strings from the VALID BASELINE REFS list, nothing else."""
+ARCH_STACK_ENTRY = """Decide ONE stack slot. Return exactly one legal JSON shape:
+1. Concrete selection: {technology: non-empty string, off_list_justification: string|null, baseline_refs:[refs]}.
+2. Founder-delegated or ambiguous discovery: {status:"research_required", research_brief: non-empty string}. This is the DEFAULT when the right answer depends on current external facts or the founder delegated the choice. State what current registries, vendor docs, web sources, criteria, and requirement must be checked. Never answer from model memory.
+3. Genuine irrelevance: {status:"not_applicable", reason: non-empty string}. Use this rarely, only when the slot truly does not apply to the concept; the reason must argue why.
+An empty technology without an explicit status is illegal. A missing baseline fact does not make a slot not_applicable. If a concrete technology is grounded in baseline facts, cite every ref and copy the fact text verbatim. Otherwise baseline_refs is [] and the choice is new design or an authorized migration. Off-list concrete picks require a substantive justification."""
 
 ARCH_COMPONENT_PLAN = """List the software components of this architecture. For each: a short
 unique name, the requirement ids (R-n) it realizes, the baseline refs proving where it already

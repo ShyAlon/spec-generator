@@ -1111,6 +1111,7 @@ def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
     """Code-owned projection: ADR selections are canonical; stack is derived."""
     decisions = []
     stack_entries = []
+    stack_entry_dispositions = [dict(e) for e in entries.values() if e.get("status")]
     for slot in adr_slots:
         did = slot["decision_id"]
         body = {**adr_bodies[did]}
@@ -1120,6 +1121,8 @@ def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
                 continue
             key = target.split(":", 1)[1]
             e = entries[key]
+            if e.get("status"):
+                continue
             selection = {"slot_id": "slot:" + __import__("re").sub(r"[^a-z0-9]+", "-", key.casefold()).strip("-"),
                          "technology_id": e["technology_id"], "display_name": e["value"],
                          "baseline_refs": e["baseline_refs"],
@@ -1139,6 +1142,7 @@ def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
                            "requirement_ids":c["requirement_ids"],"baseline_refs":c["baseline_refs"],
                            "migration":bool(c.get("migration")),"migration_adr_title":adr_bodies[aid]["title"] if aid else None})
     return {"session_id":session_id,"baseline_id":baseline_id,"stack_entries":stack_entries,
+            "stack_entry_dispositions": stack_entry_dispositions,
             "components":components,"decisions":decisions,"non_functionals":nfr}
 
 
@@ -1743,6 +1747,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         baseline_vocab = _baseline_vocab(baseline) if existing else ""
 
         def _v_entry(d, key):
+            status = str(d.get("status") or "").strip()
+            if status:
+                if status == "research_required":
+                    brief = str(d.get("research_brief") or "").strip()
+                    if not brief:
+                        raise ModelStructureError(f"stack.{key}: research_required requires a research_brief")
+                    return {"key": key, "status": status, "research_brief": brief}
+                if status == "not_applicable":
+                    reason = str(d.get("reason") or "").strip()
+                    if not reason:
+                        raise ModelStructureError(f"stack.{key}: not_applicable requires a reason arguing genuine irrelevance")
+                    return {"key": key, "status": status, "reason": reason}
+                raise ModelStructureError(f"stack.{key}: unknown status {status!r}")
             value = str(d.get("technology", d.get("value", ""))).strip()
             refs = [str(r) for r in d.get("baseline_refs") or []]
             technology_id, technology_row = resolve_technology(value)
@@ -1922,9 +1939,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             # from them (the 2026-09-12 live phi4 failure: the model forgot to
             # authorize stack:ci_tool). The model only proposes OPTIONAL design
             # decisions; ids are assigned after the merge, required slots first.
-            departures = [k for k, e in entries.items() if not e["baseline_refs"]] if existing else []
+            departures = [k for k, e in entries.items() if not e.get("status") and not e["baseline_refs"]] if existing else []
             migrating = [c["name"] for c in part["component_slots"] if c["migration"]] if existing else []
-            authorizable = [f"stack:{k}" for k in entries] + [f"component:{n}" for n in migrating]
+            authorizable = [f"stack:{k}" for k, e in entries.items() if not e.get("status")] + [f"component:{n}" for n in migrating]
             if "adr_slots" not in part:
                 required = _required_adr_slots(authorizable)
                 for slot in required:
@@ -1936,7 +1953,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 optional = _call_json(
                     "architecture",
                     context + "\n\nDECIDED STACK (key: value):\n"
-                    + json.dumps({k: e["value"] for k, e in entries.items()})
+                    + json.dumps({k: (e.get("value") or e.get("status")) for k, e in entries.items()})
                     + "\n\nCOMPONENT SLOTS:\n" + json.dumps(part["component_slots"])
                     + req_block + founder_plan_block + candidate_feedback + "\n\n" + ARCH_ADR_PLAN + feedback,
                     log, progress,
@@ -2020,7 +2037,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     + json.dumps({"decision_id": did, "slug": slot["slug"],
                                   "migration": slot["migration"], "authorizes": slot["authorizes"]})
                     + "\n\nDECIDED STACK (key: value):\n"
-                    + json.dumps({k: e["value"] for k, e in entries.items()})
+                    + json.dumps({k: (e.get("value") or e.get("status")) for k, e in entries.items()})
                     + lost_block + candidate_feedback + "\n\n" + ARCH_ADR_BODY + feedback,
                     log, progress, validate=_v_adr,
                     schema=arch_adr_body_schema(valid_refs, repo_names, [__import__("vmodel_contracts").canonical_concept_id(str(o.get("name", ""))) for o in (state.get("conops") or {}).get("concept_options", [])]),
