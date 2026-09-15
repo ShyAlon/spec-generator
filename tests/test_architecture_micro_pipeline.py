@@ -830,3 +830,33 @@ def test_conops_execution_gate_exhaustion_is_human_readable(monkeypatch):
     assert "failed the CONOPS-execution gate twice" in rendered
     assert "Likely cause:" in rendered and "Progressive Web Application (PWA)" in rendered
     assert "Next:" in rendered
+
+
+def test_pwa_python_fastapi_adrs_do_not_dedupe_and_repair_reaches_body(monkeypatch):
+    from spec_generator.graph import _dedupe_adr_slots
+    slots=[{"decision_id":"ADR-1","slug":"adopt-pwa-concept","migration":False,"authorizes":[]},
+           {"decision_id":"ADR-2","slug":"choose-python-for-backend","migration":False,"authorizes":[]},
+           {"decision_id":"ADR-3","slug":"select-fastapi-framework","migration":False,"authorizes":[]}]
+    def body(title,decision): return {"title":title,"decision":decision,"rationale":"fit","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"rejected":[]}
+    bodies={"ADR-1":body("Adopt PWA concept","Implement the PWA with a Python FastAPI backend"),
+            "ADR-2":body("Choose Python for backend","Use Python"),
+            "ADR-3":body("Select FastAPI framework","Use FastAPI")}
+    assert _dedupe_adr_slots(slots,bodies)==[]
+    assert [s["slug"] for s in slots]==["adopt-pwa-concept","choose-python-for-backend","select-fastapi-framework"]
+
+
+def test_conops_repair_feedback_is_in_adr_body_prompt(monkeypatch):
+    seen=[]
+    class CaptureRepair(_MicroModel):
+        def stream(self,messages):
+            props=set(self.schema.get("properties",{}));prompt=messages[-1].content
+            if "driver" in props:
+                seen.append(prompt)
+                if "PREVIOUS ARCHITECTURE FAILED THE CONOPS-EXECUTION GATE" in prompt:
+                    yield AIMessage(content=json.dumps({"title":"Adopt Progressive Web Application (PWA)","decision":"Execute the PWA concept","rationale":"confirmed concept","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[]}));return
+            yield from super().stream(messages)
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: CaptureRepair(stage,k.get("schema") or {},[]))
+    result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-body-feedback"}})
+    assert any("founder-confirmed concept is 'Progressive Web Application (PWA)'" in p for p in seen)
+    from spec_generator.graph import _check_conops_execution
+    _check_conops_execution(__import__('vmodel_contracts').ArchitectureOverview.model_validate(result['architecture']),_pwa_conops())

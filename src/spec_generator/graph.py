@@ -976,8 +976,11 @@ def _same_decision_tech(b1: dict, b2: dict) -> str | None:
     the matrix knows NEITHER does raw string distance decide, at a strict
     0.9: kind/platform evidence is unavailable for unknown tech, so the bar
     is higher, not lower."""
-    r1 = primary_row_in_text(b1["title"] + " " + b1["decision"])
-    r2 = primary_row_in_text(b2["title"] + " " + b2["decision"])
+    # Dedupe only the decision SUBJECT. Decision prose often names several
+    # implementation technologies (a PWA ADR can mention Python/FastAPI), so
+    # scanning whole bodies makes incidental names collapse unrelated ADRs.
+    r1 = primary_row_in_text(b1["title"])
+    r2 = primary_row_in_text(b2["title"])
     if r1 and r2:
         return (f"same technology: {r1['name']}") if r1["name"] == r2["name"] else None
     if r1 or r2:
@@ -2051,7 +2054,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                   "migration": slot["migration"], "authorizes": slot["authorizes"]})
                     + "\n\nDECIDED STACK (key: value):\n"
                     + json.dumps({k: e["value"] for k, e in entries.items()})
-                    + lost_block + "\n\n" + ARCH_ADR_BODY + feedback,
+                    + lost_block + candidate_feedback + "\n\n" + ARCH_ADR_BODY + feedback,
                     log, progress, validate=_v_adr,
                     schema=arch_adr_body_schema(valid_refs, repo_names),
                     stream_items=False, item_label=f"{did} {slot['slug']}")
