@@ -11,7 +11,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "Shy Alon" }]
 dynamic = ["version"]
 dependencies = [
-  "vmodel-contracts @ git+https://github.com/ShyAlon/vmodel-contracts.git@10d9e0c60424d23d6a1bd2724777fa97e35e6583",
+  "vmodel-contracts @ git+https://github.com/ShyAlon/vmodel-contracts.git@95b019b6544087fd582bb81630a8481295d3be6d",
   "langgraph>=0.2",
   "langgraph-checkpoint-sqlite>=2",
   "langchain-core>=0.3",
