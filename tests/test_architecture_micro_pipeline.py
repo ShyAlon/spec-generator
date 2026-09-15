@@ -916,3 +916,35 @@ def test_stack_is_exact_projection_and_repeated_titles_do_not_bind_identity():
     payload["stack_entries"][0]["decision_id"]="ADR-2"
     with pytest.raises(ValidationError,match="exact projection"):
         ArchitectureOverview.model_validate(payload)
+
+
+def test_phi_blank_justification_is_absent_for_known_technology(monkeypatch):
+    """Phi fills every schema field, using an empty string for not applicable."""
+    class BlankJustificationForKnown(_MicroModel):
+        def stream(self, messages):
+            if any("THE STACK KEY TO DECIDE: language" in m.content for m in messages):
+                yield AIMessage(content=json.dumps({
+                    "technology": "Python",
+                    "off_list_justification": "",
+                    "baseline_refs": [],
+                }))
+                return
+            yield from super().stream(messages)
+
+    monkeypatch.setattr(
+        model_config, "build_chat_model",
+        lambda stage, **k: BlankJustificationForKnown(
+            stage, k.get("schema") or {}, [], plan_keys=["language"]
+        ),
+    )
+    result = build_graph(UsageLog("s")).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+        {"configurable": {"thread_id": "phi-empty-justification"}},
+    )
+    entry = result["architecture"]["stack_entries"][0]
+    assert entry["technology_id"] == "tech:python"
+    owner = next(
+        d for d in result["architecture"]["decisions"]
+        if d["decision_id"] == entry["decision_id"]
+    )
+    assert owner["technology_selections"][0]["off_list_justification"] is None

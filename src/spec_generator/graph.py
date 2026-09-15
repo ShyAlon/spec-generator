@@ -1746,7 +1746,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             value = str(d.get("technology", d.get("value", ""))).strip()
             refs = [str(r) for r in d.get("baseline_refs") or []]
             technology_id, technology_row = resolve_technology(value)
-            justification = d.get("off_list_justification")
+            raw_justification = d.get("off_list_justification")
+            justification = ((str(raw_justification).strip() or None)
+                             if raw_justification is not None else None)
             if not value:
                 raise ModelStructureError(f"stack.{key}: an empty value decides nothing - propose a concrete technology; empty baseline_refs becomes a proposed migration")
             is_grounded_fact = bool(refs) and _value_grounded(value, baseline_vocab)
@@ -1832,7 +1834,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             f"If {value!r} is a DELIBERATE call (e.g. web-first PWA), repeat it and the "
                             "covering ADR must carry the explicit platform justification for founder veto.")
             entry["technology_id"] = technology_id
-            entry["off_list_justification"] = str(justification).strip() if justification is not None else None
+            entry["off_list_justification"] = justification
             return entry
 
         entries = part.setdefault("stack_entries", {})
