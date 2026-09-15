@@ -319,30 +319,9 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
 
 
 def _default_outdir(intent_path: Path, session_id: str) -> Path:
-    """Stable default output dir, derived from the run identity.
-
-    Interview session ids begin YYYYMMDD-HHMMSS, so a resumed command selects
-    the same directory instead of inventing a fresh timestamp. Hand-authored
-    ids fall back to the intent file's mtime, which is likewise stable for the
-    file being run.
-
-    The directory lands in the artifacts SIBLING folder (<workspace>/artifacts/
-    when run from a repo checkout inside the workspace - shared convention in
-    vmodel_contracts.runtime.artifacts_root), keeping generated output out of
-    the git trees. VMODEL_ARTIFACTS_DIR (env or the shared .env) overrides the
-    root; -o overrides the whole path.
-    """
-    import re
-
+    """Canonical stable output: <artifacts>/<session>/spec."""
     from . import model_config
-
-    match = re.match(r"^(\d{8})-(\d{6})(?:-|$)", session_id)
-    if match:
-        stamp = datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
-    else:
-        stamp = datetime.fromtimestamp(intent_path.stat().st_mtime)
-    return artifacts_root(model_config._env("VMODEL_ARTIFACTS_DIR")) / f"artifacts-{stamp:%Y-%m-%d_%H-%M-%S}"
-
+    return artifacts_root(model_config._env("VMODEL_ARTIFACTS_DIR")) / session_id / "spec"
 
 def _migration_command(path: Path) -> str:
     """Copy-pasteable repair for a version-stale contract artifact."""

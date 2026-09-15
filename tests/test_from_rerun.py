@@ -139,7 +139,7 @@ def test_default_output_dir_is_human_readable_and_stable(monkeypatch, tmp_path, 
 
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "--system-baseline", str(baseline_file)])
     main()
-    outdir = tmp_path / "require" / "artifacts" / "artifacts-2026-09-10_16-41-00"
+    outdir = tmp_path / "require" / "artifacts" / "20260910-164100-ab12" / "spec"
     assert (outdir / "tests.json").exists()
     first_counts = {k: v.calls for k, v in box.items()}
 
@@ -224,7 +224,7 @@ def test_default_outdir_lands_in_workspace_sibling_artifacts(tmp_path, monkeypat
     monkeypatch.setattr(model_config, "_DOTENV", {})  # isolate from any real ../.env
     intent = repo / "intent.json"; intent.write_text("{}")
     out = cli._default_outdir(intent, "20260910-164100-abc")
-    assert out == (tmp_path / "require" / "artifacts" / "artifacts-2026-09-10_16-41-00").resolve()
+    assert out == (tmp_path / "require" / "artifacts" / "20260910-164100-abc" / "spec").resolve()
 
 
 def test_default_outdir_env_override_and_explicit_resume_note(tmp_path, monkeypatch):
@@ -233,7 +233,7 @@ def test_default_outdir_env_override_and_explicit_resume_note(tmp_path, monkeypa
     monkeypatch.setenv("VMODEL_ARTIFACTS_DIR", str(tmp_path / "custom"))
     intent = tmp_path / "intent.json"; intent.write_text("{}")
     out = cli._default_outdir(intent, "20260910-164100-abc")
-    assert out == (tmp_path / "custom" / "artifacts-2026-09-10_16-41-00").resolve()
+    assert out == (tmp_path / "custom" / "20260910-164100-abc" / "spec").resolve()
 
 
 def _run_cli(monkeypatch, intent_file, baseline_file, outdir):
