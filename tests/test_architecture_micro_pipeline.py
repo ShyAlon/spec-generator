@@ -770,3 +770,30 @@ def test_brownfield_still_requires_cite_or_migrate(monkeypatch):
         assert False, "brownfield component without refs or migration must be rejected"
     except ModelStructureError as e:
         assert "requires baseline refs" in str(e)
+
+
+def test_fresh_review_cli_carries_baseline_and_conops_into_architecture(monkeypatch,tmp_path,capsys):
+    """Real CLI boundary regression: --review used to discard both fields."""
+    import sys
+    from spec_generator import cli
+    intent={**INTENT,"contract_version":"0.14.1"}
+    ip=tmp_path/"intent.json";ip.write_text(json.dumps(intent))
+    bp=tmp_path/"baseline.json";bp.write_text(json.dumps(SYSTEM_BASELINE))
+    # A minimal valid ConOps fixture from the contract, tied to this session.
+    from vmodel_contracts import ConOpsDocument
+    cp=tmp_path/"conops.json"
+    cp.write_text(ConOpsDocument(session_id=intent["session_id"],stakeholder_context=[{"stakeholder":"u","role":"user","goals":["v"],"operating_environment":"web","source_turns":[0]}],operational_scenarios=[{"scenario_id":"OS-1","name":"use","trigger":"need","actors":["u"],"operational_flow":["act"],"success_outcome":"v","exceptions":[],"source_turns":[0]}],concept_options=[{"name":"ts","summary":"ts","advantages":["simple"],"disadvantages":["none"]},{"name":"native","summary":"native","advantages":["fast"],"disadvantages":["install"]}],decision={"selected_concept":"ts","rationale":"fit","founder_confirmed":True,"source_turns":[0]}).model_dump_json())
+    seen=[]
+    class Inspect(_MicroModel):
+        def stream(self,messages):
+            if self.stage=="architecture":
+                text=" ".join(str(m.content) for m in messages)
+                seen.append(SYSTEM_BASELINE["baseline_id"] in text)
+            yield from super().stream(messages)
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k:Inspect(stage,k.get("schema") or {},[]))
+    answers=iter(["a","a"]);monkeypatch.setattr("builtins.input",lambda prompt:next(answers))
+    out=tmp_path/"fresh"
+    monkeypatch.setattr(sys,"argv",["prog",str(ip),"--conops",str(cp),"--system-baseline",str(bp),"--review","-o",str(out),"--to","architecture"])
+    cli.main()
+    assert seen and all(seen)
+    assert json.loads((out/"system-baseline.json").read_text())["baseline_id"]==SYSTEM_BASELINE["baseline_id"]

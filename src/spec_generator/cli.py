@@ -241,7 +241,7 @@ def _invalidate_from(graph, cfg: dict, stage: str, review_mode: bool) -> None:
                        as_node=_predecessor(stage, review_mode))
 
 
-def _run_with_gates(graph, cfg: dict, intent: dict, outdir, resume: bool = False) -> dict:
+def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool = False) -> dict:
     """ADR-0019 review gates (opt-in via --review): after the SRS and after the
     architecture, the founder accepts, edits (JSON, contract-validated), sends
     feedback (stage re-runs with it), or rejects. Crash mid-gate: rerun the
@@ -250,7 +250,11 @@ def _run_with_gates(graph, cfg: dict, intent: dict, outdir, resume: bool = False
 
     from langgraph.types import Command
 
-    result = graph.invoke(None, cfg) if resume else graph.invoke({"intent_model": intent}, cfg)
+    # Compatibility for internal callers resuming an already-seeded graph.
+    if "intent_model" not in initial_state:
+        initial_state = {"intent_model": initial_state}
+    intent = initial_state["intent_model"]
+    result = graph.invoke(None, cfg) if resume else graph.invoke(initial_state, cfg)
     restarted = False
     while True:
         st = graph.get_state(cfg)
@@ -278,7 +282,7 @@ def _run_with_gates(graph, cfg: dict, intent: dict, outdir, resume: bool = False
                   "This is the expected one-time heal: discarding it and regenerating "
                   "the stage under the fixed pipeline - the run continues on its own, "
                   "do NOT rerun the command.\n", file=sys.stderr)
-            result = graph.invoke({"intent_model": intent}, cfg)
+            result = graph.invoke(initial_state, cfg)
             continue
         (outdir / f"gate_{gate}.md").write_text(md)
         (outdir / f"gate_{gate}.json").write_text(json.dumps(artifact, indent=2))
@@ -792,7 +796,9 @@ def main() -> None:
                   f"preserved: {', '.join(kept) or '(nothing)'}; downstream state invalidated.",
                   file=sys.stderr)
     if args.review:
-        result = _run_with_gates(graph, cfg, intent, outdir, resume=resume)
+        result = _run_with_gates(graph, cfg,
+                                 {"intent_model": intent, "system_baseline": baseline, "conops": conops},
+                                 outdir, resume=resume)
     else:
         result = graph.invoke(None, cfg) if resume else graph.invoke(
             {"intent_model": intent, "system_baseline": baseline, "conops": conops}, cfg)
