@@ -249,3 +249,20 @@ python -m spec_generator.cli intent_model.json --system-baseline baseline.json \
 ```
 
 The comparison directory is a new generation; the source stays untouched. Reconciliation writes `audit.jsonl` with actor, hashes, changes, and destination. It uses semantic-equivalence rule v1: evidence and rendering metadata can change without invalidating downstream work, but SRS or architecture meaning changes do. On a semantic change, `artifact-status.json` marks items, tests, specs, assembly, manifest, and traceability stale with the exact hash transition and cause, following archive policy B. Omit `--reconcile-out` only when you deliberately want to update the live directory.
+
+## Canonical artifact lifecycle vocabulary
+
+Artifact state names and transitions are defined only in
+`vmodel_contracts.artifact_lifecycle`: `missing`, `partial`, `complete`,
+`stale`, `invalidated`, and `migrated`. LangGraph remains the workflow engine;
+phase 1 adds vocabulary and audit contracts only.
+
+A saved per-item fill is `partial`. A schema-valid artifact with sealed input,
+dependency, and anchor hashes is `complete`. A changed SystemBaseline makes
+architecture `stale`; `invalidate` names the architecture boundary and its
+downstream closure while preserving complete needs/SRS. `--from` performs
+`invalidate` then `restart`. A checkpoint intentionally stopped by `--to`
+requires a guarded `resume` naming its next artifact and legal outgoing arc.
+No `invalidated` artifact may feed downstream, and no changed anchor may be
+reported as `complete`. The contracts README is the canonical transition and
+guard reference.
