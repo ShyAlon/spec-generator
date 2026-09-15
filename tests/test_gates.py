@@ -270,3 +270,26 @@ def test_heal_second_failure_reraises_with_full_detail(tmp_path, monkeypatch):
     with pytest.raises(UserFacingError) as ei:
         _run_with_gates(g, cfg, dict(INTENT), tmp_path, resume=True)
     assert "functional.0.title: Field required" in ei.value.render()
+
+
+def test_expert_opinion_gate_records_simulated_not_founder(monkeypatch):
+    import json
+    from langchain_core.messages import AIMessage
+    from spec_generator import model_config
+    from spec_generator.graph import build_graph
+    from spec_generator.telemetry import UsageLog
+    from test_progress import FakeModel, INTENT, PAYLOADS
+    from conftest import SYSTEM_BASELINE
+    class ExpertModel(FakeModel):
+        def __init__(self,stage,schema):super().__init__(stage);self.schema=schema
+        def stream(self,messages):
+            if set(self.schema.get('properties',{}))=={'action','feedback','rationale'}:
+                yield AIMessage(content=json.dumps({'action':'approve','feedback':'','rationale':'artifact is coherent for test execution'}));return
+            yield from super().stream(messages)
+    monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**k: ExpertModel(stage,k.get('schema') or {}))
+    g=build_graph(UsageLog('s'),review=True,expert_opinion=True)
+    result=g.invoke({'intent_model':dict(INTENT),'system_baseline':SYSTEM_BASELINE},{'configurable':{'thread_id':'expert'}})
+    opinions=result['expert_opinions']
+    assert [o['gate'] for o in opinions]==['srs','architecture']
+    assert all(o['mode']=='simulated_expert_opinion' and o['human_review_required'] for o in opinions)
+    assert all('founder' not in o['mode'] for o in opinions)

@@ -564,7 +564,9 @@ def main() -> None:
                     help="artifact directory (default: <workspace>/artifacts/artifacts-YYYY-MM-DD_HH-MM-SS, "
                          "from the session id; VMODEL_ARTIFACTS_DIR overrides the root)")
     ap.add_argument("--review", action="store_true",
-                    help="opt-in founder review gates after the SRS and architecture stages (ADR-0019)")
+                    help="opt-in human review gates after the SRS and architecture stages")
+    ap.add_argument("--expert-opinion", action="store_true",
+                    help="simulate gate decisions with an LLM for test runs; records pending human review")
     ap.add_argument("--from", dest="from_stage", metavar="STAGE", default=None,
                     help="rewind the checkpoint: re-run STAGE and everything after it under the "
                          "current code, earlier stages preserved (stages: needs, srs, architecture, "
@@ -706,7 +708,7 @@ def main() -> None:
 
     conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
     partials = _make_partials(outdir)
-    graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review,
+    graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion,
                         persist=_make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
                                               conops_present=conops is not None),
                         partials=partials, stop_after=args.to_stage)
@@ -809,6 +811,11 @@ def main() -> None:
         result = _run_with_gates(graph, cfg,
                                  {"intent_model": intent, "system_baseline": baseline, "conops": conops},
                                  outdir, resume=resume)
+        if args.expert_opinion:
+            opinions=(graph.get_state(cfg).values.get("expert_opinions") or [])
+            _atomic_write(outdir / "expert-opinions.json",json.dumps({"mode":"simulated_expert_opinion","founder_approved":False,"human_review_required":True,"decisions":opinions},indent=2))
+            with (outdir / "audit.jsonl").open("a") as fh:
+                for opinion in opinions: fh.write(json.dumps({"event":"gate.simulated_expert_opinion",**opinion,"founder_approved":False})+"\n")
     else:
         result = graph.invoke(None, cfg) if resume else graph.invoke(
             {"intent_model": intent, "system_baseline": baseline, "conops": conops}, cfg)

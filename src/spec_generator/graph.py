@@ -60,6 +60,7 @@ class GenState(TypedDict, total=False):
     requirements: dict
     guard_flags: list[str]
     architecture_advisories: list[dict]
+    expert_opinions: list[dict]
     architecture: dict
     items: list[dict]
     tests: list[dict]
@@ -1500,7 +1501,8 @@ def _compact_test_context(state: GenState, slot: dict) -> dict:
 
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
                 review: bool = False, persist=None, partials=None,
-                only_stage: str | None = None, stop_after: str | None = None):
+                only_stage: str | None = None, stop_after: str | None = None,
+                expert_opinion: bool = False):
     """persist(stage, data, state): optional side-effect hook fired after each
     authoring stage completes - the CLI uses it to write the bundle
     incrementally, so a late failure leaves all completed work on disk.
@@ -2432,11 +2434,31 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
 
         def _make_gate(stage_key: str, artifact_key: str):
             def node_gate(state: GenState) -> dict:
-                verdict = interrupt({"gate": stage_key, "artifact": state.get(artifact_key),
-                                     "advisories": state.get("architecture_advisories", []) if stage_key == "architecture" else []})
+                advisories=state.get("architecture_advisories", []) if stage_key == "architecture" else []
+                if expert_opinion:
+                    payload=("Act as an independent expert reviewer for a TEST RUN. Review the exact artifact "
+                             "a human would see. Return JSON {action, feedback, rationale}; action is approve or "
+                             "regenerate. Never claim founder approval. Advisories must be considered.\nARTIFACT:\n"
+                             + json.dumps(state.get(artifact_key)) + "\nADVISORIES:\n" + json.dumps(advisories))
+                    def valid(d):
+                        if d.get("action") not in ("approve","regenerate"):
+                            raise ModelStructureError("expert action must be approve or regenerate")
+                        if not str(d.get("rationale","")).strip():
+                            raise ModelStructureError("expert rationale is required")
+                        if d["action"]=="regenerate" and not str(d.get("feedback","")).strip():
+                            raise ModelStructureError("expert regeneration feedback is required")
+                    verdict=_call_json("review",payload,log,progress,validate=valid,
+                                       schema={"type":"object","properties":{"action":{"enum":["approve","regenerate"]},"feedback":{"type":"string"},"rationale":{"type":"string"}},"required":["action","feedback","rationale"],"additionalProperties":False},stream_items=False,item_label=f"expert opinion: {stage_key} gate")
+                    record={"gate":stage_key,"mode":"simulated_expert_opinion","human_review_required":True,
+                            "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"]}
+                    model_config._console_line(f"   SIMULATED EXPERT OPINION at {stage_key}: {verdict['action']} - human review still required")
+                    out={"expert_opinions":state.get("expert_opinions",[])+[record]}
+                    if verdict["action"]=="regenerate":out["gate_feedback"]={stage_key:verdict["feedback"]}
+                    return out
+                verdict = interrupt({"gate": stage_key, "artifact": state.get(artifact_key),"advisories":advisories})
                 if verdict.get("action") == "regenerate":
                     return {"gate_feedback": {stage_key: verdict["feedback"]}}
-                return {}  # accept (edits landed via update_state before resume)
+                return {}
             return node_gate
 
         # NOT wrapped in track(): interrupt() raises through the progress
