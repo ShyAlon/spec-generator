@@ -1068,14 +1068,16 @@ def _check_conops_execution(arch: ArchitectureOverview, conops: dict | None) -> 
     normalized = _re.sub(r"[^a-z0-9+]+", " ", selected.lower()).strip()
     # Canonical concept discriminators avoid requiring the exact display phrase
     # when implementation names it naturally ("native mobile application").
-    discriminators = {
-        "native app": ("native",), "native application": ("native",),
-        "pwa": ("pwa", "progressive web app"),
-        "progressive web app": ("pwa", "progressive web app"),
-        "web app": ("web app", "web application"),
-        "web plus native bridge": ("bridge", "hybrid"),
-        "web + native bridge": ("bridge", "hybrid"),
-    }.get(normalized, (normalized,))
+    if "pwa" in normalized or "progressive web app" in normalized:
+        discriminators = ("pwa", "progressive web app", "progressive web application")
+    elif normalized in ("native app", "native application"):
+        discriminators = ("native",)
+    elif normalized in ("web app", "web application"):
+        discriminators = ("web app", "web application")
+    elif normalized in ("web plus native bridge", "web + native bridge"):
+        discriminators = ("bridge", "hybrid")
+    else:
+        discriminators = (normalized,)
     if not any(term and term in text for term in discriminators):
         raise ModelStructureError(
             f"architecture does not execute founder-confirmed CONOPS concept {selected!r}; "
@@ -2101,7 +2103,27 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     "that fails the current contract is re-asked, not the whole stage; if the same gate error "
                     "repeats after the re-ask, report it: a persistent gate failure is a pipeline bug, not a model limit.",
                 ) from e
-            _check_conops_execution(arch, state.get("conops"))
+            try:
+                _check_conops_execution(arch, state.get("conops"))
+            except ModelStructureError as e:
+                if _adr_attempt == 1:
+                    selected = str(((state.get("conops") or {}).get("decision") or {}).get("selected_concept", "")).strip()
+                    model_config._console_line(
+                        f"     - CONOPS-execution gate: {e} - re-planning the ADR set ONCE to execute {selected!r}")
+                    part.pop("adr_slots", None)
+                    part.pop("adr_bodies", None)
+                    _save()
+                    candidate_feedback = ("\n\nTHE PREVIOUS ARCHITECTURE FAILED THE CONOPS-EXECUTION GATE. "
+                                          f"The founder-confirmed concept is {selected!r}. "
+                                          "Add an ADR that explicitly names and executes this concept; "
+                                          "do not choose a replacement. Gate detail: " + str(e))
+                    continue
+                from .errors import UserFacingError
+                raise UserFacingError(
+                    "stage 'architecture': the architecture failed the CONOPS-execution gate twice.",
+                    str(e),
+                    f"{model_config._rerun_guidance('architecture')} - completed per-slot work is preserved; "
+                    "if it repeats, route architecture to a stronger model.") from e
             try:
                 _check_candidate_grounding(arch, state["intent_model"],
                                            contested=part.get("contested"))

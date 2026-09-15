@@ -797,3 +797,36 @@ def test_fresh_review_cli_carries_baseline_and_conops_into_architecture(monkeypa
     cli.main()
     assert seen and all(seen)
     assert json.loads((out/"system-baseline.json").read_text())["baseline_id"]==SYSTEM_BASELINE["baseline_id"]
+
+
+def _pwa_conops():
+    return {"session_id":"s", "stakeholder_context":[], "operational_scenarios":[],
+            "concept_options":[{"name":"Progressive Web Application (PWA)","summary":"web","advantages":["installable"],"disadvantages":["limits"]}],
+            "decision":{"selected_concept":"Progressive Web Application (PWA)","rationale":"chosen","founder_confirmed":True,"source_turns":[1]}}
+
+
+def test_conops_execution_gate_repairs_by_redrafting_adr(monkeypatch):
+    attempts={"plans":0}
+    class OmitsThenRepairs(_MicroModel):
+        def stream(self,messages):
+            props=set(self.schema.get("properties",{}))
+            if self.schema.get("type")=="array" and "slug" in self.schema.get("items",{}).get("properties",{}):
+                attempts["plans"]+=1
+            if "driver" in props and attempts["plans"] >= 2:
+                yield AIMessage(content=json.dumps({"title":"Execute PWA concept","decision":"Build the Progressive Web Application (PWA)","rationale":"Matches the confirmed operating concept","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[]}));return
+            yield from super().stream(messages)
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: OmitsThenRepairs(stage,k.get("schema") or {},[]))
+    result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-repair"}})
+    assert attempts["plans"] >= 2
+    assert "PWA" in result["architecture"]["decisions"][0]["decision"]
+
+
+def test_conops_execution_gate_exhaustion_is_human_readable(monkeypatch):
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: _MicroModel(stage,k.get("schema") or {},[]))
+    with pytest.raises(UserFacingError) as ei:
+        build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-fail"}})
+    rendered=ei.value.render()
+    assert rendered.startswith("Error: stage 'architecture'")
+    assert "failed the CONOPS-execution gate twice" in rendered
+    assert "Likely cause:" in rendered and "Progressive Web Application (PWA)" in rendered
+    assert "Next:" in rendered
