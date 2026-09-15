@@ -31,12 +31,12 @@ from test_progress import INTENT, PAYLOADS
 def test_no_micro_schema_has_two_fields_that_must_agree():
     # the phi4 mistake is not representable: there is no stack_baseline_refs
     # anywhere a model writes, and every object is additionalProperties:false
-    for sch in (arch_stack_plan_schema(), arch_stack_entry_schema(["repo:x"]),
+    for sch in (arch_stack_plan_schema(), arch_stack_entry_schema(["repo:x"], ["tech:python"]),
                 arch_adr_plan_schema()):
         assert "stack" not in json.dumps(sch).lower().replace("stack_keys", "")
-    entry = arch_stack_entry_schema(["repo:x"])
+    entry = arch_stack_entry_schema(["repo:x"], ["tech:python"])
     assert entry["additionalProperties"] is False
-    assert set(entry["properties"]) == {"value", "baseline_refs"}
+    assert set(entry["properties"]) == {"technology", "off_list_justification", "baseline_refs"}
     assert entry["properties"]["baseline_refs"]["items"] == {"enum": ["repo:x"]}
     plan = arch_adr_plan_schema()
     # the model cannot miss or mis-set a migration ADR: the plan schema has
@@ -126,17 +126,17 @@ class _MicroModel:
         if props == {"stack_keys"}:
             out = {"stack_keys": self.plan_keys or (["language", self.depart_key] if self.depart
                                   else ["language", "database"])}
-        elif props == {"value", "baseline_refs"}:
+        elif props == {"technology", "off_list_justification", "baseline_refs"}:
             prompt = messages[-1].content
             if (f"THE STACK KEY TO DECIDE: {self.depart_key}" in prompt and self.depart):
-                out = {"value": self.DEPART_VALUES[self.depart_key][0], "baseline_refs": []}
+                out = {"technology": self.DEPART_VALUES[self.depart_key][0], "off_list_justification": None, "baseline_refs": []}
             elif any(f"THE STACK KEY TO DECIDE: {k}" in m.content for k in ("database", "persistence")
                      for m in messages):
                 # kind-correct default: the slot-kind gate (P3) rejects a language
                 # value for a database slot
-                out = {"value": "PostgreSQL 14", "baseline_refs": ["persistence:spec-generator:1"]}
+                out = {"technology": "PostgreSQL", "off_list_justification": None, "baseline_refs": ["persistence:spec-generator:1"]}
             else:
-                out = {"value": "ts", "baseline_refs": ["repo:spec-generator"]}
+                out = {"technology": "python", "off_list_justification": None, "baseline_refs": ["runtime:spec-generator:1"]}
         elif props == {"responsibility"}:
             out = {"responsibility": "serve"}
         elif props == {"position"}:
@@ -149,7 +149,8 @@ class _MicroModel:
                    "driver": "simplicity",
                    "options_considered": [], "baseline_refs": [],
                    "evidence": ["R-9 requires shared state"] if migration else [],
-                   "affected_repositories": ["spec-generator"] if migration else []}
+                   "affected_repositories": ["spec-generator"] if migration else [],
+                   "executes_concept_ids": (self.schema["properties"]["executes_concept_ids"]["items"].get("enum") or []) if 'executes_concept_ids' in self.schema.get("properties",{}) else []}
         elif self.stage != "architecture":
             out = PAYLOADS[self.stage]
         elif self.schema.get("type") == "array":
@@ -181,9 +182,10 @@ def test_departure_is_wired_to_its_authorizing_adr_in_code(monkeypatch):
     r = _run(monkeypatch, [], depart=True)
     arch = r["architecture"]
     db = next(e for e in arch["stack_entries"] if e["key"] == "database")
-    assert db["baseline_refs"] == [] and db["migration_adr_id"] == "ADR-1"
-    assert arch["decisions"][0]["migration"] is True
-    assert arch["decisions"][0]["affected_repositories"] == ["spec-generator"]
+    assert db["baseline_refs"] == [] and db["migration_adr_id"] == db["decision_id"]
+    owner = next(d for d in arch["decisions"] if d["decision_id"] == db["decision_id"])
+    assert owner["migration"] is True
+    assert owner["affected_repositories"] == ["spec-generator"]
 
 
 def test_ci_tool_departure_is_authorized_without_model_cooperation(monkeypatch):
@@ -195,26 +197,26 @@ def test_ci_tool_departure_is_authorized_without_model_cooperation(monkeypatch):
              adr_slugs=[{"slug": "ci_tool-absence"}])
     arch = r["architecture"]
     ci = next(e for e in arch["stack_entries"] if e["key"] == "ci_tool")
-    assert ci["baseline_refs"] == [] and ci["migration_adr_id"] == "ADR-1"
-    first = arch["decisions"][0]
-    assert first["decision_id"] == "ADR-1" and first["migration"] is True
-    assert first["title"] == "Adopt Jenkins for ci_tool"  # names the departure
-    assert first["evidence"] and first["affected_repositories"] == ["spec-generator"]
-    # the model's optional slot survives as a plain non-migration ADR after it
-    assert arch["decisions"][1]["decision_id"] == "ADR-2"
-    assert arch["decisions"][1]["migration"] is False
+    assert ci["baseline_refs"] == [] and ci["migration_adr_id"] == ci["decision_id"]
+    owner = next(d for d in arch["decisions"] if d["decision_id"] == ci["decision_id"])
+    assert owner["migration"] is True
+    assert owner["title"] == "Adopt Jenkins for ci_tool"  # names the departure
+    assert owner["evidence"] and owner["affected_repositories"] == ["spec-generator"]
+    # the model's optional slot survives as a plain non-migration ADR
+    optional = next(d for d in arch["decisions"] if d["title"] == "t")
+    assert optional["migration"] is False
 
 
 def test_per_slot_resume_skips_completed_entries(monkeypatch, tmp_path):
     partials = _make_partials(tmp_path)
     with pytest.raises(RuntimeError):
-        _run(monkeypatch, [], partials=partials, crash_on={"value", "baseline_refs"})
+        _run(monkeypatch, [], partials=partials, crash_on={"technology", "off_list_justification", "baseline_refs"})
     saved = partials.load("architecture")
     assert saved["stack_keys"] == ["language", "database"]
     assert saved.get("stack_entries", {}) == {}  # first entry call crashed before saving
     calls = []
     r = _run(monkeypatch, calls, partials=partials)
-    entry_calls = [c for c in calls if isinstance(c, dict) and set(c) == {"value", "baseline_refs"}]
+    entry_calls = [c for c in calls if isinstance(c, dict) and set(c) == {"technology", "off_list_justification", "baseline_refs"}]
     assert len(entry_calls) == 2  # both entries ran (nothing was saved)
     assert partials.load("architecture") is None  # cleared on completion
     # now crash AFTER the first entry completed: rerun skips it
@@ -237,7 +239,7 @@ def test_per_slot_resume_skips_completed_entries(monkeypatch, tmp_path):
     assert list(saved["stack_entries"]) == ["language"]  # first entry preserved
     calls = []
     _run(monkeypatch, calls, partials=partials2)
-    entry_calls = [c for c in calls if isinstance(c, dict) and set(c) == {"value", "baseline_refs"}]
+    entry_calls = [c for c in calls if isinstance(c, dict) and set(c) == {"technology", "off_list_justification", "baseline_refs"}]
     assert len(entry_calls) == 1  # only the crashed entry re-ran
 
 
@@ -267,7 +269,7 @@ def test_invented_entry_value_retries_only_that_slot(monkeypatch):
                 counters["db"] += 1
                 if counters["db"] == 1:
                     yield AIMessage(content=json.dumps(
-                        {"value": "Auth0", "baseline_refs": ["repo:spec-generator"]}))
+                        {"technology": "Auth0", "off_list_justification": None, "baseline_refs": ["repo:spec-generator"]}))
                     return
             yield from super().stream(messages)
 
@@ -278,7 +280,7 @@ def test_invented_entry_value_retries_only_that_slot(monkeypatch):
         {"configurable": {"thread_id": "auth0"}})
     assert counters["db"] == 2  # rejected once, retried with feedback, accepted
     db = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "database")
-    assert db["value"] == "PostgreSQL 14" and db["baseline_refs"] == ["persistence:spec-generator:1"]
+    assert db["value"] == "PostgreSQL" and db["baseline_refs"] == ["persistence:spec-generator:1"]
 
 
 def test_persisted_entry_failing_current_contract_is_reasked(monkeypatch, tmp_path):
@@ -294,10 +296,10 @@ def test_persisted_entry_failing_current_contract_is_reasked(monkeypatch, tmp_pa
                                        "baseline_refs": ["repo:spec-generator"]}}})
     calls = []
     r = _run(monkeypatch, calls, partials=partials)
-    entry_calls = [c for c in calls if isinstance(c, dict) and set(c) == {"value", "baseline_refs"}]
+    entry_calls = [c for c in calls if isinstance(c, dict) and set(c) == {"technology", "off_list_justification", "baseline_refs"}]
     assert len(entry_calls) == 1  # only the bad slot was re-asked
     db = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "database")
-    assert db["value"] == "PostgreSQL 14" and db["baseline_refs"] == ["persistence:spec-generator:1"]
+    assert db["value"] == "PostgreSQL" and db["baseline_refs"] == ["persistence:spec-generator:1"]
 
 
 def test_gate_failure_is_human_readable_not_a_traceback(monkeypatch):
@@ -330,7 +332,7 @@ def test_gate_failure_is_human_readable_not_a_traceback(monkeypatch):
 
 
 def test_empty_answer_gets_targeted_proposal_feedback(monkeypatch):
-    # the exact 2026-09-12 sso_integration failure: {"value": "", "baseline_refs": []}
+    # the exact 2026-09-12 sso_integration failure: {"technology": "", "off_list_justification": None, "baseline_refs": []}
     # on BOTH attempts. The blank is now rejected with feedback that NAMES the
     # legal move - propose a concrete technology; it becomes a migration
     # automatically, with the pipeline generating the authorizing ADR.
@@ -341,10 +343,10 @@ def test_empty_answer_gets_targeted_proposal_feedback(monkeypatch):
             if any("THE STACK KEY TO DECIDE: sso_integration" in m.content for m in messages):
                 seen["n"] += 1
                 if seen["n"] == 1:
-                    yield AIMessage(content=json.dumps({"value": "", "baseline_refs": []}))
+                    yield AIMessage(content=json.dumps({"technology": "", "off_list_justification": None, "baseline_refs": []}))
                     return
                 seen["retry_feedback"] = messages[-1].content
-                yield AIMessage(content=json.dumps({"value": "Keycloak", "baseline_refs": []}))
+                yield AIMessage(content=json.dumps({"technology": "Keycloak", "off_list_justification": None, "baseline_refs": []}))
                 return
             yield from super().stream(messages)
 
@@ -359,7 +361,7 @@ def test_empty_answer_gets_targeted_proposal_feedback(monkeypatch):
     assert "proposed migration" in seen["retry_feedback"]
     sso = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "sso_integration")
     assert sso["value"] == "Keycloak" and sso["baseline_refs"] == []
-    assert sso["migration_adr_id"] == "ADR-1"  # pipeline-generated migration slot
+    assert sso["migration_adr_id"] == sso["decision_id"]  # pipeline-generated migration slot
 
 
 def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monkeypatch, tmp_path):
@@ -377,7 +379,7 @@ def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monke
     from spec_generator.errors import UserFacingError
     from spec_generator.graph import checkpoint_serde
 
-    intent = {**INTENT, "contract_version": "0.14.1"}
+    intent = {**INTENT, "contract_version": "0.15.0"}
     intent_path = tmp_path / "intent.json"
     intent_path.write_text(json.dumps(intent))
     baseline_path = tmp_path / "baseline.json"
@@ -416,7 +418,7 @@ def test_review_resume_after_accepted_srs_merges_baseline_without_rerunning_srs(
     from spec_generator import cli
     from spec_generator.graph import checkpoint_serde
 
-    intent={**INTENT,"contract_version":"0.14.1"}
+    intent={**INTENT,"contract_version":"0.15.0"}
     ip=tmp_path/"intent.json";ip.write_text(json.dumps(intent))
     bp=tmp_path/"baseline.json";bp.write_text(json.dumps(SYSTEM_BASELINE))
     out=tmp_path/"artifacts";out.mkdir();sid=intent["session_id"]
@@ -496,10 +498,10 @@ def test_entry_point_shape_cannot_answer_a_technology_slot():
     class EntryPointAnswer(_MicroModel):
         def stream(self, messages):
             props = set(self.schema.get("properties", {}))
-            if props == {"value", "baseline_refs"} and any(
+            if props == {"technology", "off_list_justification", "baseline_refs"} and any(
                     "THE STACK KEY TO DECIDE: framework" in m.content for m in messages):
                 if any("cannot answer this slot" in m.content for m in messages):
-                    yield AIMessage(content=json.dumps({"value": "LangGraph", "baseline_refs": []}))
+                    yield AIMessage(content=json.dumps({"technology": "LangGraph", "off_list_justification": None, "baseline_refs": []}))
                 else:
                     yield AIMessage(content=json.dumps(
                         {"value": "python -m spec_generator.cli",
@@ -528,13 +530,13 @@ def test_wrong_kind_value_rejected_deterministically():
     class PydanticAnswer(_MicroModel):
         def stream(self, messages):
             props = set(self.schema.get("properties", {}))
-            if props == {"value", "baseline_refs"} and any(
+            if props == {"technology", "off_list_justification", "baseline_refs"} and any(
                     "THE STACK KEY TO DECIDE: encryption" in m.content for m in messages):
                 if any("does not answer this" in m.content for m in messages):
-                    yield AIMessage(content=json.dumps({"value": "AES-256", "baseline_refs": []}))
+                    yield AIMessage(content=json.dumps({"technology": "AES-256", "off_list_justification": None, "baseline_refs": []}))
                 else:
                     yield AIMessage(content=json.dumps(
-                        {"value": "ts", "baseline_refs": ["repo:spec-generator"]}))
+                        {"technology": "python", "off_list_justification": None, "baseline_refs": ["runtime:spec-generator:1"]}))
                 return
             yield from super().stream(messages)
 
@@ -569,7 +571,8 @@ def test_founder_constraint_driver_needs_a_recorded_preference():
                      "rationale": rat, "driver": driver,
                      "options_considered": [], "baseline_refs": [],
                      "evidence": ["R-9 requires shared state"] if migration else [],
-                     "affected_repositories": ["spec-generator"] if migration else []}))
+                     "affected_repositories": ["spec-generator"] if migration else [],
+                   "executes_concept_ids": (self.schema["properties"]["executes_concept_ids"]["items"].get("enum") or []) if 'executes_concept_ids' in self.schema.get("properties",{}) else []}))
                 return
             yield from super().stream(messages)
 
@@ -602,7 +605,8 @@ def test_mandate_language_under_another_driver_is_rejected():
                      "rationale": rat, "driver": "simplicity",
                      "options_considered": [], "baseline_refs": [],
                      "evidence": ["R-9 requires shared state"] if migration else [],
-                     "affected_repositories": ["spec-generator"] if migration else []}))
+                     "affected_repositories": ["spec-generator"] if migration else [],
+                   "executes_concept_ids": (self.schema["properties"]["executes_concept_ids"]["items"].get("enum") or []) if 'executes_concept_ids' in self.schema.get("properties",{}) else []}))
                 return
             yield from super().stream(messages)
 
@@ -646,10 +650,10 @@ def test_d3js_accepted_for_a_visualization_slot_end_to_end():
     class D3Answer(_MicroModel):
         def stream(self, messages):
             props = set(self.schema.get("properties", {}))
-            if props == {"value", "baseline_refs"} and any(
+            if props == {"technology", "off_list_justification", "baseline_refs"} and any(
                     "THE STACK KEY TO DECIDE: data_visualization_library" in m.content
                     for m in messages):
-                yield AIMessage(content=json.dumps({"value": "D3.js", "baseline_refs": []}))
+                yield AIMessage(content=json.dumps({"technology": "D3.js", "off_list_justification": None, "baseline_refs": []}))
                 return
             yield from super().stream(messages)
 
@@ -669,7 +673,7 @@ def test_d3js_accepted_for_a_visualization_slot_end_to_end():
     monkeypatch.undo()
 
 
-GREENFIELD_BASELINE = {"contract_version": "0.14.1", "baseline_id": "gf-test",
+GREENFIELD_BASELINE = {"contract_version": "0.15.0", "baseline_id": "gf-test",
                        "system_name": "New product", "mode": "greenfield",
                        "repositories": [], "immutable_decisions": []}
 
@@ -680,8 +684,8 @@ class _GreenfieldModel(_MicroModel):
     old prompt said 'new component = migration'."""
     def stream(self, messages):
         props = set(self.schema.get("properties", {}))
-        if self.stage == "architecture" and props == {"value", "baseline_refs"}:
-            yield AIMessage(content=json.dumps({"value": "Swift", "baseline_refs": []}))
+        if self.stage == "architecture" and props == {"technology", "off_list_justification", "baseline_refs"}:
+            yield AIMessage(content=json.dumps({"technology": "Swift", "off_list_justification": None, "baseline_refs": []}))
             return
         if self.stage == "architecture" and self.schema.get("type") == "array":
             item_props = set(self.schema["items"].get("properties", {}))
@@ -757,12 +761,12 @@ def test_brownfield_still_requires_cite_or_migrate(monkeypatch):
     from vmodel_contracts import ArchitectureOverview
     from conftest import SYSTEM_BASELINE
     arch = ArchitectureOverview.model_validate({
-        "contract_version": "0.14.1", "session_id": "s", "baseline_id": "test-baseline",
-        "stack_entries": [{"key": "language", "value": "ts",
+        "contract_version": "0.15.0", "session_id": "s", "baseline_id": "test-baseline",
+        "stack_entries": [{"key": "language", "value": "ts", "technology_id": "tech:typescript", "decision_id": "ADR-1",
                            "baseline_refs": ["repo:spec-generator"], "migration_adr_id": None}],
         "components": [{"name": "api", "responsibility": "serve", "requirement_ids": ["R-1"],
                         "baseline_refs": [], "migration": False, "migration_adr_title": None}],
-        "decisions": [], "non_functionals": {}})
+        "decisions": [{"decision_id":"ADR-1","title":"Language","decision":"TypeScript","rationale":"fit","driver":"simplicity","options_considered":[],"executes_concept_ids":[],"technology_selections":[{"slot_id":"slot:language","technology_id":"tech:typescript","display_name":"ts","baseline_refs":["repo:spec-generator"]}]}], "non_functionals": {}})
     from spec_generator.skeleton import ModelStructureError
     from vmodel_contracts import SystemBaseline
     try:
@@ -776,7 +780,7 @@ def test_fresh_review_cli_carries_baseline_and_conops_into_architecture(monkeypa
     """Real CLI boundary regression: --review used to discard both fields."""
     import sys
     from spec_generator import cli
-    intent={**INTENT,"contract_version":"0.14.1"}
+    intent={**INTENT,"contract_version":"0.15.0"}
     ip=tmp_path/"intent.json";ip.write_text(json.dumps(intent))
     bp=tmp_path/"baseline.json";bp.write_text(json.dumps(SYSTEM_BASELINE))
     # A minimal valid ConOps fixture from the contract, tied to this session.
@@ -813,22 +817,29 @@ def test_conops_execution_gate_repairs_by_redrafting_adr(monkeypatch):
             if self.schema.get("type")=="array" and "slug" in self.schema.get("items",{}).get("properties",{}):
                 attempts["plans"]+=1
             if "driver" in props and attempts["plans"] >= 2:
-                yield AIMessage(content=json.dumps({"title":"Execute PWA concept","decision":"Build the Progressive Web Application (PWA)","rationale":"Matches the confirmed operating concept","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[]}));return
+                yield AIMessage(content=json.dumps({"title":"Execute PWA concept","decision":"Build the Progressive Web Application (PWA)","rationale":"Matches the confirmed operating concept","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":["concept:pwa"]}));return
             yield from super().stream(messages)
     monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: OmitsThenRepairs(stage,k.get("schema") or {},[]))
     result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-repair"}})
     assert attempts["plans"] >= 2
-    assert "PWA" in result["architecture"]["decisions"][0]["decision"]
+    assert any("concept:pwa" in d["executes_concept_ids"] for d in result["architecture"]["decisions"])
 
 
 def test_conops_execution_gate_exhaustion_is_human_readable(monkeypatch):
-    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: _MicroModel(stage,k.get("schema") or {},[]))
+    class OmitsConcept(_MicroModel):
+        def stream(self, messages):
+            for chunk in super().stream(messages):
+                data=json.loads(chunk.content)
+                if isinstance(data,dict) and "executes_concept_ids" in data:
+                    data["executes_concept_ids"]=[]
+                yield AIMessage(content=json.dumps(data))
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: OmitsConcept(stage,k.get("schema") or {},[]))
     with pytest.raises(UserFacingError) as ei:
         build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-fail"}})
     rendered=ei.value.render()
     assert rendered.startswith("Error: stage 'architecture'")
     assert "still failed deterministic gates" in rendered
-    assert "Likely cause:" in rendered and "Progressive Web Application (PWA)" in rendered
+    assert "Likely cause:" in rendered and "concept:pwa" in rendered
     assert "Next:" in rendered
 
 
@@ -853,11 +864,12 @@ def test_conops_repair_feedback_is_in_adr_body_prompt(monkeypatch):
             if "driver" in props:
                 seen.append(prompt)
                 if "FAILED THESE ACTIVE DETERMINISTIC GATES" in prompt:
-                    yield AIMessage(content=json.dumps({"title":"Adopt Progressive Web Application (PWA)","decision":"Execute the PWA concept","rationale":"confirmed concept","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[]}));return
+                    yield AIMessage(content=json.dumps({"title":"Adopt Progressive Web Application (PWA)","decision":"Execute the PWA concept","rationale":"confirmed concept","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":["concept:pwa"]}));return
+                yield AIMessage(content=json.dumps({"title":"Other","decision":"Other","rationale":"other","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":[]}));return
             yield from super().stream(messages)
     monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: CaptureRepair(stage,k.get("schema") or {},[]))
     result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-body-feedback"}})
-    assert any("CONOPS concept 'Progressive Web Application (PWA)'" in p for p in seen)
+    assert any("CONOPS concept id 'concept:pwa'" in p for p in seen)
     from spec_generator.graph import _check_conops_execution
     _check_conops_execution(__import__('vmodel_contracts').ArchitectureOverview.model_validate(result['architecture']),_pwa_conops())
 
@@ -881,17 +893,26 @@ def test_gate_repair_accumulates_conops_and_candidate_requirements(monkeypatch):
                 prompts.append(prompt)
                 if 'THE PREVIOUS ARCHITECTURE FAILED THESE ACTIVE DETERMINISTIC GATES' in prompt:
                     migration='"migration": true' in prompt
-                    yield AIMessage(content=json.dumps({"title":"Execute PWA with Kubernetes","decision":"Build the Progressive Web Application (PWA) and deploy with Kubernetes","rationale":"PWA executes the confirmed concept; Kubernetes provides horizontal scaling beyond curated choices","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":["scaling requirement"] if migration else [],"affected_repositories":["spec-generator"] if migration else []}));return
+                    yield AIMessage(content=json.dumps({"title":"Execute PWA with Kubernetes","decision":"Build the Progressive Web Application (PWA) and deploy with Kubernetes","rationale":"PWA executes the confirmed concept; Kubernetes provides horizontal scaling beyond curated choices","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":["scaling requirement"] if migration else [],"affected_repositories":["spec-generator"] if migration else [],"executes_concept_ids":["concept:pwa"]}));return
             yield from super().stream(messages)
     class OffListModel(BothMissingThenFixed):
         def stream(self,messages):
             if any('THE STACK KEY TO DECIDE: scalability_strategy' in m.content for m in messages):
-                yield AIMessage(content=json.dumps({"value":"Kubernetes","baseline_refs":[]}));return
+                yield AIMessage(content=json.dumps({"technology":"Kubernetes","off_list_justification":"horizontal scaling beyond curated candidates","baseline_refs":[]}));return
             yield from super().stream(messages)
     monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**k: OffListModel(stage,k.get('schema') or {},[],plan_keys=['language','database','scalability_strategy']))
     result=build_graph(UsageLog('s')).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"both-gates"}})
     repair=next(p for p in prompts if 'FAILED THESE ACTIVE' in p)
-    assert 'CONOPS-execution' in repair and 'candidate-grounding' in repair
+    assert 'candidate-grounding' in repair
     arch=__import__('vmodel_contracts').ArchitectureOverview.model_validate(result['architecture'])
     from spec_generator.graph import _check_conops_execution,_check_candidate_grounding
     _check_conops_execution(arch,_pwa_conops());_check_candidate_grounding(arch,dict(INTENT))
+
+def test_stack_is_exact_projection_and_repeated_titles_do_not_bind_identity():
+    from pydantic import ValidationError
+    from vmodel_contracts import ArchitectureOverview
+    payload={"session_id":"s","stack_entries":[{"key":"database","value":"PostgreSQL","technology_id":"tech:postgresql","decision_id":"ADR-1"}],"components":[],"decisions":[{"decision_id":"ADR-1","title":"Repeated","decision":"PostgreSQL","rationale":"fit","driver":"simplicity","options_considered":[],"executes_concept_ids":[],"technology_selections":[{"slot_id":"slot:database","technology_id":"tech:postgresql","display_name":"PostgreSQL"}]},{"decision_id":"ADR-2","title":"Repeated","decision":"Other","rationale":"fit","driver":"simplicity","options_considered":[],"executes_concept_ids":[],"technology_selections":[]}],"non_functionals":{}}
+    ArchitectureOverview.model_validate(payload)
+    payload["stack_entries"][0]["decision_id"]="ADR-2"
+    with pytest.raises(ValidationError,match="exact projection"):
+        ArchitectureOverview.model_validate(payload)

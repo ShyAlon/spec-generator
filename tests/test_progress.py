@@ -27,7 +27,7 @@ PAYLOADS = {
     # this; the micro-pipeline assembles it from the per-slot answers FakeModel
     # routes in invoke() below.
     "architecture": {"session_id": "s", "baseline_id": "test-baseline",
-                     "stack_entries": [{"key": "language", "value": "ts",
+                     "stack_entries": [{"key": "language", "value": "ts", "technology_id":"tech:typescript", "decision_id":"ADR-1",
                                         "baseline_refs": ["repo:spec-generator"],
                                         "migration_adr_id": None}],
                      "components": [{"name": "api", "responsibility": "serve", "requirement_ids": ["R-1"],
@@ -37,7 +37,7 @@ PAYLOADS = {
                                     "driver": "simplicity",
                                     "options_considered": [{"option": "z", "reason": "heavier"}],
                                     "baseline_refs": ["repo:spec-generator"], "migration": False,
-                                    "evidence": [], "affected_repositories": [], "rejected": []}],
+                                    "evidence": [], "affected_repositories": [], "executes_concept_ids":[], "technology_selections":[{"slot_id":"slot:language","technology_id":"tech:typescript","display_name":"ts","baseline_refs":["repo:spec-generator"]}], "rejected": []}],
                      "non_functionals": {}},
     "items": [{"slug": "api", "kind": "api_surface", "title": "API",
                "body_markdown": "# API", "requirement_ids": ["R-1"]}],  # code numbers it SPEC-1
@@ -75,14 +75,14 @@ class FakeModel:
         answer the one this prompt asks for (markers are the prompt's own
         slot headers - a wrong route fails validation, loudly)."""
         if "THE STACK KEY TO DECIDE" in prompt:
-            return {"value": "ts", "baseline_refs": ["repo:spec-generator"]}
+            return {"technology": "python", "off_list_justification": None, "baseline_refs": ["runtime:spec-generator:1"]}
         if "THE COMPONENT SLOT" in prompt:
             return {"responsibility": "serve"}
         if "THE ADR SLOT" in prompt:
             return {"title": "t", "decision": "x", "rationale": "y", "driver": "simplicity",
                     "options_considered": [{"option": "z", "reason": "heavier"}],
                     "baseline_refs": ["repo:spec-generator"], "evidence": [],
-                    "affected_repositories": []}
+                    "affected_repositories": [], "executes_concept_ids": []}
         if "THE NON-FUNCTIONAL REQUIREMENT" in prompt:
             return {"position": "fast enough"}
         if "PIPELINE-REQUIRED MIGRATION ADRS" in prompt:

@@ -39,7 +39,7 @@ from difflib import SequenceMatcher
 from .tech_candidates import (KIND_LEXICONS, PLATFORM_CHECKED_KINDS,
                               SLOT_KEY_SUBSTR, TECH_CANDIDATES,
                               TECH_CANDIDATES_AS_OF, primary_row_in_text,
-                              tech_row)
+                              tech_row, resolve_technology, TECH_ROWS)
 from .tools import tools_enabled
 from .skeleton import (ModelStructureError, assign_architecture_ids,
                                    build_srs_skeleton, build_test_skeleton,
@@ -1031,29 +1031,17 @@ def _dedupe_adr_slots(slots: list[dict], bodies: dict) -> list[dict]:
 # outranks technology preferences: architecture implements it, never re-decides it.
 def _check_conops_execution(arch: ArchitectureOverview, conops: dict | None) -> None:
     if not conops:
-        return  # legacy sessions degrade in the review renderer, not by failing
-    selected = str((conops.get("decision") or {}).get("selected_concept", "")).strip()
-    if not selected:
-        raise ModelStructureError("CONOPS has no selected concept")
-    text = " ".join([*(e.value for e in arch.stack_entries),
-                     *(d.title + " " + d.decision + " " + d.rationale for d in arch.decisions)]).lower()
-    normalized = _re.sub(r"[^a-z0-9+]+", " ", selected.lower()).strip()
-    # Canonical concept discriminators avoid requiring the exact display phrase
-    # when implementation names it naturally ("native mobile application").
-    if "pwa" in normalized or "progressive web app" in normalized:
-        discriminators = ("pwa", "progressive web app", "progressive web application")
-    elif normalized in ("native app", "native application"):
-        discriminators = ("native",)
-    elif normalized in ("web app", "web application"):
-        discriminators = ("web app", "web application")
-    elif normalized in ("web plus native bridge", "web + native bridge"):
-        discriminators = ("bridge", "hybrid")
-    else:
-        discriminators = (normalized,)
-    if not any(term and term in text for term in discriminators):
+        return
+    from vmodel_contracts import canonical_concept_id
+    decision = conops.get("decision") or {}
+    selected_id = str(decision.get("selected_concept_id") or canonical_concept_id(str(decision.get("selected_concept", "")))).strip()
+    if not selected_id or selected_id == "concept:":
+        raise ModelStructureError("CONOPS has no selected_concept_id")
+    executed = {cid for d in arch.decisions for cid in d.executes_concept_ids}
+    if selected_id not in executed:
         raise ModelStructureError(
-            f"architecture does not execute founder-confirmed CONOPS concept {selected!r}; "
-            "name the concept in a stack entry or ADR and implement it rather than choosing a replacement")
+            f"architecture does not execute founder-confirmed CONOPS concept id {selected_id!r}; "
+            "an ADR must declare it in executes_concept_ids")
 
 
 # Open-question resolution (2026-09-13 greenfield defect): the SRS carried
@@ -1133,35 +1121,38 @@ def _resolve_answered_open_questions(state: dict, persist, *, architecture: dict
 def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
                            comp_slots: list, comp_bodies: dict, adr_slots: list,
                            adr_bodies: dict, nfr: dict) -> dict:
-    """Deterministic assembly (0.13.0): the model authored per-slot substance;
-    code wires every cross-reference - ADR ids, departure -> authorizing ADR,
-    component -> migration ADR title - from the validated slots."""
-    decisions = [{"decision_id": slot["decision_id"], **adr_bodies[slot["decision_id"]]}
-                 for slot in adr_slots]
-
-    def covering(target: str) -> str | None:
-        for slot in adr_slots:
-            if slot["migration"] and target in slot["authorizes"]:
-                return slot["decision_id"]
-        return None
-
+    """Code-owned projection: ADR selections are canonical; stack is derived."""
+    decisions = []
     stack_entries = []
-    for key, e in entries.items():
-        adr_id = None if e["baseline_refs"] else covering(f"stack:{key}")
-        stack_entries.append({"key": key, "value": e["value"],
-                              "baseline_refs": e["baseline_refs"], "migration_adr_id": adr_id})
-    components = []
+    for slot in adr_slots:
+        did = slot["decision_id"]
+        body = {**adr_bodies[did]}
+        selections = []
+        for target in slot["authorizes"]:
+            if not target.startswith("stack:"):
+                continue
+            key = target.split(":", 1)[1]
+            e = entries[key]
+            selection = {"slot_id": "slot:" + __import__("re").sub(r"[^a-z0-9]+", "-", key.casefold()).strip("-"),
+                         "technology_id": e["technology_id"], "display_name": e["value"],
+                         "baseline_refs": e["baseline_refs"],
+                         "off_list_justification": e.get("off_list_justification")}
+            selections.append(selection)
+            stack_entries.append({"key": key, "value": e["value"], "technology_id": e["technology_id"],
+                                  "decision_id": did, "baseline_refs": e["baseline_refs"],
+                                  "migration_adr_id": did if slot["migration"] and not e["baseline_refs"] else None})
+        body["technology_selections"] = selections
+        decisions.append({"decision_id": did, **body})
+    def covering(target):
+        return next((s["decision_id"] for s in adr_slots if s["migration"] and target in s["authorizes"]), None)
+    components=[]
     for c in comp_slots:
-        adr_id = covering(f"component:{c['name']}") if c.get("migration") else None
-        components.append({"name": c["name"],
-                           "responsibility": comp_bodies[c["name"]]["responsibility"],
-                           "requirement_ids": c["requirement_ids"],
-                           "baseline_refs": c["baseline_refs"],
-                           "migration": bool(c.get("migration")),
-                           "migration_adr_title": (adr_bodies[adr_id]["title"] if adr_id else None)})
-    return {"session_id": session_id, "baseline_id": baseline_id,
-            "stack_entries": stack_entries, "components": components,
-            "decisions": decisions, "non_functionals": nfr}
+        aid=covering(f"component:{c['name']}") if c.get("migration") else None
+        components.append({"name":c["name"],"responsibility":comp_bodies[c["name"]]["responsibility"],
+                           "requirement_ids":c["requirement_ids"],"baseline_refs":c["baseline_refs"],
+                           "migration":bool(c.get("migration")),"migration_adr_title":adr_bodies[aid]["title"] if aid else None})
+    return {"session_id":session_id,"baseline_id":baseline_id,"stack_entries":stack_entries,
+            "components":components,"decisions":decisions,"non_functionals":nfr}
 
 
 
@@ -1765,8 +1756,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         baseline_vocab = _baseline_vocab(baseline) if existing else ""
 
         def _v_entry(d, key):
-            value = str(d.get("value", "")).strip()
+            value = str(d.get("technology", d.get("value", ""))).strip()
             refs = [str(r) for r in d.get("baseline_refs") or []]
+            technology_id, technology_row = resolve_technology(value)
+            justification = d.get("off_list_justification")
+            if not value:
+                raise ModelStructureError(f"stack.{key}: an empty value decides nothing - propose a concrete technology; empty baseline_refs becomes a proposed migration")
+            is_grounded_fact = bool(refs) and _value_grounded(value, baseline_vocab)
+            if technology_row is None and not is_grounded_fact and not str(justification or "").strip():
+                raise ModelStructureError(f"stack.{key}: off-list pick {value!r} requires off_list_justification")
+            if technology_row is None and is_grounded_fact:
+                technology_id = "tech:" + _re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+            if technology_row is not None and justification is not None:
+                raise ModelStructureError(f"stack.{key}: off_list_justification is only for unresolved technology")
             if not value:
                 # targeted feedback, not a generic contract failure (the
                 # 2026-09-12 sso_integration blank: the model saw no legal
@@ -1842,6 +1844,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             f"directly. Matching-platform candidates: {', '.join(fitting[:6]) or '(none on file)'}. "
                             f"If {value!r} is a DELIBERATE call (e.g. web-first PWA), repeat it and the "
                             "covering ADR must carry the explicit platform justification for founder veto.")
+            entry["technology_id"] = technology_id
+            entry["off_list_justification"] = str(justification).strip() if justification is not None else None
             return entry
 
         entries = part.setdefault("stack_entries", {})
@@ -1850,7 +1854,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             # (e.g. Auth0 saved before this check existed) is dropped and
             # re-asked - never silently trusted, never a rerun from zero.
             try:
-                _v_entry(entries[key], key)
+                entries[key] = _v_entry(entries[key], key)
             except ModelStructureError as e:
                 del entries[key]
                 model_config._console_line(
@@ -1863,7 +1867,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 context + f"\n\nTHE STACK KEY TO DECIDE: {key}\n"
                 + _candidate_block(key, founder_techs) + "\n\n" + ARCH_STACK_ENTRY + feedback,
                 log, progress, validate=lambda d, key=key: _v_entry(d, key),
-                schema=arch_stack_entry_schema(valid_refs),
+                schema=arch_stack_entry_schema(valid_refs, [r["technology_id"] for r in TECH_ROWS]),
                 stream_items=False, item_label=f"stack:{key}")
             _save()
 
@@ -1931,9 +1935,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             # decisions; ids are assigned after the merge, required slots first.
             departures = [k for k, e in entries.items() if not e["baseline_refs"]] if existing else []
             migrating = [c["name"] for c in part["component_slots"] if c["migration"]] if existing else []
-            authorizable = [f"stack:{k}" for k in departures] + [f"component:{n}" for n in migrating]
+            authorizable = [f"stack:{k}" for k in entries] + [f"component:{n}" for n in migrating]
             if "adr_slots" not in part:
                 required = _required_adr_slots(authorizable)
+                for slot in required:
+                    slot["migration"] = any(t.removeprefix("stack:") in departures for t in slot["authorizes"]) or any(t.removeprefix("component:") in migrating for t in slot["authorizes"])
                 req_block = ("\n\nPIPELINE-REQUIRED MIGRATION ADRS (already planned - do not "
                              "re-propose them; you will author their bodies against these "
                              "fixed slots):\n" + json.dumps(required)) if required else \
@@ -1967,6 +1973,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "migration": slot["migration"],
                             "evidence": [str(x) for x in d.get("evidence") or []],
                             "affected_repositories": [str(x) for x in d.get("affected_repositories") or []],
+                            "executes_concept_ids": [str(x) for x in d.get("executes_concept_ids") or []],
+                            "technology_selections": [],
                             "rejected": []}
                     if not body["title"] or not body["decision"] or not body["rationale"]:
                         raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
@@ -2026,7 +2034,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     + json.dumps({k: e["value"] for k, e in entries.items()})
                     + lost_block + candidate_feedback + "\n\n" + ARCH_ADR_BODY + feedback,
                     log, progress, validate=_v_adr,
-                    schema=arch_adr_body_schema(valid_refs, repo_names),
+                    schema=arch_adr_body_schema(valid_refs, repo_names, [__import__("vmodel_contracts").canonical_concept_id(str(o.get("name", ""))) for o in (state.get("conops") or {}).get("concept_options", [])]),
                     stream_items=False, item_label=f"{did} {slot['slug']}")
                 _save()
 

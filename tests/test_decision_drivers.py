@@ -9,12 +9,12 @@ from spec_generator.render import render_architecture
 from spec_generator.schemas import for_stage
 from spec_generator.skeleton import ModelStructureError, assign_architecture_ids
 
-ARCH = {"session_id": "s", "stack_entries": [{"key": "framework", "value": "React"}],
+ARCH = {"session_id": "s", "stack_entries": [{"key": "framework", "value": "React", "technology_id":"tech:react", "decision_id":"ADR-1"}],
         "components": [{"name": "web", "responsibility": "UI", "requirement_ids": ["R-1"]}],
         "decisions": [{"title": "Frontend framework", "decision": "React",
                        "rationale": "Largest ecosystem for this archetype.",
                        "driver": "ecosystem_maturity",
-                       "options_considered": [{"option": "Angular", "reason": "More ceremony for a solo build."}]}],
+                       "options_considered": [{"option": "Angular", "reason": "More ceremony for a solo build."}], "executes_concept_ids":[], "technology_selections":[{"slot_id":"slot:framework","technology_id":"tech:react","display_name":"React"}]}],
         "non_functionals": {}}
 INTENT_NO_PREFS = {"session_id": "s", "tech_preferences": []}
 INTENT_WITH_PREFS = {"session_id": "s", "tech_preferences": [
@@ -22,7 +22,22 @@ INTENT_WITH_PREFS = {"session_id": "s", "tech_preferences": [
 
 
 def _arch(payload):
+    from spec_generator.tech_candidates import resolve_technology
     merged = assign_architecture_ids(payload)
+    decisions=merged.setdefault("decisions",[])
+    if merged.get("stack_entries") and not decisions:
+        decisions.append({"decision_id":"ADR-1","title":"Stack","decision":"Stack","rationale":"test fixture","driver":"simplicity","options_considered":[]})
+    for i,d in enumerate(decisions,1):
+        d.setdefault("decision_id",f"ADR-{i}");d.setdefault("executes_concept_ids",[]);d.setdefault("technology_selections",[])
+    owner=decisions[0] if decisions else None
+    for e in merged.get("stack_entries",[]):
+        if "technology_id" not in e:
+            tid,row=resolve_technology(e["value"]);e["technology_id"]=tid
+        e.setdefault("decision_id",owner["decision_id"])
+        if owner and not any(x["slot_id"]=="slot:"+e["key"].replace("_","-") for x in owner["technology_selections"]):
+            sel={"slot_id":"slot:"+e["key"].replace("_","-"),"technology_id":e["technology_id"],"display_name":e["value"],"baseline_refs":e.get("baseline_refs",[])}
+            if e["technology_id"].startswith("off-list:"): sel["off_list_justification"]="test fixture"
+            owner["technology_selections"].append(sel)
     return ArchitectureOverview.model_validate({**merged, "session_id": "s"})
 
 
@@ -92,18 +107,14 @@ def test_gate_render_marks_legacy_driverless_decisions():
     assert "Rejected: z - old flat form" in md
 
 
-def test_legacy_arch_fill_makes_pre_080_checkpoints_assemblable():
-    """A checkpoint written by pre-0.8.0 code holds decisions without
-    driver/options_considered; assembly fills the honest legacy form so a
-    resume past the architecture stage cannot crash (ADR-0021)."""
+def test_legacy_architecture_requires_identity_stage_restart():
+    """Pre-identity architecture cannot invent ADR ownership during migration."""
     from spec_generator.graph import _legacy_arch_fill
     checkpointed = {"session_id": "s", "stack": {"language": "ts"},
                     "components": [{"name": "api", "responsibility": "serve"}],
                     "decisions": [{"decision_id": "ADR-1", "title": "t", "decision": "x", "rationale": "y"}]}
-    arch = ArchitectureOverview.model_validate(_legacy_arch_fill(checkpointed))
-    assert arch.decisions[0].driver is None
-    assert arch.decisions[0].options_considered == []
-    assert "(not recorded - pre-0.8.0 artifact)" in render_architecture(arch)
+    with pytest.raises(Exception):
+        ArchitectureOverview.model_validate(_legacy_arch_fill(checkpointed))
 
 
 def test_legacy_arch_fill_never_overwrites_real_drivers():
@@ -114,18 +125,16 @@ def test_legacy_arch_fill_never_overwrites_real_drivers():
 
 
 def test_greenfield_labels_ungrounded_entries_new_design():
-    arch = _arch({"session_id": "s", "stack_entries": [{"key": "database", "value": "Firestore",
-                                                        "baseline_refs": []}],
-                  "components": [], "decisions": []})
+    arch = _arch({"session_id": "s", "stack_entries": [{"key": "database", "value": "Firestore", "technology_id":"tech:firestore", "decision_id":"ADR-1", "baseline_refs": []}],
+                  "components": [], "decisions": [{"decision_id":"ADR-1","title":"Database","decision":"Firestore","rationale":"fit","driver":"simplicity","options_considered":[],"executes_concept_ids":[],"technology_selections":[{"slot_id":"slot:database","technology_id":"tech:firestore","display_name":"Firestore","off_list_justification":None}]}]})
     md = render_architecture(arch, greenfield=True)
     assert "**database**: Firestore (new design)" in md
     assert "migration" not in md
 
 
 def test_existing_mode_keeps_legacy_migration_label():
-    arch = _arch({"session_id": "s", "stack_entries": [{"key": "database", "value": "X",
-                                                        "baseline_refs": []}],
-                  "components": [], "decisions": []})
+    arch = _arch({"session_id": "s", "stack_entries": [{"key": "database", "value": "X", "technology_id":"off-list:x", "decision_id":"ADR-1", "baseline_refs": []}],
+                  "components": [], "decisions": [{"decision_id":"ADR-1","title":"Database","decision":"X","rationale":"fit","driver":"simplicity","options_considered":[],"executes_concept_ids":[],"technology_selections":[{"slot_id":"slot:database","technology_id":"off-list:x","display_name":"X","off_list_justification":"test-only"}]}]})
     assert "(migration: see ADRs)" in render_architecture(arch)
 
 

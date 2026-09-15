@@ -22,9 +22,9 @@ def baseline(mode="existing"):
 
 def architecture():
     return ArchitectureOverview.model_validate({**assign_architecture_ids({
-        "stack_entries": [{"key": "language", "value": "Python",
+        "stack_entries": [{"key": "language", "value": "Python", "technology_id":"tech:python", "decision_id":"ADR-1",
                            "baseline_refs": ["repo:spec-generator"], "migration_adr_id": None},
-                          {"key": "model_runtime", "value": "Ollama",
+                          {"key": "model_runtime", "value": "Ollama", "technology_id":"tech:ollama", "decision_id":"ADR-1",
                            "baseline_refs": ["runtime:spec-generator:2"], "migration_adr_id": None}],
         "components": [{"name": "spec-generator", "responsibility": "generate artifacts",
                         "requirement_ids": ["R-1"], "baseline_refs": ["repo:spec-generator"],
@@ -32,7 +32,7 @@ def architecture():
         "decisions": [{"title": "Preserve local runtime", "decision": "Use Ollama",
                        "rationale": "It is the recorded runtime", "driver": "founder_constraint",
                        "options_considered": [], "baseline_refs": ["runtime:spec-generator:2"],
-                       "migration": False, "evidence": [], "affected_repositories": []}],
+                       "migration": False, "evidence": [], "affected_repositories": [], "executes_concept_ids": [], "technology_selections":[{"slot_id":"slot:language","technology_id":"tech:python","display_name":"Python","baseline_refs":["repo:spec-generator"]},{"slot_id":"slot:model-runtime","technology_id":"tech:ollama","display_name":"Ollama","baseline_refs":["runtime:spec-generator:2"]}]}],
         "non_functionals": {}}), "session_id": "s", "baseline_id": "vmodel-v1"})
 
 
@@ -50,11 +50,11 @@ def test_existing_architecture_must_trace_stack_and_components():
     with pytest.raises(ModelStructureError, match="requires baseline refs"):
         _check_baseline_reconciliation(a, baseline())
     a = architecture().model_copy(deep=True)
-    a.stack_entries.append(StackEntry(key="language", value="Python", baseline_refs=["repo:spec-generator"]))
+    a.stack_entries.append(StackEntry(key="language", value="Python", technology_id="tech:python", decision_id="ADR-1", baseline_refs=["repo:spec-generator"]))
     with pytest.raises(ModelStructureError, match="unique"):
         _check_baseline_reconciliation(a, baseline())
     a = architecture().model_copy(deep=True)
-    a.stack_entries.append(StackEntry(key="database", value="PostgreSQL", baseline_refs=[]))
+    a.stack_entries.append(StackEntry(key="database", value="PostgreSQL", technology_id="tech:postgresql", decision_id="ADR-1", baseline_refs=[]))
     with pytest.raises(ModelStructureError, match="ADR tagged migration"):
         _check_baseline_reconciliation(a, baseline())
 
@@ -68,7 +68,7 @@ def test_unknown_generic_archetype_refs_are_rejected():
 
 def test_departure_requires_migration_adr_evidence_and_affected_repo():
     a = architecture().model_copy(deep=True)
-    a.stack_entries.append(StackEntry(key="database", value="PostgreSQL", baseline_refs=[]))
+    a.stack_entries.append(StackEntry(key="database", value="PostgreSQL", technology_id="tech:postgresql", decision_id="ADR-1", baseline_refs=[]))
     with pytest.raises(ModelStructureError, match="ADR tagged migration"):
         _check_baseline_reconciliation(a, baseline())
     d = a.decisions[0]
@@ -86,7 +86,7 @@ def test_departure_authorized_by_pipeline_wired_adr_id():
     d.title = "Database migration"; d.decision = "Adopt PostgreSQL"
     d.migration = True; d.evidence = ["R-9 requires shared transactional state"]
     d.affected_repositories = ["spec-generator"]
-    a.stack_entries.append(StackEntry(key="database", value="PostgreSQL",
+    a.stack_entries.append(StackEntry(key="database", value="PostgreSQL", technology_id="tech:postgresql", decision_id=d.decision_id,
                                       baseline_refs=[], migration_adr_id=d.decision_id))
     _check_baseline_reconciliation(a, baseline())
     a.stack_entries[2].migration_adr_id = "ADR-99"
@@ -100,11 +100,11 @@ def test_departure_authorized_by_pipeline_wired_adr_id():
 def test_greenfield_is_explicit_and_cannot_claim_baseline_or_migration():
     b = baseline("greenfield")
     a = ArchitectureOverview.model_validate({**assign_architecture_ids({
-        "stack_entries": [{"key": "language", "value": "Python", "baseline_refs": [], "migration_adr_id": None}],
+        "stack_entries": [{"key": "language", "value": "Python", "technology_id":"tech:python", "decision_id":"ADR-1", "baseline_refs": [], "migration_adr_id": None}],
         "components": [{"name": "app", "responsibility": "serve", "baseline_refs": [], "migration": False, "migration_adr_title": None}],
         "decisions": [{"title": "Language", "decision": "Python", "rationale": "team fit",
                        "driver": "team_fit", "options_considered": [], "baseline_refs": [],
-                       "migration": False, "evidence": [], "affected_repositories": []}],
+                       "migration": False, "evidence": [], "affected_repositories": [], "executes_concept_ids": [], "technology_selections":[{"slot_id":"slot:language","technology_id":"tech:python","display_name":"Python","baseline_refs":[]}]}],
         "non_functionals": {}}), "session_id": "s", "baseline_id": "vmodel-v1"})
     _check_baseline_reconciliation(a, b)
     a.decisions[0].migration = True

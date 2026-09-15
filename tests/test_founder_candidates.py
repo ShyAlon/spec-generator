@@ -21,12 +21,20 @@ INTENT_SUPABASE = {"session_id": "s", "tech_preferences": [
 
 
 def _arch_with(stack, options):
-    return _arch({"session_id": "s",
-                  "stack_entries": [{"key": k, "value": v} for k, v in stack],
+    from spec_generator.tech_candidates import resolve_technology
+    sels=[]; entries=[]
+    for k,v in stack:
+        tid,row=resolve_technology(v)
+        if row is None: tid="off-list:"+v.lower().replace(" ","-")
+        sel={"slot_id":"slot:"+k.replace("_","-"),"technology_id":tid,"display_name":v}
+        if tid.startswith("off-list:"): sel["off_list_justification"]="test fixture"
+        sels.append(sel);entries.append({"key":k,"value":v,"technology_id":tid,"decision_id":"ADR-1"})
+    return _arch({"session_id": "s", "stack_entries": entries,
                   "components": [{"name": "c", "responsibility": "r", "requirement_ids": ["R-1"]}],
-                  "decisions": [{"title": "Database", "decision": stack[0][1],
+                  "decisions": [{"decision_id":"ADR-1","title": "Database", "decision": stack[0][1],
                                  "rationale": "Fits the free-tier constraint and realtime sync.",
-                                 "driver": "simplicity", "options_considered": options}],
+                                 "driver": "simplicity", "options_considered": options,
+                                 "executes_concept_ids":[],"technology_selections":sels}],
                   "non_functionals": {}})
 
 
@@ -46,7 +54,7 @@ def test_artifact_mobile_family_present():
 
 
 def _row(name, kinds=("database",), platforms=("any",), aliases=(), note="n"):
-    return {"name": name, "kinds": list(kinds), "platforms": list(platforms),
+    return {"name": name, "technology_id": "tech:" + name.lower().replace(" ", "-"), "kinds": list(kinds), "platforms": list(platforms),
             "runtime": None, "ecosystem": None,
             "aliases": sorted({name.lower(), *aliases}), "note": note}
 
@@ -140,26 +148,14 @@ def test_founder_tech_adopted_needs_no_rejection_entry():
     _check_candidate_grounding(arch, INTENT_SUPABASE)
 
 
-def test_off_list_pick_without_adr_fails_then_passes():
-    novel = "Zylith-9000 DB"
-    # an ADR about a DIFFERENT decision leaves the off-list pick undeliberated
-    arch = _arch({"session_id": "s",
-                  "stack_entries": [{"key": "database", "value": novel}],
-                  "components": [{"name": "c", "responsibility": "r", "requirement_ids": ["R-1"]}],
-                  "decisions": [{"title": "Auth", "decision": "Firebase Auth",
-                                 "rationale": "Managed providers out of the box.",
-                                 "driver": "simplicity", "options_considered": []}],
-                  "non_functionals": {}})
-    with pytest.raises(ModelStructureError, match="off-list"):
-        _check_candidate_grounding(arch, {"tech_preferences": []})
-    arch2 = _arch({"session_id": "s",
-                   "stack_entries": [{"key": "database", "value": novel}],
-                   "components": [{"name": "c", "responsibility": "r", "requirement_ids": ["R-1"]}],
-                   "decisions": [{"title": f"Database: {novel}", "decision": novel,
-                                  "rationale": "Only store with the conflict model R-7 needs.",
-                                  "driver": "simplicity", "options_considered": []}],
-                   "non_functionals": {}})
-    _check_candidate_grounding(arch2, {"tech_preferences": []})
+def test_off_list_pick_without_structured_justification_is_unrepresentable():
+    from pydantic import ValidationError
+    from vmodel_contracts import TechnologySelection
+    with pytest.raises(ValidationError, match="off_list_justification"):
+        TechnologySelection(slot_id="slot:database", technology_id="off-list:zylith-9000-db", display_name="Zylith-9000 DB")
+    selected = TechnologySelection(slot_id="slot:database", technology_id="off-list:zylith-9000-db",
+                                   display_name="Zylith-9000 DB", off_list_justification="R-7 needs its conflict model")
+    assert selected.off_list_justification
 
 
 def test_on_list_and_lexicon_picks_need_no_extra_adr():
@@ -240,12 +236,12 @@ class _ReactForMobile(_MicroModel):
 
     def stream(self, messages):
         props = set(self.schema.get("properties", {}))
-        if props == {"value", "baseline_refs"} and any(
+        if props == {"technology", "off_list_justification", "baseline_refs"} and any(
                 "THE STACK KEY TO DECIDE: mobile_framework" in m.content for m in messages):
             if any("cannot answer this slot directly" in m.content for m in messages):
-                yield _AIMessage(content=json.dumps({"value": "React Native", "baseline_refs": []}))
+                yield _AIMessage(content=json.dumps({"technology": "React Native", "off_list_justification": None, "baseline_refs": []}))
             else:
-                yield _AIMessage(content=json.dumps({"value": "React", "baseline_refs": []}))
+                yield _AIMessage(content=json.dumps({"technology": "React", "off_list_justification": None, "baseline_refs": []}))
             return
         yield from super().stream(messages)
 
@@ -263,9 +259,9 @@ class _InsistentReact(_MicroModel):
 
     def stream(self, messages):
         props = set(self.schema.get("properties", {}))
-        if props == {"value", "baseline_refs"} and any(
+        if props == {"technology", "off_list_justification", "baseline_refs"} and any(
                 "THE STACK KEY TO DECIDE: mobile_framework" in m.content for m in messages):
-            yield _AIMessage(content=json.dumps({"value": "React", "baseline_refs": []}))
+            yield _AIMessage(content=json.dumps({"technology": "React", "off_list_justification": None, "baseline_refs": []}))
             return
         if "driver" in props and '"migration": true' not in messages[-1].content:
             yield _AIMessage(content=json.dumps({
@@ -273,7 +269,7 @@ class _InsistentReact(_MicroModel):
                 "rationale": "Web-first PWA is a deliberate product call: one codebase now, "
                              "the native wrapper ships later.",
                 "driver": "simplicity", "options_considered": [], "baseline_refs": [],
-                "evidence": [], "affected_repositories": []}))
+                "evidence": [], "affected_repositories": [], "executes_concept_ids": []}))
             return
         yield from super().stream(messages)
 
@@ -293,9 +289,9 @@ class _InsistentReactNoAdr(_MicroModel):
 
     def stream(self, messages):
         props = set(self.schema.get("properties", {}))
-        if props == {"value", "baseline_refs"} and any(
+        if props == {"technology", "off_list_justification", "baseline_refs"} and any(
                 "THE STACK KEY TO DECIDE: mobile_framework" in m.content for m in messages):
-            yield _AIMessage(content=json.dumps({"value": "React", "baseline_refs": []}))
+            yield _AIMessage(content=json.dumps({"technology": "React", "off_list_justification": None, "baseline_refs": []}))
             return
         yield from super().stream(messages)
 

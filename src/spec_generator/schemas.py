@@ -256,15 +256,16 @@ def arch_stack_plan_schema() -> dict:
             "additionalProperties": False}
 
 
-def arch_stack_entry_schema(valid_refs: list[str]) -> dict:
+def arch_stack_entry_schema(valid_refs: list[str], technology_ids: list[str]) -> dict:
     """One stack entry against its fixed key. Grounding refs are enum-
     constrained to the canonical baseline refs (invented refs impossible by
     construction); empty refs marks a departure, wired to an ADR in code."""
     return {"type": "object",
-            "properties": {"value": {"type": "string"},
+            "properties": {"technology": {"type": "string"},
+                           "off_list_justification": {"type": ["string", "null"]},
                            "baseline_refs": {"type": "array",
                                              "items": _enum_or_str(valid_refs)}},
-            "required": ["value", "baseline_refs"],
+            "required": ["technology", "off_list_justification", "baseline_refs"],
             "additionalProperties": False}
 
 
@@ -303,7 +304,7 @@ def arch_adr_plan_schema() -> dict:
     return {"type": "array", "items": slot}
 
 
-def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str]) -> dict:
+def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str], concept_ids: list[str]) -> dict:
     """One ADR against its fixed slot. Ids, migration flag, and authorizations
     stay pipeline-owned; the model authors the decision substance."""
     return {"type": "object",
@@ -322,9 +323,10 @@ def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str]) -> dict:
                                              "items": _enum_or_str(valid_refs)},
                            "evidence": {"type": "array", "items": {"type": "string"}},
                            "affected_repositories": {"type": "array",
-                                                     "items": _enum_or_str(repo_names)}},
+                                                     "items": _enum_or_str(repo_names)},
+                           "executes_concept_ids": {"type": "array", "items": _enum_or_str(concept_ids)}},
             "required": ["title", "decision", "rationale", "driver", "options_considered",
-                         "baseline_refs", "evidence", "affected_repositories"],
+                         "baseline_refs", "evidence", "affected_repositories", "executes_concept_ids"],
             "additionalProperties": False}
 
 

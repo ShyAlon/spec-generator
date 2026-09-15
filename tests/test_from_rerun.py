@@ -33,12 +33,12 @@ def test_from_items_reruns_downstream_only(monkeypatch, tmp_path):
     db = str(tmp_path / "cp.sqlite")
     g, cfg = _run_once(box, monkeypatch, db)
     counts = {k: v.calls for k, v in box.items()}
-    assert counts == {"srs": 1, "architecture": 6, "items": 1, "tests": 1, "review": 1}  # architecture: 3 plans + 3 slot fills
+    assert counts == {"srs": 1, "architecture": 7, "items": 1, "tests": 1, "review": 1}  # architecture: 3 plans + 3 slot fills
 
     _invalidate_from(g, cfg, "items", review_mode=False)
     r = g.invoke(None, cfg)
     after = {k: v.calls for k, v in box.items()}
-    assert "needs" not in after and after["srs"] == 1 and after["architecture"] == 6  # preserved
+    assert "needs" not in after and after["srs"] == 1 and after["architecture"] == 7  # preserved
     assert after["items"] == 2 and after["tests"] == 2 and after["review"] == 2      # re-fired
     assert "bundle" in r and r["bundle"]["items"][0]["spec_id"] == "SPEC-1"
 
@@ -272,7 +272,7 @@ def test_baseline_change_invalidates_architecture_downstream(monkeypatch, tmp_pa
     assert "invalidating them" in err
     # architecture (6 slot calls) and everything downstream re-fired; needs/srs did not
     assert "needs" not in box and box["srs"].calls == 1
-    assert box["architecture"].calls == 12 and box["items"].calls == 2
+    assert box["architecture"].calls == 14 and box["items"].calls == 2
     assert box["tests"].calls == 2 and box["review"].calls == 2
     # the resumed state carries the NEW baseline
     assert json.loads((outdir / "system-baseline.json").read_text())["baseline_id"] == "other-system-v1"
@@ -291,7 +291,7 @@ def test_same_baseline_resume_relabels_nothing(monkeypatch, tmp_path, capsys):
     _run_cli(monkeypatch, intent_file, b1, outdir)
     err = capsys.readouterr().err
     assert "WARNING: the --system-baseline" not in err
-    assert box["architecture"].calls == 6  # unchanged: completed stages are NOT re-run
+    assert box["architecture"].calls == 7  # unchanged: completed stages are NOT re-run
     assert box["items"].calls == 1
 
 
@@ -328,14 +328,14 @@ def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(mon
 
         def _architecture_answer(self, prompt: str):
             if "THE STACK KEY TO DECIDE" in prompt:
-                return {"value": "Supabase", "baseline_refs": []}
+                return {"technology": "Supabase", "off_list_justification": None, "baseline_refs": []}
             if "THE COMPONENT SLOT" in prompt:
                 return {"responsibility": "Persist points across devices"}
             if "THE ADR SLOT" in prompt:
                 return {"title": "Adopt Supabase", "decision": "Use Supabase for persistence",
                         "rationale": "One managed backend.", "driver": "simplicity",
                         "options_considered": [{"option": "Firebase", "reason": "Second backend"}],
-                        "baseline_refs": [], "evidence": [], "affected_repositories": []}
+                        "baseline_refs": [], "evidence": [], "affected_repositories": [], "executes_concept_ids": []}
             if "THE NON-FUNCTIONAL REQUIREMENT" in prompt:
                 return {"position": "No special position"}
             if "Plan the OPTIONAL architecture decision records" in prompt:
@@ -402,13 +402,13 @@ def test_reconcile_artifacts_copy_hashes_semantics_stales_and_audits(tmp_path):
            "constraints": [], "assumptions": []}
     architecture = {
         "session_id": "s", "baseline_id": "test-baseline",
-        "stack_entries": [{"key": "data_persistence_service", "value": "Supabase",
+        "stack_entries": [{"key": "data_persistence_service", "value": "Supabase", "technology_id":"tech:supabase", "decision_id":"ADR-1",
                            "baseline_refs": [], "migration_adr_id": None}],
         "components": [],
         "decisions": [{"decision_id": "ADR-1", "title": "Adopt Supabase",
                        "decision": "Use Supabase", "rationale": "Simple managed backend",
                        "driver": "simplicity", "options_considered": [], "baseline_refs": [],
-                       "migration": False, "evidence": [], "affected_repositories": [], "rejected": []}],
+                       "migration": False, "evidence": [], "affected_repositories": [], "executes_concept_ids":[], "technology_selections":[{"slot_id":"slot:data-persistence-service","technology_id":"tech:supabase","display_name":"Supabase"}], "rejected": []}],
         "non_functionals": {}}
     (source / "srs.json").write_text(json.dumps(srs))
     (source / "architecture.json").write_text(json.dumps(architecture))

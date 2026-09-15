@@ -102,14 +102,8 @@ def test_backfill_writes_completed_stages_without_rerunning(monkeypatch, tmp_pat
     assert {k: v.calls for k, v in box.items()} == calls_at_completion  # nothing re-ran
 
 
-def test_backfill_tolerates_pre_080_checkpointed_architecture(tmp_path):
-    legacy_arch = {"session_id": "s", "stack": {"language": "ts"},
-                   "components": [{"name": "api", "responsibility": "serve"}],
-                   "decisions": [{"decision_id": "ADR-1", "title": "t", "decision": "x",
-                                  "rationale": "y"}]}  # no driver / options_considered
-    values = {"architecture": legacy_arch}
-    written = _backfill_persist(_make_persist(dict(INTENT), tmp_path), values)
-    assert written == ["architecture"]
-    md = (tmp_path / "architecture.md").read_text()
-    assert "not recorded - pre-0.8.0 artifact" in md
-    assert json.loads((tmp_path / "architecture.json").read_text())["decisions"][0]["driver"] is None
+def test_backfill_refuses_pre_identity_architecture(tmp_path):
+    legacy_arch = {"session_id":"s","stack":{"language":"ts"},"components":[],"decisions":[]}
+    import pytest
+    with pytest.raises(Exception):
+        _backfill_persist(_make_persist(dict(INTENT), tmp_path), {"architecture":legacy_arch})

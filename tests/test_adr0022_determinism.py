@@ -121,7 +121,7 @@ def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
     assert r["srs"]["functional"][0]["requirement_id"] == "R-1"  # code-owned
     assert r["items"][0]["spec_id"] == "SPEC-1" and r["items"][0]["slug"] == "api"  # code-owned numbering
     arch_calls = [s for s, _, _ in calls].count("architecture")
-    assert arch_calls == 6  # 3 plans + 1 stack entry + 1 component body + 1 ADR body
+    assert arch_calls == 7  # 3 plans + 1 stack entry + 1 component body + 1 ADR body
     assert r["architecture"]["stack_entries"][0]["key"] == "language"
     assert r["architecture"]["decisions"][0]["decision_id"] == "ADR-1"  # code-owned
 

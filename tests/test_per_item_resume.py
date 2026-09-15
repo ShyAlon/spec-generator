@@ -32,8 +32,8 @@ def _arch_answer(schema):
     props = set(schema.get("properties", {}))
     if props == {"stack_keys"}:
         return {"stack_keys": ["language"]}
-    if props == {"value", "baseline_refs"}:
-        return {"value": "ts", "baseline_refs": ["repo:spec-generator"]}
+    if props == {"technology", "off_list_justification", "baseline_refs"}:
+        return {"technology": "python", "off_list_justification": None, "baseline_refs": ["runtime:spec-generator:1"]}
     if props == {"responsibility"}:
         return {"responsibility": "serve"}
     if props == {"position"}:
@@ -42,7 +42,7 @@ def _arch_answer(schema):
         return {"title": "t", "decision": "x", "rationale": "y", "driver": "simplicity",
                 "options_considered": [{"option": "z", "reason": "heavier"}],
                 "baseline_refs": ["repo:spec-generator"], "evidence": [],
-                "affected_repositories": []}
+                "affected_repositories": [], "executes_concept_ids": []}
     if schema.get("type") == "array":
         item_props = set(schema["items"].get("properties", {}))
         if "slug" in item_props:

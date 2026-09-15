@@ -94,6 +94,9 @@ def validate_artifact(data) -> list[str]:
         if not name:
             problems.append("every row needs a non-empty name")
             continue
+        tid = str(r.get("technology_id", ""))
+        if not re.fullmatch(r"tech:[a-z0-9][a-z0-9-]*", tid):
+            problems.append(f"{name!r}: technology_id must be a canonical tech:* id")
         rk = r.get("kinds")
         if (not isinstance(rk, list) or not rk
                 or any(k not in kinds for k in rk)):
@@ -250,13 +253,25 @@ KIND_LEXICONS: dict[str, tuple[str, ...]] = {
     k: tuple(a for r in TECH_ROWS if k in r["kinds"] for a in r["aliases"])
     for k in TECH_KINDS}
 
-_BY_ALIAS = {a: r for r in TECH_ROWS for a in r["aliases"]}
+def normalize_technology_alias(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+
+_BY_ALIAS = {normalize_technology_alias(a): r for r in TECH_ROWS for a in r["aliases"]}
+_BY_ID = {r["technology_id"]: r for r in TECH_ROWS}
+
+
+def resolve_technology(value: str) -> tuple[str, dict | None]:
+    """One parse-boundary resolution: canonical id, or explicit off-list id."""
+    if value in _BY_ID:
+        return value, _BY_ID[value]
+    row = _BY_ALIAS.get(normalize_technology_alias(value))
+    return ((row["technology_id"], row) if row else ("off-list:" + normalize_technology_alias(value), None))
 
 
 def tech_row(value: str) -> dict | None:
     """The matrix row for a technology name or alias (case-insensitive), or
     None for novel tech - a matrix miss is never a verdict by itself."""
-    return _BY_ALIAS.get(value.strip().lower())
+    return _BY_ALIAS.get(normalize_technology_alias(value))
 
 
 def rows_in_text(text: str) -> list[dict]:
