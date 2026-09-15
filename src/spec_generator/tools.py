@@ -200,7 +200,7 @@ def run_tool_loop(stage: str, toolbox, human_payload: str, log, progress=None,
     emitted = 0
     for _ in range(max_rounds):
         try:
-            ai = model.invoke(messages)
+            ai = model_config.invoke_checked(model, messages, stage, item="structure-proposal")
         except Exception as e:
             name = type(e).__name__
             if name in ("APIConnectionError", "ConnectError", "ConnectTimeout") or "connection" in str(e).lower():

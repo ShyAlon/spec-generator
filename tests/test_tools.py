@@ -160,6 +160,10 @@ class _Log:
 def _run(monkeypatch, tb, scripted):
     monkeypatch.setattr("spec_generator.model_config.build_chat_model",
                         lambda stage, structured=True: _ScriptedModel(scripted))
+    # Keep these unit tests focused on proposal/disposal; model_config's own
+    # guard tests cover deadlines, telemetry, and provider translation.
+    monkeypatch.setattr("spec_generator.model_config.invoke_checked",
+                        lambda model, messages, stage, item=None: model.invoke(messages))
     return run_tool_loop("srs", tb, "payload", _Log())
 
 
@@ -259,3 +263,19 @@ def test_tools_degrade_to_plain_skeleton(monkeypatch):
                                             "tests": [ValueError("tool calling unsupported")]})
     srs = r["bundle"]["_srs"]
     assert [q["requirement_id"] for q in srs["functional"]] == ["R-1"]
+
+
+def test_tool_loop_routes_every_model_round_through_guard(monkeypatch):
+    tb = SrsToolbox(_srs_slots(), {"SN-1", "SN-2"})
+    model = _ScriptedModel([_AI([])])
+    monkeypatch.setattr("spec_generator.model_config.build_chat_model",
+                        lambda stage, structured=True: model)
+    seen = []
+
+    def guarded(bound_model, messages, stage, item=None):
+        seen.append((stage, item))
+        return bound_model.invoke(messages)
+
+    monkeypatch.setattr("spec_generator.model_config.invoke_checked", guarded)
+    assert run_tool_loop("srs", tb, "payload", _Log()) == ([], False)
+    assert seen == [("srs", "structure-proposal")]
