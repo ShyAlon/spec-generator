@@ -217,9 +217,8 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
                 raise UserFacingError(
                     f"stage '{stage}': the model's output does not satisfy the contract (an automatic retry did not fix it).",
                     f"contract errors: {_contract_errors(contract_err)}. Raw output began: {snippet!r}",
-                    f"{model_config._rerun_guidance(stage)}; if it repeats, route the stage "
-                    f"to a stronger model (SPEC_GENERATOR_MODEL_{stage.upper()} env override) - and report it: "
-                    "schema-constrained output should not drift structurally.",
+                    f"{model_config._rerun_guidance(stage)}; inspect the contract error above and retry with the preserved checkpoint. "
+                    "If it repeats, report the exact error: deterministic repair should handle phi output without a model upgrade.",
                 ) from contract_err
             raise UserFacingError(
                 f"stage '{stage}': the model returned output that is not valid JSON (an automatic retry did not fix it).",
@@ -1014,7 +1013,11 @@ def _dedupe_adr_slots(slots: list[dict], bodies: dict) -> list[dict]:
     optional=[sl for sl in slots if not sl["migration"]]
     for i,left in enumerate(optional):
         for right in optional[i+1:]:
-            reason=_same_decision_tech(bodies[left["decision_id"]],bodies[right["decision_id"]])
+            # The fixed slot slug is the decision subject. Model-authored titles
+            # may be accidentally repeated across distinct slots and cannot be
+            # allowed to manufacture duplicate advisories.
+            reason=_same_decision_tech({"title":left["slug"],"decision":""},
+                                       {"title":right["slug"],"decision":""})
             if reason:
                 findings.append({"kind":"possible_duplicate_adr","left_id":left["decision_id"],
                                  "left_slug":left["slug"],"right_id":right["decision_id"],
@@ -2072,45 +2075,36 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     "that fails the current contract is re-asked, not the whole stage; if the same gate error "
                     "repeats after the re-ask, report it: a persistent gate failure is a pipeline bug, not a model limit.",
                 ) from e
+            gate_failures=[]
             try:
                 _check_conops_execution(arch, state.get("conops"))
             except ModelStructureError as e:
-                if _adr_attempt == 1:
-                    selected = str(((state.get("conops") or {}).get("decision") or {}).get("selected_concept", "")).strip()
-                    model_config._console_line(
-                        f"     - CONOPS-execution gate: {e} - re-planning the ADR set ONCE to execute {selected!r}")
-                    part.pop("adr_slots", None)
-                    part.pop("adr_bodies", None)
-                    _save()
-                    candidate_feedback = ("\n\nTHE PREVIOUS ARCHITECTURE FAILED THE CONOPS-EXECUTION GATE. "
-                                          f"The founder-confirmed concept is {selected!r}. "
-                                          "Add an ADR that explicitly names and executes this concept; "
-                                          "do not choose a replacement. Gate detail: " + str(e))
-                    continue
-                from .errors import UserFacingError
-                raise UserFacingError(
-                    "stage 'architecture': the architecture failed the CONOPS-execution gate twice.",
-                    str(e),
-                    f"{model_config._rerun_guidance('architecture')} - completed per-slot work is preserved; "
-                    "if it repeats, route architecture to a stronger model.") from e
+                gate_failures.append(("CONOPS-execution", str(e)))
             try:
                 _check_candidate_grounding(arch, state["intent_model"],
                                            contested=part.get("contested"))
             except ModelStructureError as e:
+                gate_failures.append(("candidate-grounding", str(e)))
+            if gate_failures:
+                trace="; ".join(f"{name}: {detail}" for name,detail in gate_failures)
                 if _adr_attempt == 1:
                     model_config._console_line(
-                        f"     - candidate-grounding gate: {e} - re-planning the ADR set ONCE with this as feedback")
+                        "     - architecture gates failed together: " + trace
+                        + " - re-planning the ADR set ONCE with ALL requirements")
                     part.pop("adr_slots", None)
                     part.pop("adr_bodies", None)
                     _save()
-                    candidate_feedback = ("\n\nTHE PREVIOUS ADR SET FAILED THE CANDIDATE-GROUNDING GATE "
-                                          "(fix it):\n" + str(e))
+                    candidate_feedback = ("\n\nTHE PREVIOUS ARCHITECTURE FAILED THESE ACTIVE "
+                                          "DETERMINISTIC GATES. Fix ALL of them in this ADR set; "
+                                          "do not trade one for another:\n- "
+                                          + "\n- ".join(f"{name}: {detail}" for name,detail in gate_failures))
                     continue
                 from .errors import UserFacingError
                 raise UserFacingError(
-                    "stage 'architecture': the ADR set failed the candidate-grounding gate twice.",
-                    str(e),
-                    "report it: a persistent gate failure after a re-plan is a pipeline bug, not a model limit.") from e
+                    "stage 'architecture': the repaired architecture still failed deterministic gates (" + ", ".join(name for name,_ in gate_failures) + ").",
+                    trace,
+                    f"{model_config._rerun_guidance('architecture')} - inspect the named gate requirements "
+                    "above; completed stack/component/NFR work is preserved and no model upgrade is required.")
             break
         if partials:
             partials.clear("architecture")

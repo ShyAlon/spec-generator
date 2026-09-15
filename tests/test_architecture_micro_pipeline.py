@@ -827,7 +827,7 @@ def test_conops_execution_gate_exhaustion_is_human_readable(monkeypatch):
         build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-fail"}})
     rendered=ei.value.render()
     assert rendered.startswith("Error: stage 'architecture'")
-    assert "failed the CONOPS-execution gate twice" in rendered
+    assert "still failed deterministic gates" in rendered
     assert "Likely cause:" in rendered and "Progressive Web Application (PWA)" in rendered
     assert "Next:" in rendered
 
@@ -852,11 +852,46 @@ def test_conops_repair_feedback_is_in_adr_body_prompt(monkeypatch):
             props=set(self.schema.get("properties",{}));prompt=messages[-1].content
             if "driver" in props:
                 seen.append(prompt)
-                if "PREVIOUS ARCHITECTURE FAILED THE CONOPS-EXECUTION GATE" in prompt:
+                if "FAILED THESE ACTIVE DETERMINISTIC GATES" in prompt:
                     yield AIMessage(content=json.dumps({"title":"Adopt Progressive Web Application (PWA)","decision":"Execute the PWA concept","rationale":"confirmed concept","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[]}));return
             yield from super().stream(messages)
     monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: CaptureRepair(stage,k.get("schema") or {},[]))
     result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-body-feedback"}})
-    assert any("founder-confirmed concept is 'Progressive Web Application (PWA)'" in p for p in seen)
+    assert any("CONOPS concept 'Progressive Web Application (PWA)'" in p for p in seen)
     from spec_generator.graph import _check_conops_execution
     _check_conops_execution(__import__('vmodel_contracts').ArchitectureOverview.model_validate(result['architecture']),_pwa_conops())
+
+
+def test_advisory_subject_uses_each_fixed_slot_not_repeated_model_title():
+    from spec_generator.graph import _dedupe_adr_slots
+    slugs=['choose-python-for-backend','select-postgresql-database','select-fastapi-framework',
+           'adopt-kafka-messaging','use-kubernetes-for-scaling','choose-firebase-auth','add-prometheus-monitoring']
+    slots=[{"decision_id":f"ADR-{i}","slug":slug,"migration":False,"authorizes":[]} for i,slug in enumerate(slugs,1)]
+    bodies={s['decision_id']:{"title":"Kubernetes for scalability strategy","decision":"generic","rationale":"generic","driver":"simplicity","options_considered":[],"baseline_refs":[]} for s in slots}
+    assert _dedupe_adr_slots(slots,bodies)==[]
+    assert [s['slug'] for s in slots]==slugs
+
+
+def test_gate_repair_accumulates_conops_and_candidate_requirements(monkeypatch):
+    prompts=[]
+    class BothMissingThenFixed(_MicroModel):
+        def stream(self,messages):
+            props=set(self.schema.get('properties',{}));prompt=messages[-1].content
+            if 'driver' in props:
+                prompts.append(prompt)
+                if 'THE PREVIOUS ARCHITECTURE FAILED THESE ACTIVE DETERMINISTIC GATES' in prompt:
+                    migration='"migration": true' in prompt
+                    yield AIMessage(content=json.dumps({"title":"Execute PWA with Kubernetes","decision":"Build the Progressive Web Application (PWA) and deploy with Kubernetes","rationale":"PWA executes the confirmed concept; Kubernetes provides horizontal scaling beyond curated choices","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":["scaling requirement"] if migration else [],"affected_repositories":["spec-generator"] if migration else []}));return
+            yield from super().stream(messages)
+    class OffListModel(BothMissingThenFixed):
+        def stream(self,messages):
+            if any('THE STACK KEY TO DECIDE: scalability_strategy' in m.content for m in messages):
+                yield AIMessage(content=json.dumps({"value":"Kubernetes","baseline_refs":[]}));return
+            yield from super().stream(messages)
+    monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**k: OffListModel(stage,k.get('schema') or {},[],plan_keys=['language','database','scalability_strategy']))
+    result=build_graph(UsageLog('s')).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"both-gates"}})
+    repair=next(p for p in prompts if 'FAILED THESE ACTIVE' in p)
+    assert 'CONOPS-execution' in repair and 'candidate-grounding' in repair
+    arch=__import__('vmodel_contracts').ArchitectureOverview.model_validate(result['architecture'])
+    from spec_generator.graph import _check_conops_execution,_check_candidate_grounding
+    _check_conops_execution(arch,_pwa_conops());_check_candidate_grounding(arch,dict(INTENT))
