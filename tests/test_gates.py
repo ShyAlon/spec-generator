@@ -293,3 +293,21 @@ def test_expert_opinion_gate_records_simulated_not_founder(monkeypatch):
     assert [o['gate'] for o in opinions]==['srs','architecture']
     assert all(o['mode']=='simulated_expert_opinion' and o['human_review_required'] for o in opinions)
     assert all('founder' not in o['mode'] for o in opinions)
+
+def test_expert_gate_wraps_unexpected_factory_failure(monkeypatch):
+    from spec_generator.errors import UserFacingError
+    from spec_generator import model_config
+    from spec_generator.graph import build_graph
+    from spec_generator.telemetry import UsageLog
+    from test_progress import FakeModel, INTENT
+    from conftest import SYSTEM_BASELINE
+    original=model_config.build_chat_model
+    def factory(stage,**kw):
+        if stage=="expert_opinion": raise KeyError("no output schema for stage 'expert_opinion'")
+        return FakeModel(stage)
+    monkeypatch.setattr(model_config,"build_chat_model",factory)
+    with pytest.raises(UserFacingError) as ei:
+        build_graph(UsageLog("s"),review=True,expert_opinion=True).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},{"configurable":{"thread_id":"expert-factory-fail"}})
+    rendered=ei.value.render()
+    assert rendered.startswith("Error: expert opinion failed")
+    assert "Likely cause:" in rendered and "Next:" in rendered

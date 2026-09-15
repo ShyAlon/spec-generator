@@ -89,7 +89,9 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
     from .progress import ProgressEvent
     from .stream_items import ItemReporter
 
-    model = model_config.build_chat_model(stage, schema=schema)
+    # Expert verdicts deliberately use a plain-text protocol. Do not ask the
+    # provider factory for a JSON grammar that cannot exist for this stage.
+    model = model_config.build_chat_model(stage, structured=(stage != "expert_opinion"), schema=schema)
     # ADR-0022: per-slot micro-calls skip the per-token item scanner (their
     # output is one small object; the item_label lines cover them instead).
     reporter = ItemReporter(progress if stream_items else None, stage, on_item=on_item)
@@ -2434,12 +2436,21 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                              "For REGENERATE also write FEEDBACK: a concrete correction. Never claim founder approval. "
                              "Advisories must be considered.\nARTIFACT:\n" + json.dumps(state.get(artifact_key))
                              + "\nADVISORIES:\n" + json.dumps(advisories))
+                    from .errors import UserFacingError
                     text="";verdict=None
                     for attempt in (1,2):
-                        raw=_invoke("expert_opinion",payload,log,progress,
-                                    feedback=("Start the first nonblank line exactly with APPROVE or REGENERATE." if attempt==2 else None),
-                                    stream_items=False,item_label=f"{stage_key} gate",attempt=attempt,
-                                    retry_reason=("verdict" if attempt==2 else None))
+                        try:
+                            raw=_invoke("expert_opinion",payload,log,progress,
+                                        feedback=("Start the first nonblank line exactly with APPROVE or REGENERATE." if attempt==2 else None),
+                                        stream_items=False,item_label=f"{stage_key} gate",attempt=attempt,
+                                        retry_reason=("verdict" if attempt==2 else None))
+                        except UserFacingError:
+                            raise
+                        except Exception as e:
+                            raise UserFacingError(
+                                f"expert opinion failed at the {stage_key} gate.",
+                                f"unexpected {type(e).__name__}: {str(e)[:240]}",
+                                "rerun the same command; the checkpoint is preserved and no model upgrade is required.") from e
                         text=raw;lines=[line.strip() for line in raw.strip().splitlines() if line.strip()]
                         verdict_index=next((i for i,line in enumerate(lines) if line.rstrip(":.").lower() in ("approve","regenerate")),None)
                         action=lines[verdict_index].rstrip(":.").lower() if verdict_index is not None else ""

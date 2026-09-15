@@ -253,3 +253,11 @@ def test_test_definition_grammar_is_canonical_but_content_stays_free():
     # Free strings retain runner/domain detail; only the container is fixed.
     assert definition["properties"]["steps"]["items"] == {"type": "string"}
 
+
+def test_real_model_factory_builds_plain_text_expert_without_schema_lookup(monkeypatch):
+    """Regression: expert_opinion has no JSON schema because its protocol is text."""
+    monkeypatch.delenv("VMODEL_REPLAY_DIR", raising=False)
+    monkeypatch.setenv("SPEC_GENERATOR_MODEL_EXPERT_OPINION", "ollama:qwen2.5-coder:14b")
+    model = model_config.build_chat_model("expert_opinion", structured=False)
+    from langchain_openai import ChatOpenAI
+    assert isinstance(model, ChatOpenAI)
