@@ -2437,18 +2437,33 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 advisories=state.get("architecture_advisories", []) if stage_key == "architecture" else []
                 if expert_opinion:
                     payload=("Act as an independent expert reviewer for a TEST RUN. Review the exact artifact "
-                             "a human would see. Return JSON {action, feedback, rationale}; action is approve or "
-                             "regenerate. Never claim founder approval. Advisories must be considered.\nARTIFACT:\n"
-                             + json.dumps(state.get(artifact_key)) + "\nADVISORIES:\n" + json.dumps(advisories))
-                    def valid(d):
-                        if d.get("action") not in ("approve","regenerate"):
-                            raise ModelStructureError("expert action must be approve or regenerate")
-                        if not str(d.get("rationale","")).strip():
-                            raise ModelStructureError("expert rationale is required")
-                        if d["action"]=="regenerate" and not str(d.get("feedback","")).strip():
-                            raise ModelStructureError("expert regeneration feedback is required")
-                    verdict=_call_json("review",payload,log,progress,validate=valid,
-                                       schema={"type":"object","properties":{"action":{"enum":["approve","regenerate"]},"feedback":{"type":"string"},"rationale":{"type":"string"}},"required":["action","feedback","rationale"],"additionalProperties":False},stream_items=False,item_label=f"expert opinion: {stage_key} gate")
+                             "a human would see. First line: APPROVE or REGENERATE. Then write RATIONALE: free prose. "
+                             "For REGENERATE also write FEEDBACK: a concrete correction. Never claim founder approval. "
+                             "Advisories must be considered.\nARTIFACT:\n" + json.dumps(state.get(artifact_key))
+                             + "\nADVISORIES:\n" + json.dumps(advisories))
+                    text="";verdict=None
+                    for attempt in (1,2):
+                        raw=_invoke("expert_opinion",payload,log,progress,
+                                    feedback=("Start the first nonblank line exactly with APPROVE or REGENERATE." if attempt==2 else None),
+                                    stream_items=False,item_label=f"{stage_key} gate",attempt=attempt,
+                                    retry_reason=("verdict" if attempt==2 else None))
+                        text=raw;lines=[line.strip() for line in raw.strip().splitlines() if line.strip()]
+                        verdict_index=next((i for i,line in enumerate(lines) if line.rstrip(":.").lower() in ("approve","regenerate")),None)
+                        action=lines[verdict_index].rstrip(":.").lower() if verdict_index is not None else ""
+                        if action in ("approve","regenerate"):
+                            rest="\n".join(lines[verdict_index+1:]); rationale=rest;feedback_text=""
+                            for label in ("RATIONALE:","rationale:"):
+                                rationale=rationale.removeprefix(label).strip()
+                            marker=next((m for m in ("\nFEEDBACK:","\nfeedback:") if m in "\n"+rest),None)
+                            if marker:
+                                before,feedback_text=("\n"+rest).split(marker,1);rationale=before.strip().removeprefix("RATIONALE:").strip()
+                            verdict={"action":action,"feedback":feedback_text.strip(),"rationale":rationale or "No separate rationale supplied."}
+                            if action=="approve" or verdict["feedback"]:break
+                    if verdict is None or (verdict["action"]=="regenerate" and not verdict["feedback"]):
+                        from .errors import UserFacingError
+                        raise UserFacingError(f"expert opinion could not parse the {stage_key} gate verdict.",
+                            f"Expected first line APPROVE or REGENERATE (with FEEDBACK for regeneration). Output began: {text[:200]!r}",
+                            "rerun the same command; the checkpoint is preserved and no model upgrade is required.")
                     record={"gate":stage_key,"mode":"simulated_expert_opinion","human_review_required":True,
                             "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"]}
                     model_config._console_line(f"   SIMULATED EXPERT OPINION at {stage_key}: {verdict['action']} - human review still required")

@@ -283,8 +283,8 @@ def test_expert_opinion_gate_records_simulated_not_founder(monkeypatch):
     class ExpertModel(FakeModel):
         def __init__(self,stage,schema):super().__init__(stage);self.schema=schema
         def stream(self,messages):
-            if set(self.schema.get('properties',{}))=={'action','feedback','rationale'}:
-                yield AIMessage(content=json.dumps({'action':'approve','feedback':'','rationale':'artifact is coherent for test execution'}));return
+            if self.stage=='expert_opinion':
+                yield AIMessage(content='Here is my review.\nAPPROVE\nRATIONALE: artifact is coherent for test execution');return
             yield from super().stream(messages)
     monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**k: ExpertModel(stage,k.get('schema') or {}))
     g=build_graph(UsageLog('s'),review=True,expert_opinion=True)

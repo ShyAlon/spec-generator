@@ -340,6 +340,7 @@ _STAGE_DEFAULTS: dict[str, StageModel] = {
     "items":        StageModel("ollama", "qwen2.5-coder:14b"),
     "tests":        StageModel("ollama", "qwen2.5-coder:14b", max_tokens=12288),  # largest payload: truncation headroom
     "review":       StageModel("ollama", "qwen2.5-coder:14b"),
+    "expert_opinion": StageModel("ollama", "qwen2.5-coder:14b"),
 }
 
 _BASE_URLS = {
