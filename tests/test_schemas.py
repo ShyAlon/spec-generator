@@ -97,22 +97,24 @@ def test_ollama_support_detection_uses_version_endpoint_and_caches(monkeypatch):
     assert len(calls) == 1 and calls[0][0].endswith("/api/version")
 
 
-def test_remote_providers_unaffected(monkeypatch):
+def test_deepseek_avoids_broken_json_mode(monkeypatch):
     monkeypatch.setenv("SPEC_GENERATOR_MODEL_NEEDS", "deepseek:deepseek-chat")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
     from langchain_openai import ChatOpenAI
     m = model_config.build_chat_model("needs")
     assert isinstance(m, ChatOpenAI)
-    assert m.model_kwargs["response_format"] == {"type": "json_object"}
+    assert "response_format" not in m.model_kwargs
+    assert m.extra_body == {"thinking": {"type": "disabled"}}
 
 
 
-def test_deepseek_json_mode_warning_is_honest(monkeypatch, capsys):
+def test_deepseek_prompt_structured_warning_is_honest(monkeypatch, capsys):
     monkeypatch.setenv("SPEC_GENERATOR_MODEL_SRS", "deepseek:deepseek-flash")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
     model_config.build_chat_model("srs", schema={"type": "object"})
     warning = capsys.readouterr().err
     assert "WARNING output mode [srs]" in warning
+    assert "prompt-structured mode (thinking disabled)" in warning
     assert "field shape remains validation+retry guarded" in warning
 
 def test_schemas_are_reduced_to_ollamas_grammar_subset():

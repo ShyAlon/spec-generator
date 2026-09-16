@@ -692,13 +692,12 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
         env = _API_KEY_ENV[cfg.provider]
         extra = {}
         if cfg.provider == "deepseek" and structured:
-            # DeepSeek JSON mode constrains syntax, not schema. Disable its
-            # default thinking mode for structured calls: max_tokens includes
-            # hidden reasoning, so the provider can exhaust the budget and
-            # return an empty final content field.
-            extra["model_kwargs"] = {"response_format": {"type": "json_object"}}
+            # Do NOT send response_format=json_object. Exact-request replay
+            # showed DeepSeek returning only whitespace on real structured
+            # prompts while the same request without response_format succeeded.
+            # Prompt examples plus validation + bounded retry own field shape.
             extra["extra_body"] = {"thinking": {"type": "disabled"}}
-            _console_line(f"  WARNING output mode [{stage}]: DeepSeek JSON mode (thinking disabled) constrains syntax; field shape remains validation+retry guarded")
+            _console_line(f"  WARNING output mode [{stage}]: DeepSeek prompt-structured mode (thinking disabled); field shape remains validation+retry guarded")
         if cfg.provider == "ollama":
             body = {"num_ctx": _ollama_num_ctx(),  # honored once ollama PR #16825 lands
                     "keep_alive": _ollama_keep_alive()}
