@@ -47,5 +47,12 @@ def test_deepseek_warnings_are_once_per_run(monkeypatch, tmp_path, capsys):
     model_config.build_chat_model("srs", structured=True)
     model_config.build_chat_model("srs", structured=True)
     shown=capsys.readouterr().err
-    assert shown.count("WARNING output mode:") == 1
+    assert shown.count("output mode: DeepSeek forced function call") == 1
     assert shown.count("WARNING full LLM HTTP debug enabled:") == 1
+
+
+def test_self_healing_gate_revision_is_warning_not_error():
+    from spec_generator.model_config import _console_level
+    assert _console_level("WARNING architecture gates requested revisions - re-planning once") == "warning"
+    assert _console_level("WARNING contract revision requested - retrying once") == "warning"
+    assert _console_level("architecture still failed after repair") == "error"

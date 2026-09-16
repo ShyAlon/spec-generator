@@ -138,7 +138,7 @@ def test_contract_drift_auto_recovers_with_feedback(monkeypatch):
     assert data["functional"][0]["title"] == "Spec file"  # the validator's merged body is returned
     assert data["functional"][0]["acceptance"][0]["criterion_id"] == "AC-1"  # code-assigned
     assert m.calls == 2
-    assert any("failed the contract" in (e.detail or "") for e in seen)
+    assert any("contract revision requested" in (e.detail or "") for e in seen)
     fb = " ".join(str(getattr(msg, "content", "")) for msg in m.last_messages)
     assert "title" in fb  # the model is told WHAT to fix
 

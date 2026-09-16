@@ -232,8 +232,8 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
             ) from parse_err
         if progress is not None:
             progress.emit(ProgressEvent(stage, "", "item", _t.time(), None,
-                                        (("model output failed the contract: " + _contract_errors(contract_err))
-                                         if contract_err is not None else "model output was not valid JSON")
+                                        (("WARNING contract revision requested: " + _contract_errors(contract_err))
+                                         if contract_err is not None else "WARNING JSON format revision requested")
                                         + " - retrying once with feedback"))
         if contract_err is not None:
             fb = ("Your previous reply failed the output contract: " + _contract_errors(contract_err) + ". "
@@ -2206,8 +2206,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 trace="; ".join(f"{name}: {detail}" for name,detail in gate_failures)
                 if _adr_attempt == 1:
                     model_config._console_line(
-                        "     - architecture gates failed together: " + trace
-                        + " - re-planning the ADR set ONCE with ALL requirements")
+                        "     - WARNING architecture gates requested revisions: " + trace
+                        + " - re-planning the ADR set once with all requirements")
                     part.pop("adr_slots", None)
                     part.pop("adr_bodies", None)
                     _save()
