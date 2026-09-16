@@ -631,8 +631,17 @@ def _founder_named_techs(intent_model: dict) -> list[str]:
     # that technology.
     texts = [str(pref.get("preference", ""))
              for pref in (intent_model.get("tech_preferences") or [])]
-    texts += [str(n.get("statement", ""))
-              for n in (intent_model.get("stakeholder_needs") or [])]
+    # Needs are founder technology evidence only when their wording explicitly
+    # makes a technology choice. Bare dictionary collisions are not evidence:
+    # "claims clerk", "it goes", and "react in one go" previously fabricated
+    # Clerk, Go, and React mandates from ordinary product prose.
+    tech_choice = _re.compile(
+        r"\b(?:use|using|built (?:with|on)|implement(?:ed)? (?:with|in)|"
+        r"run(?:s|ning)? (?:on|with)|host(?:ed)? on|deploy(?:ed)? (?:on|with)|"
+        r"prefer(?:s|red)?|mandat(?:e|ed)|require(?:s|d)?|resources? like)\b",
+        _re.I)
+    texts += [statement for n in (intent_model.get("stakeholder_needs") or [])
+              if tech_choice.search(statement := str(n.get("statement", "")))]
     out = set()
     for text in texts:
         for v in vocab:
