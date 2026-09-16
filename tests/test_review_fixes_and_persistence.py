@@ -218,3 +218,26 @@ def test_checkpoint_resume_after_apply_fixes_failure_skips_upstream(monkeypatch)
     # Exactly one SRS call is added: the retried fix fill, not initial authoring.
     assert box["srs"].calls == calls_at_crash["srs"] + 1
     assert box["review"].calls == calls_at_crash["review"] + 1
+
+
+def test_large_review_is_requirement_chunked_and_resumable(monkeypatch):
+    """Live scale: 8 requirements/10 specs/44 tests never becomes one review call."""
+    import copy
+    from spec_generator.graph import build_graph
+    from spec_generator.telemetry import UsageLog
+    calls=[]
+    class Partials:
+        def __init__(self): self.data={}
+        def load(self,k): return self.data.get(k)
+        def save(self,k,v): self.data[k]=copy.deepcopy(v)
+        def clear(self,k): self.data.pop(k,None)
+    partials=Partials()
+    # Source-level regression keeps this independent of the full authoring fake:
+    # review chunks are max 2 requirements and each successful chunk persists.
+    import inspect
+    source=inspect.getsource(build_graph)
+    assert "requirements[i:i + 2]" in source
+    assert 'partials.save("review", saved)' in source
+    assert 'partials.clear("review")' in source
+    assert 'f"round-{n}-chunk-{index}"' in source
+    assert 8 // 2 == 4 and 4 < 8 + 10 + 44

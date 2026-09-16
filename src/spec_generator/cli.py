@@ -127,7 +127,8 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
     FILES = {"srs_fills": "srs_fills.partial.json",
              "architecture": "architecture.partial.json",
              "items": "items.partial.json",
-             "tests_fills": "tests_fills.partial.json"}
+             "tests_fills": "tests_fills.partial.json",
+             "review": "review.partial.json"}
 
     class _Partials:
         def load(self, key: str):
@@ -166,10 +167,11 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
 
 
 # partial files invalidated by --from <stage> (that stage and everything after)
-_PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fills"),
-                      "architecture": ("architecture", "items", "tests_fills"),
-                      "items": ("items", "tests_fills"),
-                      "tests": ("tests_fills",)}
+_PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fills", "review"),
+                      "architecture": ("architecture", "items", "tests_fills", "review"),
+                      "items": ("items", "tests_fills", "review"),
+                      "tests": ("tests_fills", "review"),
+                      "review": ("review",)}
 
 
 def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,

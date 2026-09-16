@@ -2452,12 +2452,49 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         from .schemas import for_stage as output_schema
 
         n = state.get("review_round", 0) + 1
-        fixes = _call_json("review", STAGE_PROMPTS["review"].format(n=n)
-                           + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
-                           + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
-                           + "\n\nTESTS:\n" + json.dumps(_prompt_view(state["tests"])), log, progress,
-                           validate=_normalized_review_fixes,
-                           schema=output_schema("review"))
+        # Review by requirement cluster. A single 8-req/10-spec/44-test call
+        # produced 70 findings and hit 8192 output tokens. Requirement is the
+        # semantic join key across SRS, specs, and tests, so each chunk remains
+        # a complete vertical V slice rather than an arbitrary token window.
+        requirements = [r for sec in ("functional", "non_functional")
+                        for r in state["srs"].get(sec) or []]
+        chunks = [requirements[i:i + 2] for i in range(0, len(requirements), 2)] or [[]]
+        saved = (partials.load("review") if partials else None) or {}
+        findings = []
+        for index, req_chunk in enumerate(chunks, 1):
+            chunk_id = f"round-{n}-chunk-{index}"
+            if chunk_id not in saved:
+                req_ids = {r.get("requirement_id") for r in req_chunk}
+                criterion_ids = {c.get("criterion_id") for r in req_chunk
+                                 for c in r.get("acceptance") or []}
+                chunk_items = [i for i in state["items"]
+                               if req_ids & set(i.get("requirement_ids") or [])]
+                spec_ids = {i.get("spec_id") for i in chunk_items}
+                chunk_tests = [t for t in state["tests"]
+                               if t.get("criterion_id") in criterion_ids or t.get("spec_id") in spec_ids]
+                saved[chunk_id] = _call_json(
+                    "review", STAGE_PROMPTS["review"].format(n=n)
+                    + f"\n\nREVIEW CHUNK {index}/{len(chunks)}. Report only findings whose primary target "
+                      "is in this requirement cluster. Cross-chunk consistency is checked deterministically after aggregation."
+                    + "\n\nSRS REQUIREMENTS:\n" + json.dumps(_prompt_view(req_chunk))
+                    + "\n\nLINKED ITEMS:\n" + json.dumps(_prompt_view(chunk_items))
+                    + "\n\nLINKED TESTS:\n" + json.dumps(_prompt_view(chunk_tests)),
+                    log, progress, validate=_normalized_review_fixes,
+                    schema=output_schema("review"), stream_items=False,
+                    item_label=f"review {index}/{len(chunks)} ({len(req_chunk)} requirements)")
+                if partials:
+                    partials.save("review", saved)
+            findings.extend(saved[chunk_id])
+        # Deterministic stable dedup: overlapping specs can appear in adjacent
+        # requirement chunks, but one correction must be applied only once.
+        fixes = []
+        seen = set()
+        for fix in _normalized_review_fixes(findings):
+            key = (fix["scope"], tuple(sorted(fix["target_ids"])), fix["fix"].strip().casefold())
+            if key not in seen:
+                seen.add(key); fixes.append(fix)
+        if partials:
+            partials.clear("review")
         return {"review_round": n, "review_fixes": fixes}
 
     def route_review(state: GenState) -> str:
