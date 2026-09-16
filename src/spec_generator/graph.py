@@ -2073,7 +2073,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 if did in adr_bodies:
                     continue
                 def _v_adr(d, slot=slot):
-                    body = {"title": str(d.get("title", "")).strip(),
+                    raw_title = str(d.get("title", "")).strip()
+                    # The renderer owns the visible ADR id. Models often echo the fixed
+                    # id from the slot ("ADR-3: ..."), which used to render twice.
+                    title = _re.sub(
+                        rf"^\s*{_re.escape(slot['decision_id'])}\s*[:.\-]?\s*",
+                        "", raw_title, flags=_re.IGNORECASE,
+                    ).strip()
+                    body = {"title": title,
                             "decision": str(d.get("decision", "")).strip(),
                             "rationale": str(d.get("rationale", "")).strip(),
                             "driver": d.get("driver"),

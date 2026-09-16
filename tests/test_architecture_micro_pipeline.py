@@ -953,3 +953,11 @@ def test_phi_blank_justification_is_absent_for_known_technology(monkeypatch):
         if d["decision_id"] == entry["decision_id"]
     )
     assert owner["technology_selections"][0]["off_list_justification"] is None
+
+
+def test_adr_body_strips_model_echoed_fixed_id(monkeypatch):
+    """The model may echo the fixed slot id; stored title prose must not own it."""
+    import inspect
+    source = inspect.getsource(__import__('spec_generator.graph', fromlist=['x']))
+    assert 'raw_title = str(d.get("title", "")).strip()' in source
+    assert "_re.escape(slot['decision_id'])" in source

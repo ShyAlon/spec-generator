@@ -15,6 +15,13 @@ from vmodel_contracts import (
 )
 
 
+def _adr_title(decision_id: str, title: str) -> str:
+    """Return title prose only; the renderer owns the ADR id prefix."""
+    import re
+    return re.sub(rf"^\s*{re.escape(decision_id)}\s*[:.\-]?\s*", "", title,
+                  flags=re.IGNORECASE).strip()
+
+
 def render_agents_md(
     arch: ArchitectureOverview,
     items: list[ItemSpec],
@@ -39,7 +46,7 @@ def render_agents_md(
             L.append(f"- **{e.key}**: NOT APPLICABLE - {e.reason}")
     L += ["", "### Decisions and why", ""]
     for d in arch.decisions:
-        L.append(f"**{d.decision_id} {d.title}.** {d.decision} Rationale: {d.rationale}")
+        L.append(f"**{d.decision_id}: {_adr_title(d.decision_id, d.title)}.** {d.decision} Rationale: {d.rationale}")
         for r in d.rejected:
             L.append(f"- Rejected: {r}")
     L += ["", "## Build order", ""]
@@ -281,7 +288,7 @@ def render_architecture(arch: ArchitectureOverview, greenfield: bool = False,
     if arch.decisions:
         lines.append("\n## Decisions (ADRs)")
         for d in arch.decisions:
-            lines.append(f"- **{d.decision_id} {d.title}** - {d.decision}")
+            lines.append(f"- **{d.decision_id}: {_adr_title(d.decision_id, d.title)}** - {d.decision}")
             if d.driver is not None:
                 driver = d.driver.value.replace("_", " ")
                 lines.append(f"  Driver: {driver} "
