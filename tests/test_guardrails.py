@@ -415,3 +415,13 @@ def test_ollama_native_metrics_and_prompt_fingerprint_are_logged(tmp_path, monke
     assert end["eval_duration"] == 4_000_000_000
     assert end["prompt_bytes"] == 5 and len(end["prompt_sha256"]) == 16
     assert end["attempt"] == 2 and end["retry_reason"] == "contract"
+
+
+def test_progress_printer_prepends_local_wall_clock_timestamp(capsys):
+    printer = stderr_printer()
+    printer(ProgressEvent("x", "Working", "started", 0.0))
+    printer(ProgressEvent("x", "Working", "completed", 1.0, 1.0))
+    lines = capsys.readouterr().err.splitlines()
+    assert all(line.startswith("[") and line[3] == ":" and line[6] == ":" and line[9] == "]" for line in lines)
+    assert "  -> Working..." in lines[0]
+    assert "  ok Working [1.0s]" in lines[1]

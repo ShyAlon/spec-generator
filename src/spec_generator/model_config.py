@@ -192,8 +192,10 @@ _CONSOLE_LOCK = threading.Lock()
 def _console_line(msg: str) -> None:
     """One stderr line, atomically - the heartbeat thread and the progress
     printer share this lock so lines never interleave mid-call."""
+    from vmodel_contracts.runtime import timestamp_console_line
+
     with _CONSOLE_LOCK:
-        sys.stderr.write(msg + "\n")
+        sys.stderr.write(timestamp_console_line(msg) + "\n")
         sys.stderr.flush()
 
 
