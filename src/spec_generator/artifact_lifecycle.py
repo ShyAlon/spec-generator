@@ -104,6 +104,21 @@ class ArchitectureLifecycle:
             f"bounded architecture stop resumed toward {next_artifact}",
             {"named_next_artifact":next_artifact,"legal_outgoing_arc":f"architecture->{next_artifact}"}))
 
+    def regenerate(self, reason: str) -> None:
+        """Reopen a sealed architecture for an explicit review-gate rewrite."""
+        if self.state == ArtifactState.COMPLETE:
+            append_lifecycle_event(self.path, self._event(
+                LifecycleTransition.INVALIDATE, ArtifactState.INVALIDATED,
+                reason, {"named_boundary": "architecture", "downstream_closure_computed": True},
+                invalidates=["architecture", "items", "tests", "assembly", "manifest", "traceability"]))
+        if self.state == ArtifactState.INVALIDATED:
+            append_lifecycle_event(self.path, self._event(
+                LifecycleTransition.RESTART, ArtifactState.PARTIAL,
+                "architecture producer restarted after review feedback",
+                {"producer_rerun_started": True, "current_inputs": True}))
+        elif self.state not in (ArtifactState.MISSING, ArtifactState.PARTIAL):
+            raise ValueError(f"architecture regeneration cannot start from lifecycle state {self.state.value}")
+
     def reanchor(self, invalidates: list[str]) -> None:
         old_anchor=self.recorded_anchor_hash
         if self.state == ArtifactState.COMPLETE:

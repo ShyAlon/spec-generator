@@ -39,3 +39,14 @@ def test_invalidated_or_stale_partial_cannot_be_read(tmp_path):
  __import__('vmodel_contracts').append_lifecycle_event(life.path,event)
  try: life.guard_partial_read(); assert False
  except ValueError as e: assert "stale" in str(e)
+
+
+def test_complete_architecture_reopens_for_review_regeneration(tmp_path):
+ baseline={"baseline_id":"b","mode":"greenfield","repositories":[]}
+ life=ArchitectureLifecycle(tmp_path,"s",baseline)
+ life.begin_or_checkpoint({"plan":1})
+ event=life.finalize({"architecture":"complete"});life.commit_finalize(event)
+ life.regenerate("expert requested regeneration")
+ assert life.state==ArtifactState.PARTIAL
+ life.begin_or_checkpoint({"new_plan":1})
+ assert transitions(life.path)[-3:]==["invalidate","restart","checkpoint"]

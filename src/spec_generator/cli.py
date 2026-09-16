@@ -138,8 +138,24 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
 
         def save(self, key: str, data) -> None:
             if key == "architecture" and architecture_lifecycle:
-                architecture_lifecycle.begin_or_checkpoint(data)
+                try:
+                    architecture_lifecycle.begin_or_checkpoint(data)
+                except ValueError as e:
+                    raise UserFacingError(
+                        "stage 'architecture': lifecycle blocked a partial checkpoint write.",
+                        f"artifact state transition was not opened before regeneration: {e}",
+                        "update spec-generator and rerun the same command; the graph checkpoint preserves completed work.") from e
             _atomic_write(outdir / FILES[key], json.dumps(data, indent=2))
+
+        def regenerate(self, key: str, reason: str) -> None:
+            if key == "architecture" and architecture_lifecycle:
+                try:
+                    architecture_lifecycle.regenerate(reason)
+                except ValueError as e:
+                    raise UserFacingError(
+                        "stage 'architecture': lifecycle could not reopen the artifact for regeneration.",
+                        f"invalid artifact state transition: {e}",
+                        "update spec-generator and rerun the same command; the sealed architecture and checkpoint are preserved.") from e
 
         def clear(self, key: str) -> None:
             p = outdir / FILES[key]

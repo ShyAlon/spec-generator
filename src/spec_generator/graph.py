@@ -2595,10 +2595,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"]}
                     model_config._console_line(f"   SIMULATED EXPERT OPINION at {stage_key}: {verdict['action']} - human review still required")
                     out={"expert_opinions":state.get("expert_opinions",[])+[record]}
-                    if verdict["action"]=="regenerate":out["gate_feedback"]={stage_key:verdict["feedback"]}
+                    if verdict["action"]=="regenerate":
+                        if stage_key == "architecture" and partials and hasattr(partials, "regenerate"):
+                            partials.regenerate("architecture", "simulated expert review requested architecture regeneration")
+                        out["gate_feedback"]={stage_key:verdict["feedback"]}
                     return out
                 verdict = interrupt({"gate": stage_key, "artifact": state.get(artifact_key),"advisories":advisories})
                 if verdict.get("action") == "regenerate":
+                    if stage_key == "architecture" and partials and hasattr(partials, "regenerate"):
+                        partials.regenerate("architecture", "founder review requested architecture regeneration")
                     return {"gate_feedback": {stage_key: verdict["feedback"]}}
                 return {}
             return node_gate
