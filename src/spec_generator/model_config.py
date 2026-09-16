@@ -211,6 +211,15 @@ def _console_line(msg: str) -> None:
         sys.stderr.flush()
 
 
+def log_malformed_response(stage: str, kind: str, resp, *, snippet: str | None = None) -> None:
+    """Make a malformed provider reply visible immediately, without prompts."""
+    response_id = getattr(resp, "id", None) or (getattr(resp, "response_metadata", None) or {}).get("id") or "unknown"
+    text = f"  ERROR malformed response [{stage}]: {kind}; response_id={response_id}"
+    if snippet:
+        text += f"; reply began: {snippet.strip()[:160]!r}"
+    _console_line(text)
+
+
 def _heartbeat_interval() -> float:
     """VMODEL_LLM_HEARTBEAT_S: seconds between 'still working' lines while a
     call runs without producing output. Default 30; 0 disables."""
@@ -428,6 +437,7 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
             _check_truncated(resp, stage, cfg)
             content = getattr(resp, "content", None)
             if isinstance(content, str) and not content.strip():
+                log_malformed_response(stage, "empty content", resp)
                 _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
                           "error": {"kind": "empty_response", "raw_payload": __import__("vmodel_contracts.runtime", fromlist=["empty_llm_response_detail"]).empty_llm_response_detail(resp, _mask_secrets)}})
                 if attempt == 1:
@@ -673,10 +683,13 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
         env = _API_KEY_ENV[cfg.provider]
         extra = {}
         if cfg.provider == "deepseek" and structured:
-            # DeepSeek chat-completions guarantees valid JSON, not arbitrary
-            # JSON-schema adherence. Existing validators/retry own field shape.
+            # DeepSeek JSON mode constrains syntax, not schema. Disable its
+            # default thinking mode for structured calls: max_tokens includes
+            # hidden reasoning, so the provider can exhaust the budget and
+            # return an empty final content field.
             extra["model_kwargs"] = {"response_format": {"type": "json_object"}}
-            _console_line(f"  WARNING output mode [{stage}]: DeepSeek JSON mode constrains syntax; field shape remains validation+retry guarded")
+            extra["extra_body"] = {"thinking": {"type": "disabled"}}
+            _console_line(f"  WARNING output mode [{stage}]: DeepSeek JSON mode (thinking disabled) constrains syntax; field shape remains validation+retry guarded")
         if cfg.provider == "ollama":
             body = {"num_ctx": _ollama_num_ctx(),  # honored once ollama PR #16825 lands
                     "keep_alive": _ollama_keep_alive()}

@@ -459,3 +459,18 @@ def test_empty_completion_retries_once_and_logs_raw_envelope(tmp_path, monkeypat
     assert recs[1]["error"]["kind"] == "empty_response"
     assert recs[1]["error"]["raw_payload"]["id"] == "msg_empty"
     assert recs[2]["attempt"] == 2 and recs[2]["retry_reason"] == "empty_response"
+
+
+def test_empty_completion_is_echoed_as_console_error(monkeypatch, capsys):
+    from langchain_core.messages import AIMessage
+
+    class M:
+        calls = 0
+        def invoke(self, messages):
+            self.calls += 1
+            return AIMessage(content="" if self.calls == 1 else "ok", id="resp_123")
+
+    mc.invoke_checked(M(), [], "srs")
+    shown = capsys.readouterr().err
+    assert "ERROR malformed response [srs]: empty content" in shown
+    assert "response_id=resp_123" in shown
