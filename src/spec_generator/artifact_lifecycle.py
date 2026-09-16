@@ -80,6 +80,17 @@ class ArchitectureLifecycle:
             raise ValueError(f"architecture partial write forbidden while lifecycle state is {self.state.value}")
         append_lifecycle_event(self.path,e)
 
+    def checkpoint_reentry(self, content) -> None:
+        """Checkpoint a running architecture node, reopening a sealed prior run.
+
+        A graph crash can persist the node's restart intent while the lifecycle
+        has already sealed the preceding architecture. Re-entering the producer
+        and attempting its first partial is the durable restart signal.
+        """
+        if self.state == ArtifactState.COMPLETE:
+            self.regenerate("architecture node re-entered after a sealed run")
+        self.begin_or_checkpoint(content)
+
     def guard_partial_read(self) -> None:
         if self.state in (ArtifactState.INVALIDATED, ArtifactState.STALE, ArtifactState.MIGRATED):
             raise ValueError(f"architecture partial read forbidden while lifecycle state is {self.state.value}")

@@ -139,7 +139,7 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
         def save(self, key: str, data) -> None:
             if key == "architecture" and architecture_lifecycle:
                 try:
-                    architecture_lifecycle.begin_or_checkpoint(data)
+                    architecture_lifecycle.checkpoint_reentry(data)
                 except ValueError as e:
                     raise UserFacingError(
                         "stage 'architecture': lifecycle blocked a partial checkpoint write.",

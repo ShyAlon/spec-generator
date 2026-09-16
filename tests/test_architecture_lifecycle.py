@@ -50,3 +50,15 @@ def test_complete_architecture_reopens_for_review_regeneration(tmp_path):
  assert life.state==ArtifactState.PARTIAL
  life.begin_or_checkpoint({"new_plan":1})
  assert transitions(life.path)[-3:]==["invalidate","restart","checkpoint"]
+
+
+def test_crashed_node_reentry_reopens_complete_on_first_partial(tmp_path):
+ baseline={"baseline_id":"b","mode":"greenfield","repositories":[]}
+ life=ArchitectureLifecycle(tmp_path,"s",baseline)
+ life.begin_or_checkpoint({"old_plan":1})
+ event=life.finalize({"architecture":"complete"});life.commit_finalize(event)
+ # Exact continuation shape: no gate callback survives the crash. The node
+ # starts directly and its first durable action is a partial checkpoint.
+ life.checkpoint_reentry({"new_plan":1})
+ assert life.state==ArtifactState.PARTIAL
+ assert transitions(life.path)[-3:]==["invalidate","restart","checkpoint"]
