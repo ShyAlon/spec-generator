@@ -22,3 +22,43 @@ SYSTEM_BASELINE = {
         "module_entry_points": ["python -m spec_generator.cli"], "existing_artifacts": [],
         "existing_contracts": [], "runtime": ["Python"], "persistence": ["PostgreSQL 14"],
         "integrations": [], "immutable_decisions": []}], "immutable_decisions": []}
+
+class ModelFactoryLedger:
+    """Fresh schema-bound models with aggregate per-stage call accounting."""
+    def __init__(self, model_cls):
+        self.model_cls = model_cls
+        self.models = []
+
+    def build(self, stage, schema=None):
+        try:
+            model = self.model_cls(stage, schema or {})
+        except TypeError:
+            model = self.model_cls(stage)
+        model.schema = schema or {}
+        self.models.append(model)
+        return model
+
+    def calls(self, stage):
+        return sum(getattr(m, "calls", 0) for m in self.models if m.stage == stage)
+
+
+class StageCounter:
+    def __init__(self, ledger, stage): self.ledger, self.stage = ledger, stage
+    @property
+    def calls(self): return self.ledger.calls(self.stage)
+    @property
+    def last_human(self):
+        models=[m for m in self.ledger.models if m.stage == self.stage and hasattr(m, "last_human")]
+        return models[-1].last_human if models else None
+
+
+class SchemaRoutingArchitectureModel:
+    """Current architecture micro-contract fixture, one schema per instance."""
+    def __init__(self, stage, schema=None):
+        self.stage, self.schema, self.calls = stage, schema or {}, 0
+    def stream(self, messages):
+        import json
+        from langchain_core.messages import AIMessage
+        from test_per_item_resume import _arch_answer
+        self.calls += 1
+        yield AIMessage(content=json.dumps(_arch_answer(self.schema)))

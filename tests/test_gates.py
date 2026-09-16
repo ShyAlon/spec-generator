@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE
+from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
 """ADR-0019 founder review gates (opt-in --review): pause after SRS and
 architecture; accept / edit (contract-validated) / feedback (stage re-runs) /
 reject. The non-review graph is untouched (test_progress.py covers it)."""
@@ -20,10 +20,23 @@ def _review_graph(monkeypatch):
 
     class Recording(FakeModel):
         def invoke(self, messages):
-            self.last_human = messages[-1].content
+            self.last_human = "\n".join(str(m.content) for m in messages)
             return super().invoke(messages)
 
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: box.setdefault(stage, Recording(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture":
+            model = ledger.build(stage, kw.get("schema")); model.last_human = None
+            original = model.stream
+            def stream(messages):
+                model.last_human = "\n".join(str(m.content) for m in messages)
+                yield from original(messages)
+            model.stream = stream
+            return model
+        return box.setdefault(stage, Recording(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    from conftest import StageCounter
+    box["architecture"] = StageCounter(ledger, "architecture")
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver(), progress=ProgressBus(), review=True)
     return g, box
 
@@ -213,9 +226,10 @@ def test_heal_restart_end_to_end_sqlite_skeleton_mode(tmp_path, monkeypatch, cap
     from spec_generator.cli import _run_with_gates
     from spec_generator.errors import UserFacingError
 
-    box = {}
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    box = {}; ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        return ledger.build(stage, kw.get("schema")) if stage == "architecture" else box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
     conn = sqlite3.connect(str(tmp_path / "checkpoints.sqlite"), check_same_thread=False)
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(conn),
                     progress=ProgressBus(), review=True)

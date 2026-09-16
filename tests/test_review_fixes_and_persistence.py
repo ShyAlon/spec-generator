@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE
+from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
 """2026-09-09 live failure + ask: (1) the review-fix application path re-fired
 the srs stage against the retired full-document validator while the grammar
 constrained the model to fills ('functional: Field required; fills: Extra
@@ -24,7 +24,7 @@ class QueueModel(FakeModel):
 
     def invoke(self, messages):
         self.calls += 1
-        self.last_human = messages[-1].content
+        self.last_human = "\n".join(str(m.content) for m in messages)
         q = self.QUEUES.get(self.stage) or []
         if q:
             payload = q.pop(0)
@@ -39,7 +39,11 @@ class QueueModel(FakeModel):
 def queue_models(monkeypatch):
     box = {}
     QueueModel.QUEUES = {}
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: box.setdefault(stage, QueueModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, QueueModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
     return box
 
 
@@ -96,8 +100,10 @@ def test_late_failure_leaves_completed_stages_on_disk(tmp_path, monkeypatch):
                 raise RuntimeError("process died")
             return super().invoke(messages)
 
-    box = {}
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: box.setdefault(stage, DieAtTests(stage)))
+    box = {}; ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        return ledger.build(stage, kw.get("schema")) if stage == "architecture" else box.setdefault(stage, DieAtTests(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
     persist = _make_persist(dict(INTENT), tmp_path)
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver(), persist=persist)
     with pytest.raises(RuntimeError):
@@ -188,7 +194,7 @@ def test_checkpoint_resume_after_apply_fixes_failure_skips_upstream(monkeypatch)
 
         def invoke(self, messages):
             if (self.stage == "srs" and self.calls == 1
-                    and "REVIEW FIXES" in messages[-1].content
+                    and "REVIEW FIXES" in "\n".join(str(m.content) for m in messages)
                     and not type(self).crashed):
                 type(self).crashed = True
                 raise RuntimeError("simulated apply_fixes crash")
@@ -197,9 +203,14 @@ def test_checkpoint_resume_after_apply_fixes_failure_skips_upstream(monkeypatch)
     CrashOnceAtFix.crashed = False
     QueueModel.QUEUES = {"review": [FIXES, []]}
     box = {}
-    monkeypatch.setattr(
-        model_config, "build_chat_model",
-        lambda stage, **kw: box.setdefault(stage, CrashOnceAtFix(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture":
+            model = ledger.build(stage, kw.get("schema"))
+            box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
+            return model
+        return box.setdefault(stage, CrashOnceAtFix(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
     graph = build_graph(UsageLog("s"), checkpointer=MemorySaver())
     config = {"configurable": {"thread_id": "resume-apply-fixes"}}
 

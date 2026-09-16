@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE
+from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
 """--from <stage>: rewind a checkpoint so a stage and everything after it
 re-runs under the CURRENT code (his 2026-09-09 need: the completed run held
 pre-fix items with invented requirement ids; a plain resume re-reported the
@@ -20,8 +20,12 @@ from vmodel_contracts import CONTRACT_VERSION
 
 
 def _run_once(box, monkeypatch, db):
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
     cfg = {"configurable": {"thread_id": "s"}}
     g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
@@ -79,8 +83,12 @@ def test_from_unknown_stage_and_missing_checkpoint(monkeypatch, tmp_path):
 
 def test_cli_from_items_end_to_end(monkeypatch, tmp_path, capsys):
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
     intent_file = tmp_path / "intent_model.json"
     intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
     baseline_file = tmp_path / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
@@ -103,8 +111,12 @@ def test_from_warns_before_discarding_preserved_partials(monkeypatch, tmp_path, 
     """--from items invalidates downstream partials by design - but it must
     SAY so: a silent discard cost a user 36 finished test items (2026-09-10)."""
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
     intent_file = tmp_path / "intent_model.json"
     intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
     baseline_file = tmp_path / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
@@ -126,8 +138,12 @@ def test_default_output_dir_is_human_readable_and_stable(monkeypatch, tmp_path, 
     directory lives in the workspace-SIBLING artifacts/ folder (2026-09-12
     founder decision: generated output stays out of the git trees)."""
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
     repo = tmp_path / "require" / "spec-generator"; repo.mkdir(parents=True)
     monkeypatch.chdir(repo)
     monkeypatch.delenv("VMODEL_ARTIFACTS_DIR", raising=False)
@@ -151,8 +167,12 @@ def test_default_output_dir_is_human_readable_and_stable(monkeypatch, tmp_path, 
 
 def test_explicit_output_dir_is_unchanged(monkeypatch, tmp_path):
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
     intent_file = tmp_path / "intent_model.json"
     intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
     baseline_file = tmp_path / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
@@ -197,8 +217,12 @@ def test_only_stage_graph_ends_after_named_node(monkeypatch):
     from spec_generator.telemetry import UsageLog
     from test_progress import FakeModel, PAYLOADS
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
     state = {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE, "needs": PAYLOADS["needs"],
              "srs": {"purpose": "p", "scope_summary": "s", "functional": [{
                  "requirement_id": "R-1", "need_ids": ["N-1"], "title": "Spec file",
@@ -249,8 +273,12 @@ def test_baseline_change_invalidates_architecture_downstream(monkeypatch, tmp_pa
     # wrong-system bundle as greenfield-anchored. A baseline change on resume
     # MUST invalidate architecture and everything downstream, never re-label.
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
     intent_file = tmp_path / "intent_model.json"
     intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
     b1 = tmp_path / "b1.json"; b1.write_text(json.dumps(SYSTEM_BASELINE))
@@ -280,8 +308,12 @@ def test_baseline_change_invalidates_architecture_downstream(monkeypatch, tmp_pa
 
 def test_same_baseline_resume_relabels_nothing(monkeypatch, tmp_path, capsys):
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
     intent_file = tmp_path / "intent_model.json"
     intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
     b1 = tmp_path / "b1.json"; b1.write_text(json.dumps(SYSTEM_BASELINE))
@@ -380,8 +412,12 @@ def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(mon
 def test_to_architecture_stops_real_checkpoint_before_downstream(monkeypatch, tmp_path):
     """A live bounded experiment stops at architecture and later resumes."""
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
     db = sqlite3.connect(str(tmp_path / "to.sqlite"), check_same_thread=False)
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(db), stop_after="architecture")
     cfg = {"configurable": {"thread_id": "to-s"}}
