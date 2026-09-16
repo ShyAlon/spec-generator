@@ -13,3 +13,16 @@ def arch(executes=True):
 def test_architecture_must_execute_founder_confirmed_concept():
  _check_conops_execution(arch(),conops())
  with pytest.raises(ModelStructureError,match="concept id"):_check_conops_execution(arch(False),conops())
+
+
+def test_confirmed_conops_creates_code_owned_execution_slot():
+ from spec_generator.graph import _required_concept_adr_slots
+ slots=_required_concept_adr_slots(conops())
+ assert slots == [{"slug":"execute-native-app","migration":False,"authorizes":[],"required_concept_ids":["concept:native-app"]}]
+
+def test_founder_constraint_can_be_confirmed_conops_not_tech_preference():
+ from spec_generator.graph import _check_decision_drivers
+ data=arch(True).model_dump(mode="json")
+ data["decisions"][0]["driver"]="founder_constraint"
+ from vmodel_contracts import ArchitectureOverview
+ _check_decision_drivers(ArchitectureOverview.model_validate(data),{"tech_preferences":[]},conops())
