@@ -405,42 +405,58 @@ def describe_models() -> str:
 
 
 def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
-    """chat_model.invoke under the guardrails (budget + deadline), with the
-    known pains translated to human language. Every call is logged when
-    VMODEL_LLM_LOG is set (start/end/error, latency, token usage, raw provider
-    error payload - never message content, never keys)."""
+    """Invoke under guardrails, retrying one provider-empty completion.
+
+    DeepSeek documents occasional empty content in JSON mode. Treat that as a
+    retryable provider signal, log the response envelope, and never let it
+    masquerade as a downstream contract failure.
+    """
     from .errors import UserFacingError, translate_llm_error
 
     cfg = for_stage(stage)
-    _guard_enter(stage)
     call_timeout = _guard_limits()[0]
-    base = {"provider": cfg.provider, "model": cfg.model, "stage": stage,
-            **({"item": item} if item else {})}
-    _log_llm({"event": "llm_call_start", **base})
-    stop_heartbeat = _start_heartbeat(f"stage '{stage}'" + (f" [{item}]" if item else "") + " call")
-    t0 = time.monotonic()
-    try:
-        resp = _run_with_deadline(lambda: chat_model.invoke(messages), call_timeout, stage)
-        _check_truncated(resp, stage, cfg)
-        _log_llm({"event": "llm_call_end", **base, "latency_s": round(time.monotonic() - t0, 2),
-                  "usage": _usage_of(resp)})
-        return resp
-    except TimeoutError:
-        _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
-                  "error": {"kind": "timeout", "limit_s": call_timeout}})
-        raise _guard_killed(stage, "no completion within the call budget",
-                            call_timeout, call_timeout) from None
-    except UserFacingError:
-        raise
-    except Exception as e:  # noqa: BLE001
-        _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
-                  "error": _provider_error_detail(e)})
-        friendly = translate_llm_error(e, stage, cfg.provider, cfg.model, _BASE_URLS.get(cfg.provider))
-        if friendly is not None:
-            raise friendly from e
-        raise
-    finally:
-        stop_heartbeat()
+    for attempt in (1, 2):
+        _guard_enter(stage)
+        base = {"provider": cfg.provider, "model": cfg.model, "stage": stage,
+                "attempt": attempt, **({"item": item} if item else {}),
+                **({"retry_reason": "empty_response"} if attempt == 2 else {})}
+        _log_llm({"event": "llm_call_start", **base})
+        stop_heartbeat = _start_heartbeat(f"stage '{stage}'" + (f" [{item}]" if item else "") + " call")
+        t0 = time.monotonic()
+        try:
+            resp = _run_with_deadline(lambda: chat_model.invoke(messages), call_timeout, stage)
+            _check_truncated(resp, stage, cfg)
+            content = getattr(resp, "content", None)
+            if isinstance(content, str) and not content.strip():
+                _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
+                          "error": {"kind": "empty_response", "raw_payload": __import__("vmodel_contracts.runtime", fromlist=["empty_llm_response_detail"]).empty_llm_response_detail(resp, _mask_secrets)}})
+                if attempt == 1:
+                    continue
+                guidance = (_rerun_guidance(stage) + "; DeepSeek documents occasional empty JSON-mode "
+                            "completions, so a fresh call may succeed" if cfg.provider == "deepseek" else
+                            _rerun_guidance(stage) + "; if it repeats, check the selected provider/model")
+                raise UserFacingError(
+                    f"stage '{stage}': '{cfg.provider}/{cfg.model}' returned empty content twice.",
+                    "the provider completed both requests without an answer; the raw response envelopes "
+                    "are recorded in llm-calls.jsonl.", guidance)
+            _log_llm({"event": "llm_call_end", **base, "latency_s": round(time.monotonic() - t0, 2),
+                      "usage": _usage_of(resp)})
+            return resp
+        except TimeoutError:
+            _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
+                      "error": {"kind": "timeout", "limit_s": call_timeout}})
+            raise _guard_killed(stage, "no completion within the call budget", call_timeout, call_timeout) from None
+        except UserFacingError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
+                      "error": _provider_error_detail(e)})
+            friendly = translate_llm_error(e, stage, cfg.provider, cfg.model, _BASE_URLS.get(cfg.provider))
+            if friendly is not None:
+                raise friendly from e
+            raise
+        finally:
+            stop_heartbeat()
 
 
 def stream_checked(chat_model, messages, stage: str, item: str | None = None,

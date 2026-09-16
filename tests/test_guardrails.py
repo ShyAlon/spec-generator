@@ -433,3 +433,29 @@ def test_normal_cli_defaults_llm_call_log_to_bundle_dir():
     source = inspect.getsource(cli.main)
     assert 'os.environ.setdefault("VMODEL_LLM_LOG", str(outdir / "llm-calls.jsonl"))' in source
     assert source.index('os.environ.setdefault("VMODEL_LLM_LOG"') < source.index('graph = build_graph')
+
+
+def test_empty_completion_retries_once_and_logs_raw_envelope(tmp_path, monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    log = tmp_path / "llm.jsonl"
+    monkeypatch.setenv("VMODEL_LLM_LOG", str(log))
+
+    class M:
+        calls = 0
+        def invoke(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                return AIMessage(content="", id="msg_empty",
+                                 response_metadata={"finish_reason": "stop", "model_name": "deepseek-flash"},
+                                 usage_metadata={"input_tokens": 8, "output_tokens": 0, "total_tokens": 8})
+            return AIMessage(content='{"ok":true}')
+
+    model = M()
+    out = mc.invoke_checked(model, [], "srs")
+    assert out.content == '{"ok":true}' and model.calls == 2
+    recs = _read_log(log)
+    assert [r["event"] for r in recs] == ["llm_call_start", "llm_call_error", "llm_call_start", "llm_call_end"]
+    assert recs[1]["error"]["kind"] == "empty_response"
+    assert recs[1]["error"]["raw_payload"]["id"] == "msg_empty"
+    assert recs[2]["attempt"] == 2 and recs[2]["retry_reason"] == "empty_response"

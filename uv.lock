@@ -1283,7 +1283,7 @@ requires-dist = [
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2" },
     { name = "pydantic", specifier = ">=2.6,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "vmodel-contracts", git = "https://github.com/ShyAlon/vmodel-contracts.git?rev=e126e3637e244547b472582d81696dcc2aee1a03" },
+    { name = "vmodel-contracts", git = "https://github.com/ShyAlon/vmodel-contracts.git?rev=990aa665da6918a9d50609b179d3768dc240ce5f" },
 ]
 provides-extras = ["anthropic", "dev"]
 
@@ -1573,7 +1573,7 @@ wheels = [
 [[package]]
 name = "vmodel-contracts"
 version = "0.16.2"
-source = { git = "https://github.com/ShyAlon/vmodel-contracts.git?rev=e126e3637e244547b472582d81696dcc2aee1a03#e126e3637e244547b472582d81696dcc2aee1a03" }
+source = { git = "https://github.com/ShyAlon/vmodel-contracts.git?rev=990aa665da6918a9d50609b179d3768dc240ce5f#990aa665da6918a9d50609b179d3768dc240ce5f" }
 dependencies = [
     { name = "pydantic" },
 ]
