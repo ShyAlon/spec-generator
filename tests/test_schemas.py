@@ -47,20 +47,54 @@ def test_tests_schema_is_prose_fills_only():
         assert owned not in str(sch)
 
 
-def test_ollama_routes_to_native_chatollama_with_schema(monkeypatch):
+def test_ollama_routes_to_native_chatollama_with_exact_schema(monkeypatch, capsys):
     monkeypatch.delenv("SPEC_GENERATOR_STRUCTURED", raising=False)
-    m = model_config.build_chat_model("needs")
+    monkeypatch.setattr(model_config, "_ollama_structured_support",
+                        lambda base_url=None: (True, "fake Ollama supports JSON schema"))
+    exact = {"type": "object", "properties": {"answer": {"type": "string"}},
+             "required": ["answer"], "additionalProperties": False}
+    m = model_config.build_chat_model("srs", schema=exact)
     from langchain_ollama import ChatOllama
     assert isinstance(m, ChatOllama)
-    assert m.format == for_stage("needs")
+    assert m.format == exact
+    assert "output mode [srs]: constrained" in capsys.readouterr().err
     assert m.num_predict == 8192  # tests stage carries 12288
     assert model_config.build_chat_model("tests").num_predict == 12288
 
 
-def test_structured_opt_out_falls_back_to_openai_compat(monkeypatch):
+def test_unsupported_ollama_falls_back_visibly(monkeypatch, capsys):
+    monkeypatch.delenv("SPEC_GENERATOR_STRUCTURED", raising=False)
+    monkeypatch.setattr(model_config, "_ollama_structured_support",
+                        lambda base_url=None: (False, "Ollama 0.4.7 is older than 0.5.0"))
+    from langchain_openai import ChatOpenAI
+    assert isinstance(model_config.build_chat_model("needs"), ChatOpenAI)
+    line = capsys.readouterr().err
+    assert "output mode [needs]: fallback (unconstrained)" in line
+    assert "older than 0.5.0" in line
+
+
+def test_structured_opt_out_falls_back_to_openai_compat(monkeypatch, capsys):
     monkeypatch.setenv("SPEC_GENERATOR_STRUCTURED", "0")
     from langchain_openai import ChatOpenAI
     assert isinstance(model_config.build_chat_model("needs"), ChatOpenAI)
+    assert "SPEC_GENERATOR_STRUCTURED=0" in capsys.readouterr().err
+
+
+def test_ollama_support_detection_uses_version_endpoint_and_caches(monkeypatch):
+    import urllib.request
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self): return b'{"version":"0.5.1"}'
+
+    calls = []
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda url, timeout: calls.append((url, timeout)) or Response())
+    model_config._OLLAMA_CAPABILITY_CACHE.clear()
+    assert model_config._ollama_structured_support() == (True, "Ollama 0.5.1 supports JSON schema")
+    assert model_config._ollama_structured_support()[0] is True
+    assert len(calls) == 1 and calls[0][0].endswith("/api/version")
 
 
 def test_remote_providers_unaffected(monkeypatch):

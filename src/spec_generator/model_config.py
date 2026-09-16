@@ -522,6 +522,45 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
         stop_heartbeat()
 
 
+_OLLAMA_STRUCTURED_MIN = (0, 5, 0)
+_OLLAMA_CAPABILITY_CACHE: dict[str, tuple[bool, str]] = {}
+
+
+def _ollama_structured_support(base_url: str | None = None) -> tuple[bool, str]:
+    """Ask the running Ollama server whether JSON-schema output is supported.
+
+    Structured outputs shipped in Ollama 0.5.0. Detection is cached per server
+    for this process, but the selected mode is still printed for every model
+    call so a constrained/fallback difference is never silent.
+    """
+    import urllib.request
+
+    root = (base_url or _BASE_URLS["ollama"]).removesuffix("/v1").rstrip("/")
+    if root in _OLLAMA_CAPABILITY_CACHE:
+        return _OLLAMA_CAPABILITY_CACHE[root]
+    try:
+        with urllib.request.urlopen(root + "/api/version", timeout=2) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        raw = str(payload.get("version") or "")
+        match = _re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", raw)
+        if not match:
+            result = (False, f"server returned unrecognized version {raw!r}")
+        else:
+            version = tuple(int(x or 0) for x in match.groups())
+            result = (version >= _OLLAMA_STRUCTURED_MIN,
+                      f"Ollama {raw}" + (" supports JSON schema" if version >= _OLLAMA_STRUCTURED_MIN
+                                          else " is older than 0.5.0"))
+    except Exception as exc:  # detection must not turn an old server into a startup failure
+        result = (False, f"support check failed: {type(exc).__name__}")
+    _OLLAMA_CAPABILITY_CACHE[root] = result
+    return result
+
+
+def _report_output_mode(stage: str, constrained: bool, reason: str) -> None:
+    mode = "constrained" if constrained else "fallback (unconstrained)"
+    _console_line(f"  output mode [{stage}]: {mode} - {reason}")
+
+
 def _structured_enabled() -> bool:
     """Constrained decoding (schema-enforced output) is the default for local
     Ollama; SPEC_GENERATOR_STRUCTURED=0 opts out (older Ollama < 0.5, or a
@@ -575,20 +614,28 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
     cfg = for_stage(stage)
     _preflight(cfg, stage)
     if cfg.provider == "ollama" and structured and _structured_enabled():
-        from langchain_ollama import ChatOllama
+        supported, reason = _ollama_structured_support()
+        if supported:
+            from langchain_ollama import ChatOllama
 
-        from .schemas import for_stage as _schema_for_stage
+            from .schemas import for_stage as _schema_for_stage
 
-        # native /api/chat (the OpenAI-compat layer's json_schema support is
-        # unreliable); grammar enforces SHAPE only - extraction+retry stays.
-        return ChatOllama(model=cfg.model, temperature=cfg.temperature,
-                          reasoning=_ollama_think(), num_ctx=_ollama_num_ctx(),
-                          keep_alive=_ollama_keep_alive(),
-            timeout=_guard_limits()[0],  # the socket dies with the guardrail deadline
-                          seed=cfg.seed,  # ADR-0022
-                          num_predict=_max_tokens_limit(cfg.max_tokens),
-                          base_url=_BASE_URLS["ollama"].removesuffix("/v1"),
-                          format=schema or _schema_for_stage(stage))
+            # native /api/chat: format receives the exact per-call schema.
+            # This enforces shape only; parsing, semantic validation, and the
+            # existing contract retry remain the safety net.
+            selected_schema = schema or _schema_for_stage(stage)
+            _report_output_mode(stage, True, reason)
+            return ChatOllama(model=cfg.model, temperature=cfg.temperature,
+                              reasoning=_ollama_think(), num_ctx=_ollama_num_ctx(),
+                              keep_alive=_ollama_keep_alive(),
+                timeout=_guard_limits()[0],  # socket dies with guardrail deadline
+                              seed=cfg.seed,  # ADR-0022
+                              num_predict=_max_tokens_limit(cfg.max_tokens),
+                              base_url=_BASE_URLS["ollama"].removesuffix("/v1"),
+                              format=selected_schema)
+        _report_output_mode(stage, False, reason)
+    elif cfg.provider == "ollama" and structured:
+        _report_output_mode(stage, False, "SPEC_GENERATOR_STRUCTURED=0")
     if cfg.provider in ("deepseek", "openai", "ollama"):
         from langchain_openai import ChatOpenAI
 

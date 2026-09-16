@@ -2379,12 +2379,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return {"tests": data}
 
     def node_review(state: GenState) -> dict:
+        from .schemas import for_stage as output_schema
+
         n = state.get("review_round", 0) + 1
         fixes = _call_json("review", STAGE_PROMPTS["review"].format(n=n)
                            + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
                            + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
                            + "\n\nTESTS:\n" + json.dumps(_prompt_view(state["tests"])), log, progress,
-                           validate=_normalized_review_fixes)
+                           validate=_normalized_review_fixes,
+                           schema=output_schema("review"))
         return {"review_round": n, "review_fixes": fixes}
 
     def route_review(state: GenState) -> str:

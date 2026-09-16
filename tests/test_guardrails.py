@@ -363,18 +363,21 @@ def test_describe_models_names_resolved_provider_and_model():
 
 
 def test_ollama_thinking_off_by_default(monkeypatch):
+    monkeypatch.setattr(mc, "_ollama_structured_support", lambda base_url=None: (True, "test server"))
     monkeypatch.delenv("VMODEL_OLLAMA_THINK", raising=False)
     m = mc.build_chat_model("srs")
     assert m.reasoning is False  # qwen3 <think> dead time
 
 
 def test_ollama_thinking_knob_reenables(monkeypatch):
+    monkeypatch.setattr(mc, "_ollama_structured_support", lambda base_url=None: (True, "test server"))
     monkeypatch.setenv("VMODEL_OLLAMA_THINK", "1")
     m = mc.build_chat_model("srs")
     assert m.reasoning is True
 
 
 def test_ollama_num_ctx_default_and_knob(monkeypatch):
+    monkeypatch.setattr(mc, "_ollama_structured_support", lambda base_url=None: (True, "test server"))
     monkeypatch.delenv("VMODEL_OLLAMA_NUM_CTX", raising=False)
     m = mc.build_chat_model("srs")
     assert m.num_ctx == 32768  # ollama's 4096 default silently truncates stage prompts
@@ -384,6 +387,7 @@ def test_ollama_num_ctx_default_and_knob(monkeypatch):
 
 
 def test_ollama_keep_alive_pinned(monkeypatch):
+    monkeypatch.setattr(mc, "_ollama_structured_support", lambda base_url=None: (True, "test server"))
     monkeypatch.delenv("VMODEL_OLLAMA_KEEP_ALIVE", raising=False)
     m = mc.build_chat_model("srs")
     assert m.keep_alive == "30m"  # idle timer must not unload mid-run

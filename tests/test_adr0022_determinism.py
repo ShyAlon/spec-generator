@@ -30,13 +30,16 @@ def test_all_stage_defaults_are_deterministic(monkeypatch):
 
 
 def test_ollama_build_receives_temperature_zero_and_seed(monkeypatch):
+    monkeypatch.setattr(model_config, "_ollama_structured_support", lambda base_url=None: (True, "test server"))
     seen = {}
     class FakeOllama:
         def __init__(self, **kw): seen.update(kw)
     import langchain_ollama
     monkeypatch.setattr(langchain_ollama, "ChatOllama", FakeOllama)
-    model_config.build_chat_model("srs", schema={"type": "object"})
+    exact_schema = {"type": "object"}
+    model_config.build_chat_model("srs", schema=exact_schema)
     assert seen["temperature"] == 0.0 and seen["seed"] == 42
+    assert seen["format"] is exact_schema
 
 
 def test_bulk_is_escape_hatch_not_default(monkeypatch):
