@@ -656,6 +656,11 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
 
         env = _API_KEY_ENV[cfg.provider]
         extra = {}
+        if cfg.provider == "deepseek" and structured:
+            # DeepSeek chat-completions guarantees valid JSON, not arbitrary
+            # JSON-schema adherence. Existing validators/retry own field shape.
+            extra["model_kwargs"] = {"response_format": {"type": "json_object"}}
+            _console_line(f"  WARNING output mode [{stage}]: DeepSeek JSON mode constrains syntax; field shape remains validation+retry guarded")
         if cfg.provider == "ollama":
             body = {"num_ctx": _ollama_num_ctx(),  # honored once ollama PR #16825 lands
                     "keep_alive": _ollama_keep_alive()}

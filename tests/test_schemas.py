@@ -103,7 +103,17 @@ def test_remote_providers_unaffected(monkeypatch):
     from langchain_openai import ChatOpenAI
     m = model_config.build_chat_model("needs")
     assert isinstance(m, ChatOpenAI)
+    assert m.model_kwargs["response_format"] == {"type": "json_object"}
 
+
+
+def test_deepseek_json_mode_warning_is_honest(monkeypatch, capsys):
+    monkeypatch.setenv("SPEC_GENERATOR_MODEL_SRS", "deepseek:deepseek-flash")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
+    model_config.build_chat_model("srs", schema={"type": "object"})
+    warning = capsys.readouterr().err
+    assert "WARNING output mode [srs]" in warning
+    assert "field shape remains validation+retry guarded" in warning
 
 def test_schemas_are_reduced_to_ollamas_grammar_subset():
     """Ollama 400s the call on constructs its grammar compiler rejects
