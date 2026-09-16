@@ -99,6 +99,8 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
     if item_label and progress is not None:
         progress.emit(ProgressEvent(stage, "", "item_started", t0, None, item_label))
     messages = [SystemMessage(content=METHODOLOGY), HumanMessage(content=payload)]
+    if stage != "expert_opinion":
+        messages.append(HumanMessage(content="FINAL RESPONSE CONTRACT: Return only the JSON value requested above; no prose or markdown fences."))
     if feedback:
         messages.append(HumanMessage(content=feedback))
     chunks: list[str] = []

@@ -316,3 +316,17 @@ def test_expected_constrained_mode_is_silent_but_fallback_warns(monkeypatch, cap
     output = capsys.readouterr().err
     assert "WARNING" in output and "fallback (unconstrained)" in output
     assert "unsupported" in output
+
+
+def test_structured_stage_contract_reminder_is_final(monkeypatch):
+    from langchain_core.messages import AIMessage
+    seen=[]
+    class Model:
+        def stream(self,messages):
+            seen.append(messages)
+            yield AIMessage(content='{"ok":true}', usage_metadata={"input_tokens":1,"output_tokens":1,"total_tokens":2})
+    monkeypatch.setattr(model_config,"build_chat_model",lambda *a,**k:Model())
+    from spec_generator.graph import _invoke
+    from spec_generator.telemetry import UsageLog
+    _invoke("srs","Return JSON",UsageLog("x"))
+    assert seen[0][-1].content.startswith("FINAL RESPONSE CONTRACT:")
