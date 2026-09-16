@@ -2048,6 +2048,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "rejected": []}
                     if not body["title"] or not body["decision"] or not body["rationale"]:
                         raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
+                    if any(not isinstance(opt, dict) or not str(opt.get("option", "")).strip()
+                           or not str(opt.get("reason", "")).strip()
+                           for opt in body["options_considered"]):
+                        raise ModelStructureError(
+                            f"{slot['decision_id']} '{body['title']}': options_considered must contain "
+                            "objects {option: non-empty string, reason: non-empty string}; bare strings "
+                            "cannot preserve why an alternative lost")
                     # P1 (2026-09-12 regen, founder-approved): a founder_constraint
                     # driver claims THE FOUNDER mandated this - that requires a
                     # founder tech preference actually on record, and the decision

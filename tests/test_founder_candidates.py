@@ -300,3 +300,13 @@ def test_insistence_without_an_adr_justification_fails_loudly():
     with _pytest.raises(_UFE, match="candidate-grounding"):
         _run(_InsistentReactNoAdr, depart=True, depart_key="mobile_framework",
              plan_keys=["language", "mobile_framework"])
+
+
+def test_adr_call_rejects_bare_string_options_before_assembly():
+    """The live DeepSeek shape must trigger call-level feedback, not stage assembly."""
+    from pathlib import Path
+    source=(Path(__file__).parents[1]/"src"/"spec_generator"/"graph.py").read_text()
+    assert 'options_considered must contain' in source
+    assert 'bare strings' in source
+    # Deterministic conversion is deliberately unsafe: a string has no reason,
+    # and inventing an empty reason would only defer the same contract failure.
