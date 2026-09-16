@@ -187,3 +187,22 @@ def test_non_adoption_driver_still_shows_matrix_without_claiming_it_proves_simpl
                        "options_considered": []}], "non_functionals": {}}))
     assert "Driver: simplicity (model judgment - unverified; matrix: 2 sources" in md
     assert "adoption signal only, not proof of simplicity" in md
+
+
+def test_technology_selection_must_be_in_owning_adr_substance():
+    from spec_generator.graph import _check_adr_substance
+    from spec_generator.skeleton import ModelStructureError
+    payload = {"session_id":"s", "stack_entries":[{"key":"agent_orchestration","value":"Temporal","technology_id":"tech:temporal","decision_id":"ADR-1"}],
+      "components":[], "decisions":[{"decision_id":"ADR-1","title":"Insurer correspondence boundary","decision":"Use per-insurer adapters","rationale":"Normalize claim exchange","driver":"simplicity","options_considered":[],"executes_concept_ids":[],"technology_selections":[{"slot_id":"slot:agent-orchestration","technology_id":"tech:temporal","display_name":"Temporal"}]}], "non_functionals":{}}
+    with pytest.raises(ModelStructureError, match="Temporal.*absent"):
+        _check_adr_substance(__import__('vmodel_contracts').ArchitectureOverview.model_validate(payload))
+
+
+def test_repeated_subject_and_alternatives_fail_adr_gate():
+    from spec_generator.graph import _check_adr_substance
+    from spec_generator.skeleton import ModelStructureError
+    options=[{"option":"generic insurer integration","reason":"variance"},{"option":"direct point to point integration","reason":"duplicates"},{"option":"human operated integration","reason":"not autonomous"}]
+    def adr(i,title,decision): return {"decision_id":f"ADR-{i}","title":title,"decision":decision,"rationale":"Insurer variance requires normalized correspondence adapters","driver":"simplicity","options_considered":options,"executes_concept_ids":[],"technology_selections":[]}
+    payload={"session_id":"s","stack_entries":[],"components":[],"decisions":[adr(1,"Per insurer adapter boundary","Use normalized correspondence adapters"),adr(2,"Normalized insurer correspondence boundary","Use per insurer correspondence adapters")],"non_functionals":{}}
+    with pytest.raises(ModelStructureError, match="duplicate one architecture decision"):
+        _check_adr_substance(__import__('vmodel_contracts').ArchitectureOverview.model_validate(payload))

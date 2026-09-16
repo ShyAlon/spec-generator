@@ -768,6 +768,58 @@ def _check_candidate_grounding(arch: ArchitectureOverview, intent_model: dict,
                 "why it won over the curated candidates; provide a substantive off_list_justification")
 
 
+def _check_adr_substance(arch: ArchitectureOverview) -> None:
+    """Selections and distinct ADR records must agree with their prose.
+
+    Structured ownership alone is insufficient: a slot can be wired to an ADR
+    whose body discusses a different decision. Duplicate records likewise hide
+    ownership by making several ADRs appear to decide the same thing.
+    """
+    for decision in arch.decisions:
+        substance = " ".join((decision.title, decision.decision, decision.rationale))
+        for selection in decision.technology_selections:
+            slot = selection.slot_id.casefold()
+            high_risk = any(marker in slot for marker in (
+                "orchestrat", "insurer", "integration", "interpret", "hosting", "telephon"
+            ))
+            if high_risk and not _tech_in_text(selection.display_name, substance):
+                raise ModelStructureError(
+                    f"{decision.decision_id}: technology selection {selection.display_name!r} "
+                    "is absent from the ADR title, decision and rationale - the owning ADR must "
+                    "substantively decide the selected technology, not only carry its slot link")
+
+    def words(text: str) -> set[str]:
+        stop = {"a", "an", "and", "as", "at", "behind", "by", "for", "in", "of", "on",
+                "the", "to", "use", "with", "adr", "decision"}
+        return {w for w in _re.findall(r"[a-z0-9]+", text.casefold())
+                if len(w) > 2 and w not in stop}
+
+    def score(a: set[str], b: set[str]) -> float:
+        return len(a & b) / max(1, len(a | b))
+
+    for i, left in enumerate(arch.decisions):
+        for right in arch.decisions[i + 1:]:
+            left_tech = {s.technology_id for s in left.technology_selections}
+            right_tech = {s.technology_id for s in right.technology_selections}
+            # Distinct concrete selections can share generic prose in old fixtures,
+            # but cannot be duplicate technology decisions.
+            if left_tech and right_tech and left_tech.isdisjoint(right_tech):
+                continue
+            left_subject = words(left.title + " " + left.decision)
+            right_subject = words(right.title + " " + right.decision)
+            left_options = {" ".join(sorted(words(o.option))) for o in left.options_considered}
+            right_options = {" ".join(sorted(words(o.option))) for o in right.options_considered}
+            option_overlap = score(left_options, right_options) if left_options and right_options else 0.0
+            subject_overlap = score(left_subject, right_subject)
+            same_selection = bool(left_tech and right_tech and left_tech == right_tech)
+            shared_options = left_options & right_options
+            if same_selection or (len(shared_options) >= 2 and subject_overlap >= 0.30 and option_overlap >= 0.65):
+                raise ModelStructureError(
+                    f"{left.decision_id} and {right.decision_id} duplicate one architecture decision "
+                    f"(subject overlap {subject_overlap:.2f}, alternatives overlap {option_overlap:.2f}) - "
+                    "merge them or make each record own a genuinely distinct decision")
+
+
 def baseline_reference_index(baseline: SystemBaseline) -> set[str]:
     """Canonical, mechanically checkable references available to the model."""
     refs = {f"repo:{r.name}" for r in baseline.repositories}
@@ -2219,6 +2271,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                            contested=part.get("contested"))
             except ModelStructureError as e:
                 gate_failures.append(("candidate-grounding", str(e)))
+            try:
+                _check_adr_substance(arch)
+            except ModelStructureError as e:
+                gate_failures.append(("ADR-substance", str(e)))
             if gate_failures:
                 trace="; ".join(f"{name}: {detail}" for name,detail in gate_failures)
                 if _adr_attempt == 1:
