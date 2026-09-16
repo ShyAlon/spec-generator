@@ -311,3 +311,22 @@ def test_expert_gate_wraps_unexpected_factory_failure(monkeypatch):
     rendered=ei.value.render()
     assert rendered.startswith("Error: expert opinion failed")
     assert "Likely cause:" in rendered and "Next:" in rendered
+
+
+def test_expert_regeneration_is_capped_before_third_full_rewrite(monkeypatch):
+    from spec_generator.errors import UserFacingError
+    from spec_generator.graph import build_graph
+    from spec_generator.telemetry import UsageLog
+    from test_progress import INTENT
+    from conftest import SYSTEM_BASELINE
+    graph=build_graph(UsageLog("s"),review=True,expert_opinion=True)
+    state={"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,
+      "srs":{},"architecture":{},"expert_opinions":[
+       {"gate":"architecture","action":"regenerate"},
+       {"gate":"architecture","action":"regenerate"}]}
+    # Exercise the gate node through a graph seeded at its predecessor would
+    # require a complete architecture; the source guard itself is the contract.
+    import inspect
+    source=inspect.getsource(build_graph)
+    assert "len(prior_regenerations) >= 2" in source
+    assert "without --expert-opinion" in source

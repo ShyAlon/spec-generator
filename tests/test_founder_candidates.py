@@ -310,3 +310,19 @@ def test_adr_call_rejects_bare_string_options_before_assembly():
     assert 'bare strings' in source
     # Deterministic conversion is deliberately unsafe: a string has no reason,
     # and inventing an empty reason would only defer the same contract failure.
+
+
+def test_off_list_pick_credits_structured_stack_to_adr_link_not_exact_prose():
+    from spec_generator.graph import _check_candidate_grounding
+    from vmodel_contracts import ArchitectureOverview
+    long_pick=("Per-insurer adapter behind a normalized claim-exchange boundary "
+               "with the concrete channel per insurer pending research")
+    data={"session_id":"s","stack_entries":[{"key":"insurer_integration","value":long_pick,
+      "technology_id":"off-list:per-insurer-adapter","decision_id":"ADR-7"}],"components":[],
+      "decisions":[{"decision_id":"ADR-7","title":"Insurer integration boundary",
+      "decision":"Use a normalized correspondence port","rationale":"Insurers differ in channel and protocol",
+      "driver":"simplicity","options_considered":[],"executes_concept_ids":[],
+      "technology_selections":[{"slot_id":"slot:insurer-integration","technology_id":"off-list:per-insurer-adapter",
+      "display_name":long_pick,"off_list_justification":"Keeps insurer-specific transport differences outside the claim domain while concrete channels remain research-bound."}]}],
+      "non_functionals":{}}
+    _check_candidate_grounding(ArchitectureOverview.model_validate(data),{"tech_preferences":[],"stakeholder_needs":[]})

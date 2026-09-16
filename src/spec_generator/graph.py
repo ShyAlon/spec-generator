@@ -744,18 +744,28 @@ def _check_candidate_grounding(arch: ArchitectureOverview, intent_model: dict,
                 f"stack.{key}: the ADR(s) naming contested pick {value!r} never argue the "
                 "platform trade-off - the rationale must state explicitly why a technology "
                 "of its platform fits this product's platform")
-    adr_text = " ".join(
-        d.title + " " + d.decision + " " + d.rationale + " "
-        + " ".join(o.option for o in d.options_considered) for d in arch.decisions).lower()
+    decisions_by_id = {d.decision_id: d for d in arch.decisions}
     for e in arch.stack_entries:
         if e.baseline_refs or _entry_point_slot(e.key) or _known_tech(e.value):
             continue
         if any(_tech_in_text(n.lower(), e.value) for c in TECH_CANDIDATES.values() for n, _ in c):
             continue  # on the curated list
-        if e.value.lower() not in adr_text:
+        # The pipeline owns stack->ADR identity. Credit that structured link;
+        # never require a long free-text pick to be repeated byte-for-byte in
+        # prose (the insurer-adapter live run had the right migrate-stack slot
+        # but failed this old substring test twice).
+        decision = decisions_by_id.get(e.decision_id)
+        selection = next((sel for sel in (decision.technology_selections if decision else [])
+                          if sel.slot_id == "slot:" + _re.sub(r"[^a-z0-9]+", "-", e.key.casefold()).strip("-")), None)
+        justification = (selection.off_list_justification if selection else None)
+        if decision is None or selection is None:
             raise ModelStructureError(
-                f"stack.{e.key}: off-list pick {e.value!r} (in no lexicon, on no candidate list) is "
-                "justified in NO ADR - an ADR must name it and why it won over the curated candidates")
+                f"stack.{e.key}: off-list pick {e.value!r} has no structured owning ADR selection - "
+                "the ADR must authorize this stack slot")
+        if not justification or len(justification.strip()) < 20:
+            raise ModelStructureError(
+                f"stack.{e.key}: owning {decision.decision_id} links the off-list pick but does not say "
+                "why it won over the curated candidates; provide a substantive off_list_justification")
 
 
 def baseline_reference_index(baseline: SystemBaseline) -> set[str]:
@@ -2554,6 +2564,16 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             def node_gate(state: GenState) -> dict:
                 advisories=state.get("architecture_advisories", []) if stage_key == "architecture" else []
                 if expert_opinion:
+                    prior_regenerations = [o for o in (state.get("expert_opinions") or [])
+                                           if o.get("gate") == stage_key and o.get("action") == "regenerate"]
+                    if len(prior_regenerations) >= 2:
+                        from .errors import UserFacingError
+                        raise UserFacingError(
+                            f"expert review parked the {stage_key} gate for human review after two regeneration rounds.",
+                            "the independent reviewer requested changes twice; another automatic full-stage rewrite "
+                            "would be an unbounded token loop, not stronger evidence.",
+                            "rerun the same command without --expert-opinion to inspect and decide this gate manually; "
+                            "the latest artifact and checkpoint are preserved.")
                     payload=("Act as an independent expert reviewer for a TEST RUN. Review the exact artifact "
                              "a human would see. First line: APPROVE or REGENERATE. Then write RATIONALE: free prose. "
                              "For REGENERATE also write FEEDBACK: a concrete correction. Never claim founder approval. "
