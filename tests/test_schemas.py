@@ -108,15 +108,16 @@ def test_deepseek_avoids_broken_json_mode(monkeypatch):
 
 
 
-def test_deepseek_prompt_structured_warning_is_honest(monkeypatch, capsys):
+def test_deepseek_forces_schema_as_single_tool(monkeypatch, capsys):
     monkeypatch.setenv("SPEC_GENERATOR_MODEL_SRS", "deepseek:deepseek-flash")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
     monkeypatch.setattr(model_config, "_OUTPUT_MODE_ANNOUNCED", set())
-    model_config.build_chat_model("srs", schema={"type": "object"})
-    warning = capsys.readouterr().err
-    assert "WARNING output mode:" in warning
-    assert "prompt-structured mode (thinking disabled)" in warning
-    assert "field shape remains validation+retry guarded" in warning
+    schema={"type":"object","properties":{"options_considered":{"type":"array","items":{"type":"object"}}}}
+    model = model_config.build_chat_model("srs", schema=schema)
+    assert model.tool["function"]["parameters"]["properties"]["payload"] == schema
+    assert model.runnable.kwargs["tool_choice"]["function"]["name"] == "return_srs_artifact"
+    notice = capsys.readouterr().err
+    assert "forced function call" in notice and "semantic validation+retry retained" in notice
 
 def test_schemas_are_reduced_to_ollamas_grammar_subset():
     """Ollama 400s the call on constructs its grammar compiler rejects
