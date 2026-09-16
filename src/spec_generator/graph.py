@@ -1300,10 +1300,13 @@ def _overview_validator():
 
 def _previous_srs_fill(requirement: dict) -> dict:
     """Convert a contract-shaped requirement to the prose-only fill grammar."""
-    acceptance = [
-        criterion.get("statement") if isinstance(criterion, dict) else criterion
-        for criterion in requirement.get("acceptance") or []
-    ]
+    from vmodel_contracts.normalize import normalize_list_string_fields
+    acceptance = normalize_list_string_fields(
+        {"acceptance": requirement.get("acceptance") or []},
+        type("SRSFillBoundary", (), {"model_fields": {
+            "acceptance": type("F", (), {"annotation": list[str]})()
+        }})
+    )["acceptance"]
     return {
         "title": requirement.get("title"),
         "statement": requirement.get("statement"),

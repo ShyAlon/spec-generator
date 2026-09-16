@@ -147,6 +147,8 @@ def test_contract_shaped_criteria_are_normalized_at_fill_reuse_boundary():
     from test_progress import CONTRACT_SRS
 
     requirement = CONTRACT_SRS["functional"][0]
+    requirement = dict(requirement)
+    requirement["acceptance"] = [{"criterion_id":"AC-1", "statement":"spec exists", "source_turns":[12]}]
     fill = _previous_srs_fill(requirement)
     assert fill["acceptance"] == ["spec exists"]
     merged = merge_srs_fills(
