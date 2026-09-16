@@ -329,4 +329,4 @@ def test_structured_stage_contract_reminder_is_final(monkeypatch):
     from spec_generator.graph import _invoke
     from spec_generator.telemetry import UsageLog
     _invoke("srs","Return JSON",UsageLog("x"))
-    assert seen[0][-1].content.startswith("FINAL RESPONSE CONTRACT:")
+    assert seen[0][-1].content.endswith("FINAL RESPONSE CONTRACT: Return only the JSON value requested above; no prose or markdown fences.")
