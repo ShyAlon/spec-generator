@@ -57,6 +57,9 @@ def test_review_fixes_refire_the_fill_stage(queue_models):
     # re-ran against the corrected SRS and the pipeline completed
     assert queue_models["items"].calls == 2 and queue_models["tests"].calls == 2  # re-derived from the fixed SRS
     assert queue_models["review"].calls == 2
+    assert all(isinstance(c["statement"], str)
+               for req in r["srs"]["functional"]
+               for c in req["acceptance"])
 
 
 def test_clean_review_never_pays_the_fix_stage(queue_models):
@@ -135,3 +138,81 @@ def test_dependency_closure_maps_requirement_fixes_to_specs():
     fixes.append({"scope": "spec", "target_ids": ["SPEC-2"], "fix": "repair body"})
     assert _affected_spec_ids(state, fixes) == {"SPEC-1", "SPEC-2"}
     assert _affected_spec_ids(state, [{"scope": "systemic", "target_ids": [], "fix": "global"}]) is None
+
+
+
+def test_contract_shaped_criteria_are_normalized_at_fill_reuse_boundary():
+    from spec_generator.graph import _previous_srs_fill
+    from spec_generator.skeleton import build_srs_skeleton, merge_srs_fills
+    from test_progress import CONTRACT_SRS
+
+    requirement = CONTRACT_SRS["functional"][0]
+    fill = _previous_srs_fill(requirement)
+    assert fill["acceptance"] == ["spec exists"]
+    merged = merge_srs_fills(
+        build_srs_skeleton(PAYLOADS["needs"]),
+        {"purpose": CONTRACT_SRS["purpose"],
+         "scope_summary": CONTRACT_SRS["scope_summary"],
+         "fills": {requirement["requirement_id"]: fill}},
+    )
+    assert merged["functional"][0]["acceptance"] == [
+        {"criterion_id": "AC-1", "statement": "spec exists"}
+    ]
+
+def test_stage_validation_error_is_human_readable_not_raw_traceback():
+    from pydantic import ValidationError
+    from spec_generator.graph import SRSDocument, _stage_validation_error, srs_document_data
+    from test_progress import CONTRACT_SRS
+
+    invalid = __import__("copy").deepcopy(CONTRACT_SRS)
+    invalid["functional"][0]["acceptance"][0]["statement"] = {
+        "criterion_id": "AC-1", "statement": "nested"
+    }
+    with pytest.raises(ValidationError) as caught:
+        SRSDocument.model_validate(srs_document_data(INTENT, invalid))
+
+    rendered = _stage_validation_error("apply_fixes", caught.value).render()
+    assert rendered.startswith("Error: stage 'apply_fixes'")
+    assert "Likely cause: artifact 'apply_fixes' has an offending field shape" in rendered
+    assert "functional.0.acceptance.0.statement" in rendered
+    assert "got dict" in rendered
+    assert "Next:" in rendered and "changing models cannot fix" in rendered
+
+
+def test_checkpoint_resume_after_apply_fixes_failure_skips_upstream(monkeypatch):
+    """A failed fix pass resumes at apply_fixes without redoing completed stages."""
+    class CrashOnceAtFix(QueueModel):
+        crashed = False
+
+        def invoke(self, messages):
+            if (self.stage == "srs" and self.calls == 1
+                    and "REVIEW FIXES" in messages[-1].content
+                    and not type(self).crashed):
+                type(self).crashed = True
+                raise RuntimeError("simulated apply_fixes crash")
+            return super().invoke(messages)
+
+    CrashOnceAtFix.crashed = False
+    QueueModel.QUEUES = {"review": [FIXES, []]}
+    box = {}
+    monkeypatch.setattr(
+        model_config, "build_chat_model",
+        lambda stage, **kw: box.setdefault(stage, CrashOnceAtFix(stage)))
+    graph = build_graph(UsageLog("s"), checkpointer=MemorySaver())
+    config = {"configurable": {"thread_id": "resume-apply-fixes"}}
+
+    with pytest.raises(RuntimeError, match="simulated apply_fixes crash"):
+        graph.invoke(
+            {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+            config)
+
+    calls_at_crash = {stage: model.calls for stage, model in box.items()}
+    result = graph.invoke(None, config)
+
+    assert "bundle" in result
+    assert box["architecture"].calls == calls_at_crash["architecture"]
+    assert box["items"].calls == calls_at_crash["items"] + 1
+    assert box["tests"].calls == calls_at_crash["tests"] + 1
+    # Exactly one SRS call is added: the retried fix fill, not initial authoring.
+    assert box["srs"].calls == calls_at_crash["srs"] + 1
+    assert box["review"].calls == calls_at_crash["review"] + 1

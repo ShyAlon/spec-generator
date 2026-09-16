@@ -1296,6 +1296,20 @@ def _overview_validator():
     return _v
 
 
+def _previous_srs_fill(requirement: dict) -> dict:
+    """Convert a contract-shaped requirement to the prose-only fill grammar."""
+    acceptance = [
+        criterion.get("statement") if isinstance(criterion, dict) else criterion
+        for criterion in requirement.get("acceptance") or []
+    ]
+    return {
+        "title": requirement.get("title"),
+        "statement": requirement.get("statement"),
+        "priority": requirement.get("priority"),
+        "acceptance": acceptance,
+    }
+
+
 def _slot_fill_validator(rid: str):
     def _v(d):
         f = d if isinstance(d, dict) else {}
@@ -1310,6 +1324,10 @@ def _slot_fill_validator(rid: str):
             raise ModelStructureError(f"{rid}: priority must be must|should|could, got {f.get('priority')!r}")
         if not isinstance(f.get("acceptance"), list) or not f["acceptance"]:
             raise ModelStructureError(f"{rid}: acceptance must be a non-empty list of statements")
+        if any(not isinstance(x, str) or not x.strip() for x in f["acceptance"]):
+            raise ModelStructureError(
+                f"{rid}: acceptance items must be non-empty strings, not criterion objects; "
+                "criterion ids are assigned by the pipeline")
         if not str(f.get("title") or "").strip() or not str(f.get("statement") or "").strip():
             raise ModelStructureError(f"{rid}: title and statement must be non-empty")
         return f  # normalized (unwrapped) fill
@@ -1481,6 +1499,22 @@ def _compact_test_context(state: GenState, slot: dict) -> dict:
     return {"linked_source": linked, "architecture": minimal_arch, "id_glossary": glossary}
 
 
+def _stage_validation_error(stage: str, exc: ValidationError):
+    """Translate an escaped artifact-contract failure at the stage boundary."""
+    from .errors import UserFacingError
+    shape = "; ".join(
+        f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']} "
+        f"(got {type(err.get('input')).__name__})"
+        for err in exc.errors()[:8])
+    return UserFacingError(
+        f"stage '{stage}' produced an artifact that fails its contract.",
+        f"artifact '{stage}' has an offending field shape: {shape}",
+        "rerun the same command after updating spec-generator; the checkpoint "
+        "preserves all completed upstream stages and changing models cannot fix "
+        "a pipeline-owned shape conversion.",
+    )
+
+
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
                 review: bool = False, persist=None, partials=None,
                 only_stage: str | None = None, stop_after: str | None = None,
@@ -1505,7 +1539,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             def inner(state: GenState) -> dict:
                 d = detail(state) if callable(detail) else detail
                 with track(progress, stage, label, d):
-                    return fn(state)
+                    try:
+                        return fn(state)
+                    except ValidationError as exc:
+                        raise _stage_validation_error(stage, exc) from exc
             return inner
         return deco
 
@@ -1551,7 +1588,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     if only is not None else _call_json(
                         "srs", _srs_overview_payload(state, feedback), log, progress,
                         validate=_overview_validator(), schema=srs_overview_schema(), stream_items=False))
-        done = {r["requirement_id"]: {k: r.get(k) for k in ("title", "statement", "priority", "acceptance")}
+        # Previous SRS stores contract-shaped acceptance criteria
+        # ({criterion_id, statement}); the fill grammar and merge function own
+        # only prose ([statement]). Normalize at this boundary before an
+        # apply_fixes pass reuses unaffected or checkpointed fills.
+        done = {r["requirement_id"]: _previous_srs_fill(r)
                 for sec in ("functional", "non_functional") for r in previous.get(sec) or []}
         if partials:
             done.update(partials.load("srs_fills") or {})
