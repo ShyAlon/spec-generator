@@ -98,11 +98,11 @@ def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | Non
     t0 = _t.time()
     if item_label and progress is not None:
         progress.emit(ProgressEvent(stage, "", "item_started", t0, None, item_label))
-    if stage != "expert_opinion":
-        payload += "\n\nFINAL RESPONSE CONTRACT: Return only the JSON value requested above; no prose or markdown fences."
     messages = [SystemMessage(content=METHODOLOGY), HumanMessage(content=payload)]
     if feedback:
         messages.append(HumanMessage(content=feedback))
+    if stage != "expert_opinion":
+        messages.append(HumanMessage(content="FINAL RESPONSE CONTRACT: Return only the JSON value requested above; no prose or markdown fences."))
     chunks: list[str] = []
     usage: dict = {}
     for chunk in model_config.stream_checked(model, messages, stage, item=item_label,
@@ -211,7 +211,7 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
             try:
                 checked = validate(data)
                 return data if checked is None else checked
-            except (ValidationError, ModelStructureError) as e:
+            except (ValidationError, ModelStructureError, ValueError, KeyError, TypeError) as e:
                 contract_err = e
         from .errors import UserFacingError
 
