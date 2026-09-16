@@ -217,7 +217,7 @@ class _ToolScript:
         if isinstance(r, Exception):
             raise r
         from langchain_core.messages import AIMessage
-        return AIMessage(content="", tool_calls=r)
+        return AIMessage(content="Tool proposal" if r else "No more proposals", tool_calls=r)
 
 
 def _run_graph_with_tools(monkeypatch, scripted):
@@ -228,9 +228,13 @@ def _run_graph_with_tools(monkeypatch, scripted):
 
     monkeypatch.setenv("SPEC_GENERATOR_TOOLS", "1")
 
+    tool_models = {}
     def build(stage, structured=True, schema=None):
         if not structured:
-            return _ToolScript(scripted.get(stage, [[]]))
+            return tool_models.setdefault(stage, _ToolScript(scripted.get(stage, [[]])))
+        if stage == "architecture":
+            from test_per_item_resume import _routing
+            return _routing([])(stage, schema or {})
         return FakeModel(stage)
 
     monkeypatch.setattr(model_config, "build_chat_model", build)
