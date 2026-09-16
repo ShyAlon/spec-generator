@@ -716,6 +716,10 @@ def main() -> None:
         print(f"Downstream: {audit['downstream']} ({audit['destination']})", file=sys.stderr)
         return
     outdir.mkdir(parents=True, exist_ok=True)
+    from vmodel_contracts.runtime import install_plain_log
+    run_log = outdir / "run.log"
+    sys.stderr = install_plain_log(run_log, sys.stderr)
+    print(f"Run log: {run_log.resolve()} (plain text)", file=sys.stderr)
     (outdir / "specs").mkdir(exist_ok=True)
     _atomic_write(outdir / "system-baseline.json", json.dumps(baseline, indent=2))
 
