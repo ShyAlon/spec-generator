@@ -111,9 +111,10 @@ def test_deepseek_avoids_broken_json_mode(monkeypatch):
 def test_deepseek_prompt_structured_warning_is_honest(monkeypatch, capsys):
     monkeypatch.setenv("SPEC_GENERATOR_MODEL_SRS", "deepseek:deepseek-flash")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
+    monkeypatch.setattr(model_config, "_OUTPUT_MODE_ANNOUNCED", set())
     model_config.build_chat_model("srs", schema={"type": "object"})
     warning = capsys.readouterr().err
-    assert "WARNING output mode [srs]" in warning
+    assert "WARNING output mode:" in warning
     assert "prompt-structured mode (thinking disabled)" in warning
     assert "field shape remains validation+retry guarded" in warning
 
@@ -330,3 +331,13 @@ def test_structured_stage_contract_reminder_is_final(monkeypatch):
     from spec_generator.telemetry import UsageLog
     _invoke("srs","Return JSON",UsageLog("x"))
     assert seen[0][-1].content.endswith("FINAL RESPONSE CONTRACT: Return only the JSON value requested above; no prose or markdown fences.")
+
+
+def test_founder_technology_grounding_tolerates_status_entries_without_value():
+    from spec_generator.graph import _tech_in_text
+    entries={"framework":{"status":"research_required","research_brief":"check current options"},
+             "language":{"technology":"Python"}}
+    founder=["Python","Django"]
+    won={t for t in founder if any(_tech_in_text(t,str(e.get("value") or e.get("technology") or ""))
+                                   for e in entries.values() if isinstance(e,dict))}
+    assert won == {"Python"}

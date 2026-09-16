@@ -35,3 +35,17 @@ def test_deepseek_debug_http_wires_payload_capture(monkeypatch, tmp_path, capsys
     shown = capsys.readouterr().err
     assert str(tmp_path / "debug-http.jsonl") in shown
     assert "request messages included" in shown
+
+
+def test_deepseek_warnings_are_once_per_run(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("SPEC_GENERATOR_MODEL_SRS", "deepseek:deepseek-flash")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
+    monkeypatch.setenv("VMODEL_DEBUG_HTTP", "1")
+    monkeypatch.setenv("VMODEL_LLM_LOG", str(tmp_path / "llm-calls.jsonl"))
+    monkeypatch.setattr(model_config, "_OUTPUT_MODE_ANNOUNCED", set())
+    monkeypatch.setattr(model_config, "_DEBUG_HTTP_ANNOUNCED", set())
+    model_config.build_chat_model("srs", structured=True)
+    model_config.build_chat_model("srs", structured=True)
+    shown=capsys.readouterr().err
+    assert shown.count("WARNING output mode:") == 1
+    assert shown.count("WARNING full LLM HTTP debug enabled:") == 1

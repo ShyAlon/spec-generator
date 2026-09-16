@@ -187,6 +187,8 @@ def _log_llm(event: dict) -> None:
 
 
 _CONSOLE_LOCK = threading.Lock()
+_OUTPUT_MODE_ANNOUNCED: set[tuple[str, str]] = set()
+_DEBUG_HTTP_ANNOUNCED: set[str] = set()
 
 
 def _console_level(msg: str) -> str | None:
@@ -697,7 +699,10 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
             # prompts while the same request without response_format succeeded.
             # Prompt examples plus validation + bounded retry own field shape.
             extra["extra_body"] = {"thinking": {"type": "disabled"}}
-            _console_line(f"  WARNING output mode [{stage}]: DeepSeek prompt-structured mode (thinking disabled); field shape remains validation+retry guarded")
+            announcement = ("deepseek", "prompt-structured")
+            if announcement not in _OUTPUT_MODE_ANNOUNCED:
+                _OUTPUT_MODE_ANNOUNCED.add(announcement)
+                _console_line("  WARNING output mode: DeepSeek prompt-structured mode (thinking disabled); field shape remains validation+retry guarded")
         if cfg.provider == "ollama":
             body = {"num_ctx": _ollama_num_ctx(),  # honored once ollama PR #16825 lands
                     "keep_alive": _ollama_keep_alive()}
@@ -709,7 +714,10 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
             client = debug_http_client(llm_log=_llm_log_sink(), mask=_mask_secrets)
             if client is not None:
                 extra["http_client"] = client
-                _console_line(f"  WARNING full LLM HTTP debug enabled: {_debug_http_path()} (request messages included; no authorization headers)")
+                debug_path = _debug_http_path()
+                if debug_path not in _DEBUG_HTTP_ANNOUNCED:
+                    _DEBUG_HTTP_ANNOUNCED.add(debug_path)
+                    _console_line(f"  WARNING full LLM HTTP debug enabled: {debug_path} (request messages included; no authorization headers)")
         return ChatOpenAI(model=cfg.model, temperature=cfg.temperature,
             timeout=_guard_limits()[0], seed=cfg.seed,
                           max_tokens=_max_tokens_limit(cfg.max_tokens),

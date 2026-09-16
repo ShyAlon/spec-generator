@@ -1548,6 +1548,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         return fn(state)
                     except ValidationError as exc:
                         raise _stage_validation_error(stage, exc) from exc
+                    except (ModelStructureError, KeyError, TypeError) as exc:
+                        from .errors import UserFacingError
+                        raise UserFacingError(
+                            f"stage '{stage}' could not assemble the model output.",
+                            f"pipeline boundary rejected an unexpected field shape: {type(exc).__name__}: {str(exc)[:500]}",
+                            f"{model_config._rerun_guidance(stage)}; the failed stage will retry from its checkpoint. "
+                            "If it repeats, report this Error/Likely cause/Next block; no raw traceback is needed.",
+                        ) from exc
             return inner
         return deco
 
@@ -1971,7 +1979,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             + ". Your plan MUST leave room for the decision where each of these is adopted "
             + "or rejected - one slug per affected area.")
         won = {t for t in founder_techs
-               if any(_tech_in_text(t, e["value"]) for e in entries.values())}
+               if any(_tech_in_text(t, str(e.get("value") or e.get("technology") or ""))
+                      for e in entries.values() if isinstance(e, dict))}
         lost = [t for t in founder_techs if t not in won]
         lost_block = ("" if not lost else
             "\n\nFOUNDER-NAMED TECHNOLOGIES NOT ADOPTED IN THE STACK: "
