@@ -57,7 +57,7 @@ def test_ollama_routes_to_native_chatollama_with_exact_schema(monkeypatch, capsy
     from langchain_ollama import ChatOllama
     assert isinstance(m, ChatOllama)
     assert m.format == exact
-    assert "output mode [srs]: constrained" in capsys.readouterr().err
+    assert "output mode" not in capsys.readouterr().err
     assert m.num_predict == 8192  # tests stage carries 12288
     assert model_config.build_chat_model("tests").num_predict == 12288
 
@@ -295,3 +295,12 @@ def test_real_model_factory_builds_plain_text_expert_without_schema_lookup(monke
     model = model_config.build_chat_model("expert_opinion", structured=False)
     from langchain_openai import ChatOpenAI
     assert isinstance(model, ChatOpenAI)
+
+
+def test_expected_constrained_mode_is_silent_but_fallback_warns(monkeypatch, capsys):
+    model_config._report_output_mode("architecture", True, "supported")
+    assert capsys.readouterr().err == ""
+    model_config._report_output_mode("architecture", False, "unsupported")
+    output = capsys.readouterr().err
+    assert "WARNING" in output and "fallback (unconstrained)" in output
+    assert "unsupported" in output

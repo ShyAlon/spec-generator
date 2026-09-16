@@ -22,7 +22,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from . import model_config as _mc
-from vmodel_contracts.runtime import timestamp_console_line
+from vmodel_contracts.runtime import format_console_line
 
 
 @dataclass(frozen=True)
@@ -88,7 +88,7 @@ def stderr_printer():
     def _print_inner(ev: ProgressEvent) -> None:
         detail = f" ({ev.detail})" if ev.detail else ""
         if ev.status == "started":
-            print(timestamp_console_line(f"  -> {ev.label}{detail}...", ev.ts), file=sys.stderr)
+            print(format_console_line(f"  -> {ev.label}{detail}...", ev.ts, stream=sys.stderr), file=sys.stderr)
         elif ev.status == "item_started":
             line = f"     - [{_hhmmss(ev.ts)}] {ev.detail}"
             if sys.stderr.isatty():
@@ -107,8 +107,8 @@ def stderr_printer():
                 print(line, file=sys.stderr)
             open_item["detail"] = None
         elif ev.status == "completed":
-            print(timestamp_console_line(f"  ok {ev.label}{detail} [{ev.elapsed_s:.1f}s]", ev.ts), file=sys.stderr)
+            print(format_console_line(f"  ok {ev.label}{detail} [{ev.elapsed_s:.1f}s]", ev.ts, "success", sys.stderr), file=sys.stderr)
         else:
-            print(timestamp_console_line(f"  !! {ev.label}{detail} FAILED after {ev.elapsed_s:.1f}s", ev.ts), file=sys.stderr)
+            print(format_console_line(f"  !! {ev.label}{detail} FAILED after {ev.elapsed_s:.1f}s", ev.ts, "error", sys.stderr), file=sys.stderr)
     return _print
 
