@@ -2668,12 +2668,17 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                            if o.get("gate") == stage_key and o.get("action") == "regenerate"]
                     if len(prior_regenerations) >= 2:
                         from .errors import UserFacingError
+                        objections = " | ".join(
+                            f"round {i}: rationale={o.get('rationale') or '(none)'}; "
+                            f"feedback={o.get('feedback') or '(none)'}"
+                            for i, o in enumerate(prior_regenerations, 1)
+                        )
                         raise UserFacingError(
                             f"expert review parked the {stage_key} gate for human review after two regeneration rounds.",
                             "the independent reviewer requested changes twice; another automatic full-stage rewrite "
-                            "would be an unbounded token loop, not stronger evidence.",
+                            "would be an unbounded token loop, not stronger evidence. Reviewer objections: " + objections,
                             "rerun the same command without --expert-opinion to inspect and decide this gate manually; "
-                            "the latest artifact and checkpoint are preserved.")
+                            "the latest artifact and checkpoint are preserved, along with the reviewer objections above.")
                     payload=("Act as an independent expert reviewer for a TEST RUN. Review the exact artifact "
                              "a human would see. First line: APPROVE or REGENERATE. Then write RATIONALE: free prose. "
                              "For REGENERATE also write FEEDBACK: a concrete correction. Never claim founder approval. "
@@ -2714,6 +2719,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     record={"gate":stage_key,"mode":"simulated_expert_opinion","human_review_required":True,
                             "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"]}
                     model_config._console_line(f"   SIMULATED EXPERT OPINION at {stage_key}: {verdict['action']} - human review still required")
+                    model_config._console_line(f"     rationale: {verdict['rationale']}")
+                    if verdict["action"] == "regenerate":
+                        model_config._console_line(f"     regeneration feedback: {verdict['feedback']}")
                     out={"expert_opinions":state.get("expert_opinions",[])+[record]}
                     if verdict["action"]=="regenerate":
                         if stage_key == "architecture" and partials and hasattr(partials, "regenerate"):

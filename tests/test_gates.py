@@ -349,3 +349,39 @@ def test_expert_regeneration_is_capped_before_third_full_rewrite(monkeypatch):
     source=inspect.getsource(build_graph)
     assert "len(prior_regenerations) >= 2" in source
     assert "without --expert-opinion" in source
+
+
+def test_expert_regenerate_prints_rationale_and_feedback(monkeypatch, capsys):
+    from langchain_core.messages import AIMessage
+    from spec_generator import model_config
+    from spec_generator.graph import build_graph
+    from spec_generator.telemetry import UsageLog
+    from test_progress import FakeModel, INTENT
+    from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
+    class Reviewer(FakeModel):
+        def stream(self, messages):
+            if self.stage == "expert_opinion":
+                yield AIMessage(content="REGENERATE\nRATIONALE: R-2 is not measurable.\nFEEDBACK: Give R-2 a numeric threshold.")
+                return
+            yield from super().stream(messages)
+    def factory(stage, **kw):
+        if stage == "architecture": return SchemaRoutingArchitectureModel(stage, kw.get("schema"))
+        return Reviewer(stage)
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    with pytest.raises(Exception):
+        # Two identical reviewer rounds reach the intentional human-review park.
+        build_graph(UsageLog("s"), review=True, expert_opinion=True).invoke(
+            {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+            {"configurable": {"thread_id": "visible-objections"}})
+    err = capsys.readouterr().err
+    assert "rationale: R-2 is not measurable." in err
+    assert "regeneration feedback: Give R-2 a numeric threshold." in err
+
+
+def test_expert_park_error_carries_both_prior_objections():
+    import inspect
+    from spec_generator.graph import build_graph
+    source = inspect.getsource(build_graph)
+    assert "Reviewer objections:" in source
+    assert "rationale={o.get('rationale')" in source
+    assert "feedback={o.get('feedback')" in source
