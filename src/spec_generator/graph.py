@@ -262,6 +262,9 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
                                         (("WARNING contract revision requested: " + _contract_errors(contract_err))
                                          if contract_err is not None else "WARNING JSON format revision requested")
                                         + " - retrying once with feedback"))
+        model_config._console_line(
+            f"     - boundary=contract-repair stage={stage} item={item_label or '(none)'} attempt={attempt} "
+            f"decision=retry reason={rejection} rejected_output={rejected_path}")
         if contract_err is not None:
             fb = ("Your previous reply failed the output contract: " + _contract_errors(contract_err) + ". "
                   "Return ONLY the complete corrected JSON payload - every required field present at every "
@@ -815,7 +818,16 @@ def _duplicate_adr_pairs(arch: ArchitectureOverview) -> list[tuple[str, str, flo
             lo = {" ".join(sorted(words(o.option))) for o in left.options_considered}
             ro = {" ".join(sorted(words(o.option))) for o in right.options_considered}
             subject, options = score(ls, rs), score(lo, ro) if lo and ro else 0.0
-            if bool(left_tech and left_tech == right_tech) or (len(lo & ro) >= 2 and subject >= .30 and options >= .65):
+            duplicate = bool(left_tech and left_tech == right_tech) or (len(lo & ro) >= 2 and subject >= .30 and options >= .65)
+            near = len(lo & ro) >= 2 and subject >= .24 and options >= .52
+            if duplicate or near:
+                model_config._console_line(
+                    f"     - boundary=adr-substance compared={left.decision_id},{right.decision_id} "
+                    f"subject_overlap={subject:.2f} subject_threshold=0.30 alternatives_overlap={options:.2f} "
+                    f"alternatives_threshold=0.65 shared_alternatives={len(lo & ro)} minimum=2 "
+                    f"same_selection={bool(left_tech and left_tech == right_tech)} "
+                    f"decision={'duplicate' if duplicate else 'pass-near-boundary'}")
+            if duplicate:
                 found.append((left.decision_id, right.decision_id, subject, options))
     return found
 
@@ -1112,7 +1124,8 @@ def _validate_adr_plan(d, taken_slugs: list[str]) -> list[dict]:
         # names as optional proposals. They add no decision and are safely
         # removed by identity; this is normalization, not a model retry.
         model_config._console_line(
-            f"     - optional ADR plan normalized: removed {len(clash)} echoed pipeline-required slug(s) {clash}")
+            f"     - boundary=adr-slug-collision compared_optional={slugs} reserved_pipeline={taken_slugs} "
+            f"intersection={clash} threshold=exact-identity decision=remove-echoed count={len(clash)}")
         slots = [slot for slot in slots if slot["slug"] not in set(clash)]
     return slots
 
@@ -2359,9 +2372,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         if left_id in adr_bodies and right_id in adr_bodies:
                             _merge_duplicate_adr_pair(part["adr_slots"], adr_bodies, left_id, right_id)
                             model_config._console_line(
-                                f"     - ADR normalization: merged {right_id} into {left_id} "
-                                f"(subject overlap {subject_score:.2f}, alternatives overlap {alternatives_score:.2f}); "
-                                "remaining ADRs renumbered")
+                                f"     - boundary=adr-duplicate-fallback compared={left_id},{right_id} "
+                                f"subject_overlap={subject_score:.2f} subject_threshold=0.30 "
+                                f"alternatives_overlap={alternatives_score:.2f} alternatives_threshold=0.65 "
+                                f"decision=merge-drop-{right_id}-retain-{left_id}-renumber reason=repair-exhausted-proven-duplicate")
                     _save()
                     merged = _assemble_architecture(
                         session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
@@ -2803,9 +2817,18 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         from vmodel_contracts.runtime import parse_expert_verdict
                         verdict = parse_expert_verdict(raw, ("approve", "regenerate"))
                         if verdict is not None and (verdict["action"] == "approve" or verdict["feedback"]):
+                            if verdict.get("extracted_from") == "json_object":
+                                model_config._console_line(
+                                    f"     - boundary=expert-verdict gate={stage_key} input=json-object "
+                                    f"allowed=APPROVE,REGENERATE action={verdict['action']} "
+                                    f"feedback_present={bool(verdict['feedback'])} decision=accept-deterministic-extraction")
                             break
                         reason = "regenerate verdict missing FEEDBACK" if verdict else "unparseable expert verdict"
-                        model_config.capture_rejected_completion("expert_opinion", f"{stage_key} gate", attempt, raw, reason)
+                        path = model_config.capture_rejected_completion("expert_opinion", f"{stage_key} gate", attempt, raw, reason)
+                        model_config._console_line(
+                            f"     - boundary=expert-verdict gate={stage_key} attempt={attempt} allowed=APPROVE,REGENERATE "
+                            f"parsed={bool(verdict)} feedback_present={bool(verdict and verdict['feedback'])} "
+                            f"decision={'format-retry' if attempt == 1 else 'reject'} reason={reason} output={path}")
                         verdict = None
                     if verdict is None or (verdict["action"]=="regenerate" and not verdict["feedback"]):
                         from .errors import UserFacingError

@@ -552,7 +552,11 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
             if adaptive and attempt == 1:
                 ratio = elapsed / stage_median if stage_median else None
                 basis = f"{ratio:.1f}x stage median" if ratio is not None else "cold-start floor"
-                _console_line(f"  WARNING self-heal: call ran past {basis} ({effective_timeout:.0f}s); killed and retrying")
+                _console_line(f"  WARNING boundary=watchdog stage={stage} item={item or '(none)'} "
+                              f"elapsed={elapsed:.1f}s median={stage_median if stage_median is not None else 'none'}s "
+                              f"multiplier={getattr(_ADAPTIVE_WATCHDOG, 'multiplier', 8):g} floor={getattr(_ADAPTIVE_WATCHDOG, 'floor_s', 240):g}s "
+                              f"absolute_cap={call_timeout}s deadline={effective_timeout:.1f}s "
+                              f"decision=kill-retry reason={basis}")
                 continue
             if adaptive:
                 raise AdaptiveWatchdogTimeout(stage, elapsed, effective_timeout, stage_median) from None

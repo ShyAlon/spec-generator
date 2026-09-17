@@ -969,5 +969,5 @@ def test_phi_echo_of_all_required_adr_slugs_is_removed_without_model_retry(capsy
     echoed = [{"slug": slug} for slug in taken]
     assert _validate_adr_plan(echoed, taken) == []
     err = capsys.readouterr().err
-    assert "optional ADR plan normalized" in err
-    assert "3 echoed pipeline-required slug(s)" in err
+    assert "boundary=adr-slug-collision" in err
+    assert "decision=remove-echoed count=3" in err

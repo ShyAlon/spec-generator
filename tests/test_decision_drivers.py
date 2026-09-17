@@ -238,3 +238,17 @@ def test_adr_substance_repair_feedback_carries_exact_guilty_pair():
               + "\n- ".join(f"{name}: {message}" for name,message in gate_failures))
     assert "ADR-substance: ADR-1 and ADR-8 duplicate" in feedback
     assert "subject overlap 0.94, alternatives overlap 1.00" in feedback
+
+
+def test_adr_overlap_boundary_logs_scores_threshold_inputs_and_decision(capsys):
+    from spec_generator.graph import _duplicate_adr_pairs
+    from vmodel_contracts import ArchitectureOverview
+    options=[{"option":"Generic insurer adapter","reason":"x"},{"option":"Direct point integration","reason":"y"}]
+    def d(i,title): return {"decision_id":f"ADR-{i}","title":title,"decision":"Use normalized adapter boundary","rationale":"r","driver":"simplicity","options_considered":options,"technology_selections":[],"executes_concept_ids":[]}
+    arch=ArchitectureOverview.model_validate({"session_id":"s","stack_entries":[],"components":[],"decisions":[d(1,"Normalized adapter"),d(8,"Normalized adapter")],"non_functionals":{}})
+    assert _duplicate_adr_pairs(arch)
+    line=capsys.readouterr().err
+    assert "boundary=adr-substance compared=ADR-1,ADR-8" in line
+    assert "subject_overlap=" in line and "subject_threshold=0.30" in line
+    assert "alternatives_overlap=" in line and "alternatives_threshold=0.65" in line
+    assert "decision=duplicate" in line

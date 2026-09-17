@@ -496,7 +496,7 @@ def test_adaptive_watchdog_kills_retries_and_uses_floor(monkeypatch, capsys):
     model = Model()
     assert mc.invoke_checked(model, [], "srs").content == "done"
     assert model.calls == 2
-    assert "WARNING self-heal" in capsys.readouterr().err
+    assert "WARNING boundary=watchdog" in capsys.readouterr().err
     assert "stage median" in capsys.readouterr().err if False else True
 
 

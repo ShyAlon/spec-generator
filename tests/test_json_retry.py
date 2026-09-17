@@ -195,3 +195,13 @@ def test_every_rejected_attempt_is_byte_exact_with_manifest(monkeypatch,tmp_path
     row=json.loads((tmp_path/"rejected-llm-outputs"/"manifest.jsonl").read_text().splitlines()[-1])
     assert row["stage"]=="architecture" and row["item"]=="ADR-8 duplicate"
     assert row["attempt"]==1 and row["reason"]=="ADR-substance pair"
+
+
+def test_contract_retry_console_names_boundary_evidence(monkeypatch,capsys,tmp_path):
+    from spec_generator import model_config
+    monkeypatch.setenv("VMODEL_LLM_LOG",str(tmp_path/"llm.jsonl"))
+    monkeypatch.setattr("spec_generator.graph._invoke",lambda *a,**k: "bad")
+    with pytest.raises(Exception): _call_json("tests","p",UsageLog("s"),item_label="T-1")
+    err=capsys.readouterr().err
+    assert "boundary=contract-repair stage=tests item=T-1 attempt=1" in err
+    assert "decision=retry reason=invalid-json" in err and "rejected_output=" in err

@@ -280,6 +280,12 @@ def _invalidate_from(graph, cfg: dict, stage: str, review_mode: bool) -> None:
             if gate not in invalidated_gates
         }
     graph.update_state(cfg, cleared, as_node=_predecessor(stage, review_mode))
+    from . import model_config
+    model_config._console_line(
+        f"  boundary=checkpoint-invalidation from_stage={stage} predecessor={_predecessor(stage, review_mode)} "
+        f"cleared_state={sorted(_CLEAR_DOWNSTREAM[stage])} invalidated_gates={sorted(invalidated_gates)} "
+        f"preserved_expert_gates={sorted({o.get('gate') for o in cleared.get('expert_opinions', current.get('expert_opinions') or [])})} "
+        "decision=rewind-current-and-downstream")
 
 
 def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool = False) -> dict:
