@@ -2680,9 +2680,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "rerun the same command without --expert-opinion to inspect and decide this gate manually; "
                             "the latest artifact and checkpoint are preserved, along with the reviewer objections above.")
                     payload=("Act as an independent expert reviewer for a TEST RUN. Review the exact artifact "
-                             "a human would see. First line: APPROVE or REGENERATE. Then write RATIONALE: free prose. "
-                             "For REGENERATE also write FEEDBACK: a concrete correction. Never claim founder approval. "
-                             "Advisories must be considered.\nARTIFACT:\n" + json.dumps(state.get(artifact_key))
+                             "a human would see. First line: APPROVE or REGENERATE. APPROVE when there is no "
+                             "blocking contradiction, missing trace, unsafe assumption, or build-stopping ambiguity. "
+                             "Non-blocking improvements and polish MUST stay as suggestions in RATIONALE under APPROVE; "
+                             "they are not grounds to regenerate. REGENERATE only for a named blocking defect, and write "
+                             "FEEDBACK naming that blocker plus a concrete correction. Then write RATIONALE: free prose. "
+                             "Never claim founder approval. Advisories must be considered, but an advisory is not itself "
+                             "blocking unless it establishes one of the blocking conditions above.\nARTIFACT:\n" + json.dumps(state.get(artifact_key))
                              + "\nADVISORIES:\n" + json.dumps(advisories))
                     from .errors import UserFacingError
                     text="";verdict=None

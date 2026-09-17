@@ -385,3 +385,14 @@ def test_expert_park_error_carries_both_prior_objections():
     assert "Reviewer objections:" in source
     assert "rationale={o.get('rationale')" in source
     assert "feedback={o.get('feedback')" in source
+
+
+def test_expert_review_bar_keeps_polish_under_approve_and_regenerates_only_blockers():
+    import inspect
+    from spec_generator.graph import build_graph
+    source = inspect.getsource(build_graph)
+    assert "APPROVE when there is no" in source
+    assert "blocking contradiction, missing trace, unsafe assumption, or build-stopping ambiguity" in source
+    assert "Non-blocking improvements and polish MUST stay as suggestions in RATIONALE under APPROVE" in source
+    assert "REGENERATE only for a named blocking defect" in source
+    assert "FEEDBACK naming that blocker plus a concrete correction" in source
