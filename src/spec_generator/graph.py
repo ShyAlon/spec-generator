@@ -2679,8 +2679,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "would be an unbounded token loop, not stronger evidence. Reviewer objections: " + objections,
                             "rerun the same command without --expert-opinion to inspect and decide this gate manually; "
                             "the latest artifact and checkpoint are preserved, along with the reviewer objections above.")
-                    payload=("Act as an independent expert reviewer for a TEST RUN. Review the exact artifact "
-                             "a human would see. First line: APPROVE or REGENERATE. APPROVE when there is no "
+                    artifact_label = {
+                        "srs": "Software Requirements Specification (SRS): requirements and acceptance criteria, not executable tests",
+                        "architecture": "system architecture: stack, components, ADRs, and non-functional positions",
+                    }[stage_key]
+                    payload=(f"Act as an independent expert reviewer. You are judging this exact artifact type: {artifact_label}. "
+                             "Judge it for its own V-model stage; do not demand artifacts owned by a later stage. "
+                             "First line: APPROVE or REGENERATE. APPROVE when there is no "
                              "blocking contradiction, missing trace, unsafe assumption, or build-stopping ambiguity. "
                              "Non-blocking improvements and polish MUST stay as suggestions in RATIONALE under APPROVE; "
                              "they are not grounds to regenerate. REGENERATE only for a named blocking defect, and write "

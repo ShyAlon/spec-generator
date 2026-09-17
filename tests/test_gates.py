@@ -294,11 +294,13 @@ def test_expert_opinion_gate_records_simulated_not_founder(monkeypatch):
     from spec_generator.telemetry import UsageLog
     from test_progress import FakeModel, INTENT, PAYLOADS
     from conftest import SYSTEM_BASELINE
+    expert_prompts = []
     class ExpertModel(FakeModel):
         def __init__(self,stage,schema):super().__init__(stage);self.schema=schema
         def stream(self,messages):
             if self.stage=='expert_opinion':
-                yield AIMessage(content='Here is my review.\nAPPROVE\nRATIONALE: artifact is coherent for test execution');return
+                expert_prompts.append('\n'.join(str(m.content) for m in messages))
+                yield AIMessage(content='Here is my review.\nAPPROVE\nRATIONALE: artifact is coherent for its stage');return
             yield from super().stream(messages)
     def build(stage, **k):
         if stage == 'architecture':
@@ -312,6 +314,11 @@ def test_expert_opinion_gate_records_simulated_not_founder(monkeypatch):
     assert [o['gate'] for o in opinions]==['srs','architecture']
     assert all(o['mode']=='simulated_expert_opinion' and o['human_review_required'] for o in opinions)
     assert all('founder' not in o['mode'] for o in opinions)
+    assert len(expert_prompts) == 2
+    assert "Software Requirements Specification (SRS)" in expert_prompts[0]
+    assert "requirements and acceptance criteria, not executable tests" in expert_prompts[0]
+    assert "system architecture: stack, components, ADRs, and non-functional positions" in expert_prompts[1]
+    assert all("reviewer for a TEST RUN" not in prompt for prompt in expert_prompts)
 
 def test_expert_gate_wraps_unexpected_factory_failure(monkeypatch):
     from spec_generator.errors import UserFacingError
