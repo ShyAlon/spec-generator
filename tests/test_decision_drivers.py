@@ -206,3 +206,35 @@ def test_repeated_subject_and_alternatives_fail_adr_gate():
     payload={"session_id":"s","stack_entries":[],"components":[],"decisions":[adr(1,"Per insurer adapter boundary","Use normalized correspondence adapters"),adr(2,"Normalized insurer correspondence boundary","Use per insurer correspondence adapters")],"non_functionals":{}}
     with pytest.raises(ModelStructureError, match="duplicate one architecture decision"):
         _check_adr_substance(__import__('vmodel_contracts').ArchitectureOverview.model_validate(payload))
+
+
+def test_duplicate_adr_fallback_merges_losslessly_and_renumbers():
+    from spec_generator.graph import _merge_duplicate_adr_pair
+    options=[{"option":"A","reason":"one"},{"option":"B","reason":"two"}]
+    slots=[
+      {"decision_id":"ADR-1","slug":"first","migration":False,"authorizes":["stack:x"],"required_concept_ids":[]},
+      {"decision_id":"ADR-2","slug":"distinct","migration":False,"authorizes":["stack:y"],"required_concept_ids":[]},
+      {"decision_id":"ADR-3","slug":"duplicate","migration":False,"authorizes":["component:z"],"required_concept_ids":["concept:pwa"]},]
+    bodies={
+      "ADR-1":{"title":"Choose boundary","decision":"Use normalized boundary","rationale":"short","options_considered":options,"baseline_refs":["repo:a"],"executes_concept_ids":[]},
+      "ADR-2":{"title":"Other","decision":"Do other","rationale":"distinct","options_considered":[],"baseline_refs":[],"executes_concept_ids":[]},
+      "ADR-3":{"title":"Choose normalized boundary","decision":"Use normalized boundary for all adapters","rationale":"longer complete rationale","options_considered":options,"baseline_refs":["repo:b"],"executes_concept_ids":["concept:pwa"]},}
+    _merge_duplicate_adr_pair(slots,bodies,"ADR-1","ADR-3")
+    assert [s["decision_id"] for s in slots]==["ADR-1","ADR-2"]
+    assert slots[0]["authorizes"]==["stack:x","component:z"]
+    assert slots[0]["required_concept_ids"]==["concept:pwa"]
+    assert set(bodies)=={"ADR-1","ADR-2"}
+    assert bodies["ADR-1"]["baseline_refs"]==["repo:a","repo:b"]
+    assert bodies["ADR-1"]["decision"]=="Use normalized boundary for all adapters"
+    assert bodies["ADR-1"]["executes_concept_ids"]==["concept:pwa"]
+
+
+def test_adr_substance_repair_feedback_carries_exact_guilty_pair():
+    """The gate detail is embedded verbatim into the next ADR plan/body prompt."""
+    detail="ADR-1 and ADR-8 duplicate one architecture decision (subject overlap 0.94, alternatives overlap 1.00)"
+    gate_failures=[("ADR-substance",detail)]
+    feedback=("\n\nTHE PREVIOUS ARCHITECTURE FAILED THESE ACTIVE DETERMINISTIC GATES. "
+              "Fix ALL of them in this ADR set; do not trade one for another:\n- "
+              + "\n- ".join(f"{name}: {message}" for name,message in gate_failures))
+    assert "ADR-substance: ADR-1 and ADR-8 duplicate" in feedback
+    assert "subject overlap 0.94, alternatives overlap 1.00" in feedback

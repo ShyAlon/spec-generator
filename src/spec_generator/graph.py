@@ -231,9 +231,13 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
         from .errors import UserFacingError
 
         snippet = raw.strip()[:200].replace("\n", " ")
+        rejection = (_contract_errors(contract_err) if contract_err is not None
+                     else f"invalid-json: {type(parse_err).__name__}: {str(parse_err)[:160]}")
+        rejected_path = model_config.capture_rejected_completion(
+            stage, item_label, attempt, raw, rejection)
         if attempt == 2:
             if contract_err is not None:
-                raw_path = model_config.capture_failed_completion(stage, item_label, raw)
+                raw_path = rejected_path
                 details = "; ".join(
                     f"attempt {d.get('attempt')}: {d.get('duration_s', '?')}s, "
                     f"{d.get('tokens', '?')} tokens, {d.get('provider')}/{d.get('model')}"
@@ -791,6 +795,59 @@ def _check_candidate_grounding(arch: ArchitectureOverview, intent_model: dict,
                 "why it won over the curated candidates; provide a substantive off_list_justification")
 
 
+def _duplicate_adr_pairs(arch: ArchitectureOverview) -> list[tuple[str, str, float, float]]:
+    """Return only pairs meeting the deterministic duplicate threshold."""
+    def words(text: str) -> set[str]:
+        stop = {"a", "an", "and", "as", "at", "behind", "by", "for", "in", "of", "on",
+                "the", "to", "use", "with", "adr", "decision"}
+        return {w for w in _re.findall(r"[a-z0-9]+", text.casefold())
+                if len(w) > 2 and w not in stop}
+    def score(a: set[str], b: set[str]) -> float:
+        return len(a & b) / max(1, len(a | b))
+    found = []
+    for i, left in enumerate(arch.decisions):
+        for right in arch.decisions[i + 1:]:
+            left_tech = {x.technology_id for x in left.technology_selections}
+            right_tech = {x.technology_id for x in right.technology_selections}
+            if left_tech and right_tech and left_tech.isdisjoint(right_tech):
+                continue
+            ls, rs = words(left.title + " " + left.decision), words(right.title + " " + right.decision)
+            lo = {" ".join(sorted(words(o.option))) for o in left.options_considered}
+            ro = {" ".join(sorted(words(o.option))) for o in right.options_considered}
+            subject, options = score(ls, rs), score(lo, ro) if lo and ro else 0.0
+            if bool(left_tech and left_tech == right_tech) or (len(lo & ro) >= 2 and subject >= .30 and options >= .65):
+                found.append((left.decision_id, right.decision_id, subject, options))
+    return found
+
+
+def _merge_duplicate_adr_pair(slots: list[dict], bodies: dict, left_id: str, right_id: str) -> None:
+    """Losslessly fold proven duplicate metadata/ownership into the first ADR."""
+    left_slot = next(slot for slot in slots if slot["decision_id"] == left_id)
+    right_slot = next(slot for slot in slots if slot["decision_id"] == right_id)
+    left, right = bodies[left_id], bodies[right_id]
+    for key in ("authorizes", "required_concept_ids"):
+        left_slot[key] = list(dict.fromkeys((left_slot.get(key) or []) + (right_slot.get(key) or [])))
+    left_slot["migration"] = bool(left_slot.get("migration") or right_slot.get("migration"))
+    for key in ("options_considered", "baseline_refs", "evidence", "affected_repositories",
+                "executes_concept_ids", "rejected"):
+        values = (left.get(key) or []) + (right.get(key) or [])
+        # Dict/list values need structural identity, not hashability.
+        seen=set(); merged=[]
+        for value in values:
+            identity=json.dumps(value,sort_keys=True,default=str)
+            if identity not in seen: seen.add(identity); merged.append(value)
+        left[key]=merged
+    for key in ("title", "decision", "rationale"):
+        if len(str(right.get(key) or "")) > len(str(left.get(key) or "")):
+            left[key]=right[key]
+    slots.remove(right_slot); bodies.pop(right_id, None)
+    old_to_new={slot["decision_id"]:f"ADR-{i}" for i,slot in enumerate(slots,1)}
+    rebuilt={}
+    for slot in slots:
+        old=slot["decision_id"]; slot["decision_id"]=old_to_new[old]; rebuilt[slot["decision_id"]]=bodies[old]
+    bodies.clear(); bodies.update(rebuilt)
+
+
 def _check_adr_substance(arch: ArchitectureOverview) -> None:
     """Selections and distinct ADR records must agree with their prose.
 
@@ -811,36 +868,11 @@ def _check_adr_substance(arch: ArchitectureOverview) -> None:
                     "is absent from the ADR title, decision and rationale - the owning ADR must "
                     "substantively decide the selected technology, not only carry its slot link")
 
-    def words(text: str) -> set[str]:
-        stop = {"a", "an", "and", "as", "at", "behind", "by", "for", "in", "of", "on",
-                "the", "to", "use", "with", "adr", "decision"}
-        return {w for w in _re.findall(r"[a-z0-9]+", text.casefold())
-                if len(w) > 2 and w not in stop}
-
-    def score(a: set[str], b: set[str]) -> float:
-        return len(a & b) / max(1, len(a | b))
-
-    for i, left in enumerate(arch.decisions):
-        for right in arch.decisions[i + 1:]:
-            left_tech = {s.technology_id for s in left.technology_selections}
-            right_tech = {s.technology_id for s in right.technology_selections}
-            # Distinct concrete selections can share generic prose in old fixtures,
-            # but cannot be duplicate technology decisions.
-            if left_tech and right_tech and left_tech.isdisjoint(right_tech):
-                continue
-            left_subject = words(left.title + " " + left.decision)
-            right_subject = words(right.title + " " + right.decision)
-            left_options = {" ".join(sorted(words(o.option))) for o in left.options_considered}
-            right_options = {" ".join(sorted(words(o.option))) for o in right.options_considered}
-            option_overlap = score(left_options, right_options) if left_options and right_options else 0.0
-            subject_overlap = score(left_subject, right_subject)
-            same_selection = bool(left_tech and right_tech and left_tech == right_tech)
-            shared_options = left_options & right_options
-            if same_selection or (len(shared_options) >= 2 and subject_overlap >= 0.30 and option_overlap >= 0.65):
-                raise ModelStructureError(
-                    f"{left.decision_id} and {right.decision_id} duplicate one architecture decision "
-                    f"(subject overlap {subject_overlap:.2f}, alternatives overlap {option_overlap:.2f}) - "
-                    "merge them or make each record own a genuinely distinct decision")
+    for left_id, right_id, subject_overlap, option_overlap in _duplicate_adr_pairs(arch):
+        raise ModelStructureError(
+            f"{left_id} and {right_id} duplicate one architecture decision "
+            f"(subject overlap {subject_overlap:.2f}, alternatives overlap {option_overlap:.2f}) - "
+            "merge them or make each record own a genuinely distinct decision")
 
 
 def baseline_reference_index(baseline: SystemBaseline) -> set[str]:
@@ -2317,6 +2349,27 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                           "do not trade one for another:\n- "
                                           + "\n- ".join(f"{name}: {detail}" for name,detail in gate_failures))
                     continue
+                for name, detail in gate_failures:
+                    model_config.capture_rejected_completion(
+                        "architecture-gate", name, _adr_attempt,
+                        json.dumps({"adr_slots": part.get("adr_slots"), "adr_bodies": adr_bodies}, indent=2), detail)
+                duplicate_pairs = _duplicate_adr_pairs(arch)
+                if gate_failures and all(name == "ADR-substance" for name, _ in gate_failures) and duplicate_pairs:
+                    for left_id, right_id, subject_score, alternatives_score in duplicate_pairs:
+                        if left_id in adr_bodies and right_id in adr_bodies:
+                            _merge_duplicate_adr_pair(part["adr_slots"], adr_bodies, left_id, right_id)
+                            model_config._console_line(
+                                f"     - ADR normalization: merged {right_id} into {left_id} "
+                                f"(subject overlap {subject_score:.2f}, alternatives overlap {alternatives_score:.2f}); "
+                                "remaining ADRs renumbered")
+                    _save()
+                    merged = _assemble_architecture(
+                        session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
+                        comp_slots=part["component_slots"], comp_bodies=comp_bodies,
+                        adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
+                    arch = ArchitectureOverview.model_validate(merged)
+                    _check_adr_substance(arch)
+                    break
                 from .errors import UserFacingError
                 raise UserFacingError(
                     "stage 'architecture': the repaired architecture still failed deterministic gates (" + ", ".join(name for name,_ in gate_failures) + ").",
@@ -2751,6 +2804,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         verdict = parse_expert_verdict(raw, ("approve", "regenerate"))
                         if verdict is not None and (verdict["action"] == "approve" or verdict["feedback"]):
                             break
+                        reason = "regenerate verdict missing FEEDBACK" if verdict else "unparseable expert verdict"
+                        model_config.capture_rejected_completion("expert_opinion", f"{stage_key} gate", attempt, raw, reason)
                         verdict = None
                     if verdict is None or (verdict["action"]=="regenerate" and not verdict["feedback"]):
                         from .errors import UserFacingError

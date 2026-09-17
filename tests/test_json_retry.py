@@ -181,5 +181,17 @@ def test_contract_failure_reports_feedback_model_timing_tokens_and_full_raw_path
     rendered = ei.value.render()
     assert "Retry feedback sent:" in rendered
     assert "ollama/phi4" in rendered and "1.25s" in rendered and "77 tokens" in rendered
-    assert "failed-srs-slot-x.raw.txt" in rendered
-    assert (tmp_path / "failed-srs-slot-x.raw.txt").read_text() == '{"bad": true}'
+    assert "rejected-llm-outputs/srs--slot-x--attempt-2" in rendered
+    captured = list((tmp_path / "rejected-llm-outputs").glob("srs--slot-x--attempt-2*.raw.txt"))
+    assert len(captured) == 1 and captured[0].read_text() == '{"bad": true}'
+
+
+def test_every_rejected_attempt_is_byte_exact_with_manifest(monkeypatch,tmp_path):
+    from pathlib import Path
+    from spec_generator import model_config
+    monkeypatch.setenv("VMODEL_LLM_LOG",str(tmp_path/"llm-calls.jsonl"))
+    path=model_config.capture_rejected_completion("architecture","ADR-8 duplicate",1,"BYTE\nEXACT","ADR-substance pair")
+    assert Path(path).read_bytes()==b"BYTE\nEXACT"
+    row=json.loads((tmp_path/"rejected-llm-outputs"/"manifest.jsonl").read_text().splitlines()[-1])
+    assert row["stage"]=="architecture" and row["item"]=="ADR-8 duplicate"
+    assert row["attempt"]==1 and row["reason"]=="ADR-substance pair"

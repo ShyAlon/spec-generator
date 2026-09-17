@@ -181,17 +181,35 @@ def call_diagnostic(stage: str, item: str | None, attempt: int) -> dict:
     }))
 
 
-def capture_failed_completion(stage: str, item: str | None, raw: str) -> str:
-    """Persist byte-exact failed output beside llm-calls.jsonl for diagnosis."""
+def capture_rejected_completion(stage: str, item: str | None, attempt: int,
+                                raw: str, reason: str) -> str:
+    """Persist every rejected output byte-for-byte plus a readable manifest."""
     from pathlib import Path
     sink = _llm_log_sink()
     root = Path(sink).expanduser().resolve().parent if sink and sink != "stderr" else Path.cwd()
+    rejected = root / "rejected-llm-outputs"
+    rejected.mkdir(parents=True, exist_ok=True)
     safe_item = _re.sub(r"[^A-Za-z0-9_.-]+", "-", item or "call").strip("-")
-    path = root / f"failed-{stage}-{safe_item}.raw.txt"
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(raw)
-    os.replace(tmp, path)
+    safe_reason = _re.sub(r"[^A-Za-z0-9_.-]+", "-", reason).strip("-")[:60] or "rejected"
+    stem = f"{stage}--{safe_item}--attempt-{attempt}--{safe_reason}"
+    path = rejected / f"{stem}.raw.txt"
+    suffix = 2
+    while path.exists():
+        path = rejected / f"{stem}--{suffix}.raw.txt"; suffix += 1
+    tmp = path.with_suffix(path.suffix + ".tmp"); tmp.write_text(raw); os.replace(tmp, path)
+    diag = call_diagnostic(stage, item, attempt)
+    manifest = rejected / "manifest.jsonl"
+    with manifest.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"path": str(path), "stage": stage, "item": item,
+                             "attempt": attempt, "reason": reason,
+                             "raw_bytes": len(raw.encode()), **diag}, default=str) + "\n")
+    _console_line(f"     - rejected model output saved: {path}")
     return str(path)
+
+
+def capture_failed_completion(stage: str, item: str | None, raw: str) -> str:
+    """Compatibility wrapper for callers that only know terminal failure."""
+    return capture_rejected_completion(stage, item, 2, raw, "terminal-contract-failure")
 
 def _log_llm(event: dict) -> None:
     """One JSON line per LLM call event. Never logs message content or keys -
