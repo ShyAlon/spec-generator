@@ -11,7 +11,7 @@ import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from spec_generator import model_config
-from spec_generator.cli import _invalidate_from, main
+from spec_generator.cli import _invalidate_from, _make_partials, _PARTIAL_DOWNSTREAM, main
 from spec_generator.errors import UserFacingError
 from spec_generator.graph import build_graph
 from spec_generator.telemetry import UsageLog
@@ -578,3 +578,74 @@ def test_from_srs_resets_expert_budget_and_architecture_preserves_srs_history(mo
     state = graph.get_state(cfg).values
     assert state["expert_opinions"] == history[:2]
     assert state["gate_feedback"] == {"srs": "keep"}
+
+
+@pytest.mark.parametrize(
+    "stage,cleared_artifacts,preserved_gates,cleared_partials",
+    [
+        ("srs", {"srs", "architecture", "items", "tests", "bundle"}, set(),
+         {"srs_fills", "architecture", "items", "tests_fills", "review"}),
+        ("architecture", {"architecture", "items", "tests", "bundle"}, {"srs"},
+         {"architecture", "items", "tests_fills", "review"}),
+        ("items", {"items", "tests", "bundle"}, {"srs", "architecture"},
+         {"items", "tests_fills", "review"}),
+        ("tests", {"tests", "bundle"}, {"srs", "architecture"},
+         {"tests_fills", "review"}),
+        ("review", {"bundle"}, {"srs", "architecture"}, {"review"}),
+    ],
+)
+def test_from_boundary_invalidation_matrix(
+    stage, cleared_artifacts, preserved_gates, cleared_partials, tmp_path
+):
+    """One matrix owns every rewind boundary's state and disk semantics.
+
+    Workflow state and resumable partials for the boundary/downstream are
+    invalidated. Earlier artifact and expert-gate history survives. Lifecycle
+    history is an append-only audit log, so invalidation never erases it.
+    """
+    class State:
+        def __init__(self):
+            self.values = {
+                "needs": {"id": "needs"}, "srs": {"id": "srs"},
+                "architecture": {"id": "architecture"}, "items": [{"id": "items"}],
+                "tests": [{"id": "tests"}], "bundle": {"id": "bundle"},
+                "expert_opinions": [
+                    {"gate": "srs", "action": "approve"},
+                    {"gate": "architecture", "action": "approve"},
+                ],
+                "gate_feedback": {"srs": "srs feedback", "architecture": "architecture feedback"},
+                "review_round": 2, "review_fixes": [{"id": "fix"}],
+                "violations": ["old"], "guard_flags": ["old"],
+            }
+
+    class RecordingGraph:
+        def __init__(self): self.state = State()
+        def get_state(self, cfg): return self.state
+        def update_state(self, cfg, values, as_node=None): self.state.values.update(values)
+
+    graph = RecordingGraph()
+    _invalidate_from(graph, {"configurable": {"thread_id": "matrix"}}, stage, review_mode=True)
+    state = graph.state.values
+    artifact_keys = {"needs", "srs", "architecture", "items", "tests", "bundle"}
+    for key in artifact_keys:
+        if key in cleared_artifacts:
+            assert state[key] is None, (stage, key, "must clear")
+        else:
+            assert state[key] is not None, (stage, key, "must preserve")
+    assert {o["gate"] for o in state["expert_opinions"]} == preserved_gates
+    assert set(state["gate_feedback"]) == preserved_gates
+    assert state["review_round"] == 0 and state["review_fixes"] == []
+
+    lifecycle = tmp_path / "artifact-lifecycle.jsonl"
+    lifecycle.write_text('{"transition":"finalize","artifact":"architecture"}\n')
+    before_lifecycle = lifecycle.read_bytes()
+    partials = _make_partials(tmp_path)
+    all_partials = {"srs_fills", "architecture", "items", "tests_fills", "review"}
+    for key in all_partials:
+        partials.save(key, {"completed": key})
+    for key in _PARTIAL_DOWNSTREAM[stage]:
+        partials.clear(key)
+    for key in all_partials:
+        exists = partials.load(key) is not None
+        assert exists is (key not in cleared_partials), (stage, key)
+    assert lifecycle.read_bytes() == before_lifecycle  # append-only audit evidence
