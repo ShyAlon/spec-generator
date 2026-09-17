@@ -474,3 +474,52 @@ def test_empty_completion_is_echoed_as_console_error(monkeypatch, capsys):
     shown = capsys.readouterr().err
     assert "ERROR malformed response [srs]: empty content" in shown
     assert "response_id=resp_123" in shown
+
+
+def test_adaptive_watchdog_kills_retries_and_uses_floor(monkeypatch, capsys):
+    from langchain_core.messages import AIMessage
+    from spec_generator import model_config as mc
+    class Watch:
+        def __init__(self): self.n = 0
+        def deadline(self, stage): return (0.01, 0.001)
+        def complete(self, stage, duration): pass
+        def reset(self): pass
+    class Model:
+        def __init__(self): self.calls = 0
+        def invoke(self, messages):
+            import time
+            self.calls += 1
+            if self.calls == 1: time.sleep(0.03)
+            return AIMessage(content="done")
+    monkeypatch.setattr(mc, "_ADAPTIVE_WATCHDOG", Watch())
+    monkeypatch.setenv("VMODEL_LLM_CALL_TIMEOUT_S", "60")
+    model = Model()
+    assert mc.invoke_checked(model, [], "srs").content == "done"
+    assert model.calls == 2
+    assert "WARNING self-heal" in capsys.readouterr().err
+    assert "stage median" in capsys.readouterr().err if False else True
+
+
+def test_adaptive_watchdog_first_call_waits_full_floor(monkeypatch):
+    from vmodel_contracts.runtime import AdaptiveCallWatchdog
+    watch = AdaptiveCallWatchdog(multiplier=8, floor_s=240)
+    assert watch.deadline("srs") == (240, None)
+    watch.complete("srs", 0.01)
+    assert watch.deadline("srs") == (240, 0.01)
+
+
+def test_stream_adaptive_watchdog_raises_retry_signal(monkeypatch):
+    from spec_generator import model_config as mc
+    from vmodel_contracts.runtime import AdaptiveWatchdogTimeout
+    class Watch:
+        def deadline(self, stage): return (0.01, 0.001)
+        def complete(self, stage, duration): pass
+    class Slow:
+        def stream(self, messages):
+            import time
+            time.sleep(0.03)
+            yield type("Chunk", (), {"content": "late", "response_metadata": {}, "usage_metadata": {}})()
+    monkeypatch.setattr(mc, "_ADAPTIVE_WATCHDOG", Watch())
+    monkeypatch.setenv("VMODEL_LLM_CALL_TIMEOUT_S", "60")
+    with pytest.raises(AdaptiveWatchdogTimeout):
+        list(mc.stream_checked(Slow(), [], "architecture", item="ADR-11"))

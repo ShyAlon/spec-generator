@@ -403,3 +403,51 @@ def test_expert_review_bar_keeps_polish_under_approve_and_regenerates_only_block
     assert "Non-blocking improvements and polish MUST stay as suggestions in RATIONALE under APPROVE" in source
     assert "REGENERATE only for a named blocking defect" in source
     assert "FEEDBACK naming that blocker plus a concrete correction" in source
+
+
+def test_expert_json_verdict_is_extracted_without_format_retry(monkeypatch):
+    from langchain_core.messages import AIMessage
+    from spec_generator import model_config
+    from spec_generator.graph import build_graph
+    from spec_generator.telemetry import UsageLog
+    from test_progress import FakeModel, INTENT
+    from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
+    calls = {"expert": 0}
+    class Reviewer(FakeModel):
+        def stream(self, messages):
+            calls["expert"] += 1
+            yield AIMessage(content='```json\n{"action":"REGENERATE","stakeholderNeeds":[{"id":"SN-1"}],"feedback":"Fix trace links"}\n```')
+    def factory(stage, **kw):
+        if stage == "architecture": return SchemaRoutingArchitectureModel(stage, kw.get("schema"))
+        return Reviewer(stage) if stage == "expert_opinion" else FakeModel(stage)
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    with pytest.raises(Exception):
+        build_graph(UsageLog("s"), review=True, expert_opinion=True).invoke(
+            {"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},
+            {"configurable":{"thread_id":"json-expert"}})
+    # One call per regeneration round: JSON format itself never consumes retry 2.
+    assert calls["expert"] == 2
+
+
+def test_expert_garbage_gets_exact_format_retry(monkeypatch):
+    from langchain_core.messages import AIMessage
+    from spec_generator import model_config
+    from spec_generator.graph import build_graph
+    from spec_generator.telemetry import UsageLog
+    from test_progress import FakeModel, INTENT
+    from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
+    prompts=[]
+    class Reviewer(FakeModel):
+        def stream(self, messages):
+            prompts.append("\n".join(str(m.content) for m in messages))
+            yield AIMessage(content="garbage")
+    def factory(stage, **kw):
+        if stage == "architecture": return SchemaRoutingArchitectureModel(stage, kw.get("schema"))
+        return Reviewer(stage) if stage == "expert_opinion" else FakeModel(stage)
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    with pytest.raises(Exception):
+        build_graph(UsageLog("s"), review=True, expert_opinion=True).invoke(
+            {"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},
+            {"configurable":{"thread_id":"garbage-expert"}})
+    assert len(prompts) == 2
+    assert "FORMAT ERROR" in prompts[1] and "FEEDBACK:" in prompts[1]

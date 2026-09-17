@@ -65,6 +65,12 @@ _STALL_TIMEOUT_S = 180  # a stream this quiet is hung, not thinking
 _MAX_CALLS = 200        # what ONE process run may spend, in LLM calls
 _CALLS_USED = 0
 
+# Eight times a same-stage running median catches a 10x runaway while leaving
+# wide room for legitimate item-size variance. Four minutes protects cold
+# starts and prevents one unusually quick early item from shrinking the limit.
+from vmodel_contracts.runtime import AdaptiveCallWatchdog, AdaptiveWatchdogTimeout
+_ADAPTIVE_WATCHDOG = AdaptiveCallWatchdog(multiplier=8.0, floor_s=240.0)
+
 
 _MAX_TOKENS_ENV = "VMODEL_LLM_MAX_TOKENS"  # per-call generation ceiling override (unset: stage default)
 
@@ -349,13 +355,43 @@ def _run_with_deadline(fn, timeout_s: int, stage: str):
     gets an informative error instead of a hang."""
     import concurrent.futures
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(fn)
-        try:
-            return future.result(timeout=timeout_s)
-        except concurrent.futures.TimeoutError:
-            future.cancel()
-            raise TimeoutError from None
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(fn)
+    try:
+        return future.result(timeout=timeout_s)
+    except concurrent.futures.TimeoutError:
+        future.cancel()
+        raise TimeoutError from None
+    finally:
+        # Never let Executor.__exit__ turn a watchdog deadline back into a
+        # blocking wait for the runaway worker. Provider socket timeouts below
+        # are the actual cancellation rail; this is the Python-side escape.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _set_model_timeout(chat_model, timeout_s: float) -> None:
+    """Apply this call's adaptive deadline to each provider's live socket.
+
+    LangChain wrappers expose different clients. Best effort is intentional:
+    the outer wall-clock deadline still returns control for test doubles and
+    future providers, while these known clients stop Ollama/paid generation.
+    """
+    model = getattr(chat_model, "runnable", chat_model)
+    try:  # ChatOpenAI / DeepSeek / OpenAI-compatible Ollama
+        model.request_timeout = timeout_s
+        root = getattr(model, "root_client", None)
+        if root is not None:
+            root.timeout = timeout_s
+            if getattr(root, "_client", None) is not None:
+                import httpx
+                root._client.timeout = httpx.Timeout(timeout_s)
+    except Exception:
+        pass
+    try:  # native ChatOllama
+        import httpx
+        model._client._client.timeout = httpx.Timeout(timeout_s)
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)
@@ -436,6 +472,8 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
     cfg = for_stage(stage)
     call_timeout = _guard_limits()[0]
     for attempt in (1, 2):
+        adaptive_deadline, stage_median = _ADAPTIVE_WATCHDOG.deadline(stage)
+        effective_timeout = min(call_timeout, adaptive_deadline)
         _guard_enter(stage)
         base = {"provider": cfg.provider, "model": cfg.model, "stage": stage,
                 "attempt": attempt, **({"item": item} if item else {}),
@@ -444,7 +482,10 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
         stop_heartbeat = _start_heartbeat(f"stage '{stage}'" + (f" [{item}]" if item else "") + " call")
         t0 = time.monotonic()
         try:
-            resp = _run_with_deadline(lambda: chat_model.invoke(messages), call_timeout, stage)
+            _set_model_timeout(chat_model, effective_timeout)
+            resp = _run_with_deadline(lambda: chat_model.invoke(messages), effective_timeout, stage)
+            elapsed = time.monotonic() - t0
+            _ADAPTIVE_WATCHDOG.complete(stage, elapsed)
             _check_truncated(resp, stage, cfg)
             content = getattr(resp, "content", None)
             if isinstance(content, str) and not content.strip():
@@ -464,9 +505,19 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
                       "usage": _usage_of(resp)})
             return resp
         except TimeoutError:
-            _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
-                      "error": {"kind": "timeout", "limit_s": call_timeout}})
-            raise _guard_killed(stage, "no completion within the call budget", call_timeout, call_timeout) from None
+            elapsed = time.monotonic() - t0
+            adaptive = effective_timeout < call_timeout or adaptive_deadline <= call_timeout
+            _log_llm({"event": "llm_call_error", **base, "latency_s": round(elapsed, 2),
+                      "error": {"kind": "adaptive_watchdog" if adaptive else "timeout", "limit_s": effective_timeout,
+                                "stage_median_s": stage_median}})
+            if adaptive and attempt == 1:
+                ratio = elapsed / stage_median if stage_median else None
+                basis = f"{ratio:.1f}x stage median" if ratio is not None else "cold-start floor"
+                _console_line(f"  WARNING self-heal: call ran past {basis} ({effective_timeout:.0f}s); killed and retrying")
+                continue
+            if adaptive:
+                raise AdaptiveWatchdogTimeout(stage, elapsed, effective_timeout, stage_median) from None
+            raise _guard_killed(stage, "no completion within the call budget", elapsed, call_timeout) from None
         except UserFacingError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -500,6 +551,8 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
     cfg = for_stage(stage)
     _guard_enter(stage)
     call_timeout, stall_timeout, _ = _guard_limits()
+    adaptive_deadline, stage_median = _ADAPTIVE_WATCHDOG.deadline(stage)
+    effective_timeout = min(call_timeout, adaptive_deadline)
     base = {"provider": cfg.provider, "model": cfg.model, "stage": stage,
             "attempt": attempt, **_prompt_metrics(messages),
             **({"item": item} if item else {}),
@@ -514,6 +567,7 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
         except Exception as e:  # noqa: BLE001 - delivered to the consumer below
             q.put(("error", e))
 
+    _set_model_timeout(chat_model, effective_timeout)
     _log_llm({"event": "llm_call_start", **base})
     stop_heartbeat = _start_heartbeat(f"stage '{stage}'" + (f" [{item}]" if item else "") + " call")
     t0 = time.monotonic()
@@ -524,19 +578,23 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
     try:
         while True:
             elapsed = time.monotonic() - t0
-            if elapsed > call_timeout:
+            if elapsed > effective_timeout:
+                adaptive = adaptive_deadline <= call_timeout
                 _log_llm({"event": "llm_call_error", **base, "latency_s": round(elapsed, 2),
-                          "error": {"kind": "timeout", "limit_s": call_timeout}})
+                          "error": {"kind": "adaptive_watchdog" if adaptive else "timeout",
+                                    "limit_s": effective_timeout, "stage_median_s": stage_median}})
+                if adaptive:
+                    raise AdaptiveWatchdogTimeout(stage, elapsed, effective_timeout, stage_median)
                 raise _guard_killed(stage, "no completion within the call budget", elapsed, call_timeout)
-            wait = stall_timeout if first_chunk_seen else min(5.0, call_timeout - elapsed)
+            wait = stall_timeout if first_chunk_seen else min(5.0, effective_timeout - elapsed)
             try:
-                kind, payload = q.get(timeout=max(0.05, min(wait, call_timeout - elapsed)))
+                kind, payload = q.get(timeout=max(0.05, min(wait, effective_timeout - elapsed)))
             except queue.Empty:
-                if time.monotonic() - t0 > call_timeout:
+                if time.monotonic() - t0 > effective_timeout:
                     _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
-                              "error": {"kind": "timeout", "limit_s": call_timeout}})
-                    raise _guard_killed(stage, "no completion within the call budget",
-                                        time.monotonic() - t0, call_timeout) from None
+                              "error": {"kind": "adaptive_watchdog", "limit_s": effective_timeout, "stage_median_s": stage_median}})
+                    raise AdaptiveWatchdogTimeout(stage, time.monotonic() - t0,
+                                                        effective_timeout, stage_median) from None
                 if first_chunk_seen:
                     _log_llm({"event": "llm_call_error", **base, "latency_s": round(time.monotonic() - t0, 2),
                               "error": {"kind": "stall", "limit_s": stall_timeout}})
@@ -554,6 +612,7 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
                 usage = _usage_of(last)
                 durations = {k: usage.get(k) for k in ("prompt_eval_duration", "eval_duration")
                              if usage.get(k) is not None}
+                _ADAPTIVE_WATCHDOG.complete(stage, time.monotonic() - t0)
                 _log_llm({"event": "llm_call_end", **base, "latency_s": round(time.monotonic() - t0, 2),
                           **({"ttft_s": ttft_s} if ttft_s is not None else {}),
                           "usage": usage, **durations})

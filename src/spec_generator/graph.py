@@ -195,9 +195,22 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
     fb = None
     last_raw = ""
     for attempt in (1, 2):
-        raw = _invoke(stage, payload, log, progress, feedback=fb, schema=schema,
-                      stream_items=stream_items, item_label=item_label, on_item=on_item,
-                      attempt=attempt, retry_reason=("contract" if fb else None))
+        try:
+            raw = _invoke(stage, payload, log, progress, feedback=fb, schema=schema,
+                          stream_items=stream_items, item_label=item_label, on_item=on_item,
+                          attempt=attempt, retry_reason=("contract" if fb else None))
+        except __import__("vmodel_contracts.runtime", fromlist=["AdaptiveWatchdogTimeout"]).AdaptiveWatchdogTimeout as exc:
+            if attempt == 1:
+                basis = f"{exc.ratio:.1f}x stage median" if exc.ratio is not None else "the cold-start floor"
+                model_config._console_line(
+                    f"  WARNING self-heal: call ran past {basis} ({exc.deadline_s:.0f}s); killed and retrying")
+                fb = "The prior call exceeded its runtime budget before completing. Return the requested artifact now."
+                continue
+            from .errors import UserFacingError
+            raise UserFacingError(
+                f"stage '{stage}': the adaptive call watchdog exhausted its retry budget.",
+                f"the call exceeded {exc.deadline_s:.0f}s twice; only the in-flight item was discarded.",
+                model_config._rerun_guidance(stage) + "; completed item partials are preserved.") from exc
         last_raw = raw
         contract_err = None
         try:
@@ -2698,9 +2711,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     for attempt in (1,2):
                         try:
                             raw=_invoke("expert_opinion",payload,log,progress,
-                                        feedback=("Start the first nonblank line exactly with APPROVE or REGENERATE." if attempt==2 else None),
+                                        feedback=("FORMAT ERROR: return either APPROVE on the first nonblank line, followed by RATIONALE:, or REGENERATE on the first nonblank line, followed by FEEDBACK: naming the blocker and RATIONALE:." if attempt==2 else None),
                                         stream_items=False,item_label=f"{stage_key} gate",attempt=attempt,
                                         retry_reason=("verdict" if attempt==2 else None))
+                        except __import__("vmodel_contracts.runtime", fromlist=["AdaptiveWatchdogTimeout"]).AdaptiveWatchdogTimeout as exc:
+                            if attempt == 1:
+                                basis = f"{exc.ratio:.1f}x stage median" if exc.ratio is not None else "the cold-start floor"
+                                model_config._console_line(
+                                    f"  WARNING self-heal: call ran past {basis} ({exc.deadline_s:.0f}s); killed and retrying")
+                                continue
+                            raise UserFacingError(
+                                f"expert opinion watchdog exhausted its retry budget at the {stage_key} gate.",
+                                f"the call exceeded {exc.deadline_s:.0f}s twice.",
+                                "rerun the same command; the checkpoint and completed work are preserved.") from exc
                         except UserFacingError:
                             raise
                         except Exception as e:
@@ -2708,18 +2731,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                 f"expert opinion failed at the {stage_key} gate.",
                                 f"unexpected {type(e).__name__}: {str(e)[:240]}",
                                 "rerun the same command; the checkpoint is preserved and no model upgrade is required.") from e
-                        text=raw;lines=[line.strip() for line in raw.strip().splitlines() if line.strip()]
-                        verdict_index=next((i for i,line in enumerate(lines) if line.rstrip(":.").lower() in ("approve","regenerate")),None)
-                        action=lines[verdict_index].rstrip(":.").lower() if verdict_index is not None else ""
-                        if action in ("approve","regenerate"):
-                            rest="\n".join(lines[verdict_index+1:]); rationale=rest;feedback_text=""
-                            for label in ("RATIONALE:","rationale:"):
-                                rationale=rationale.removeprefix(label).strip()
-                            marker=next((m for m in ("\nFEEDBACK:","\nfeedback:") if m in "\n"+rest),None)
-                            if marker:
-                                before,feedback_text=("\n"+rest).split(marker,1);rationale=before.strip().removeprefix("RATIONALE:").strip()
-                            verdict={"action":action,"feedback":feedback_text.strip(),"rationale":rationale or "No separate rationale supplied."}
-                            if action=="approve" or verdict["feedback"]:break
+                        text=raw
+                        from vmodel_contracts.runtime import parse_expert_verdict
+                        verdict = parse_expert_verdict(raw, ("approve", "regenerate"))
+                        if verdict is not None and (verdict["action"] == "approve" or verdict["feedback"]):
+                            break
+                        verdict = None
                     if verdict is None or (verdict["action"]=="regenerate" and not verdict["feedback"]):
                         from .errors import UserFacingError
                         raise UserFacingError(f"expert opinion could not parse the {stage_key} gate verdict.",
