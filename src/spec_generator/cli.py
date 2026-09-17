@@ -262,8 +262,24 @@ def _invalidate_from(graph, cfg: dict, stage: str, review_mode: bool) -> None:
         )
     if stage == "needs":
         return  # a fresh run already starts at needs and overwrites everything
-    graph.update_state(cfg, dict(_CLEAR_DOWNSTREAM[stage]),
-                       as_node=_predecessor(stage, review_mode))
+    current = graph.get_state(cfg).values
+    invalidated_gates = {
+        "srs": {"srs", "architecture"},
+        "architecture": {"architecture"},
+    }.get(stage, set())
+    cleared = dict(_CLEAR_DOWNSTREAM[stage])
+    if invalidated_gates:
+        # Gate decisions and their retry budget describe the artifact version
+        # that is being discarded. Preserve decisions for earlier stages only.
+        cleared["expert_opinions"] = [
+            opinion for opinion in (current.get("expert_opinions") or [])
+            if opinion.get("gate") not in invalidated_gates
+        ]
+        cleared["gate_feedback"] = {
+            gate: feedback for gate, feedback in (current.get("gate_feedback") or {}).items()
+            if gate not in invalidated_gates
+        }
+    graph.update_state(cfg, cleared, as_node=_predecessor(stage, review_mode))
 
 
 def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool = False) -> dict:

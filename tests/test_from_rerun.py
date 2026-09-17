@@ -517,3 +517,64 @@ def test_render_diagnostics_do_not_blame_model_for_none_bundle():
     assert "assembly produced no bundle" in source
     assert "changing the model cannot fix a code exception" in source
     assert "artifact '{label}'" in source
+
+
+def test_from_srs_resets_expert_budget_and_architecture_preserves_srs_history(monkeypatch, tmp_path):
+    """A rewind discards gate decisions about discarded artifact versions.
+
+    In particular, two stale SRS regenerations must not instantly park the
+    freshly regenerated SRS before its corrected reviewer gets one call.
+    """
+    from langchain_core.messages import AIMessage
+    box = {}
+    expert_calls = []
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    class Reviewer(FakeModel):
+        def stream(self, messages):
+            expert_calls.append(messages)
+            yield AIMessage(content="APPROVE\nRATIONALE: correct for this stage")
+    def factory(stage, **kw):
+        if stage == "architecture":
+            return ledger.build(stage, kw.get("schema"))
+        if stage == "expert_opinion":
+            return Reviewer(stage)
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    graph = build_graph(
+        UsageLog("s"),
+        checkpointer=SqliteSaver(sqlite3.connect(str(tmp_path / "expert-rewind.sqlite"), check_same_thread=False)),
+        review=True,
+        expert_opinion=True,
+    )
+    cfg = {"configurable": {"thread_id": "s"}}
+    graph.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
+    history = [
+        {"gate": "srs", "action": "regenerate", "rationale": "old SRS 1"},
+        {"gate": "srs", "action": "regenerate", "rationale": "old SRS 2"},
+        {"gate": "architecture", "action": "regenerate", "rationale": "old architecture"},
+    ]
+    graph.update_state(cfg, {
+        "expert_opinions": history,
+        "gate_feedback": {"srs": "old SRS feedback", "architecture": "old architecture feedback"},
+    })
+
+    _invalidate_from(graph, cfg, "srs", review_mode=True)
+    state = graph.get_state(cfg).values
+    assert state["expert_opinions"] == []  # fresh SRS retry budget
+    assert state["gate_feedback"] == {}
+    graph.invoke(None, cfg)
+    assert expert_calls, "freshly rewound SRS must reach the reviewer instead of parking"
+    assert "Software Requirements Specification (SRS)" in "\n".join(
+        str(message.content) for message in expert_calls[0]
+    )
+
+    # Restore representative history and rewind only architecture: the
+    # accepted/prior SRS decision remains valid, architecture's does not.
+    graph.update_state(cfg, {
+        "expert_opinions": history,
+        "gate_feedback": {"srs": "keep", "architecture": "drop"},
+    })
+    _invalidate_from(graph, cfg, "architecture", review_mode=True)
+    state = graph.get_state(cfg).values
+    assert state["expert_opinions"] == history[:2]
+    assert state["gate_feedback"] == {"srs": "keep"}
