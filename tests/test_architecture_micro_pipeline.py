@@ -79,8 +79,8 @@ def test_adr_plan_model_slots_cannot_touch_pipeline_owned_fields():
     with pytest.raises(ModelStructureError, match="pipeline-owned"):
         _validate_adr_plan([{"slug": "ci_tool-absence", "migration": False, "authorizes": []}],
                            taken)
-    with pytest.raises(ModelStructureError, match="collide"):
-        _validate_adr_plan([{"slug": "migrate-stack-ci-tool"}], taken)
+    # Echoing a pipeline-owned required slug is deterministic no-op noise.
+    assert _validate_adr_plan([{"slug": "migrate-stack-ci-tool"}], taken) == []
     with pytest.raises(ModelStructureError, match="duplicate ADR slugs"):
         _validate_adr_plan([{"slug": "x"}, {"slug": "x"}], [])
 
@@ -961,3 +961,13 @@ def test_adr_body_strips_model_echoed_fixed_id(monkeypatch):
     source = inspect.getsource(__import__('spec_generator.graph', fromlist=['x']))
     assert 'raw_title = str(d.get("title", "")).strip()' in source
     assert "_re.escape(slot['decision_id'])" in source
+
+
+def test_phi_echo_of_all_required_adr_slugs_is_removed_without_model_retry(capsys):
+    taken = ["migrate-stack-framework", "migrate-stack-notification-system",
+             "migrate-stack-user-interface"]
+    echoed = [{"slug": slug} for slug in taken]
+    assert _validate_adr_plan(echoed, taken) == []
+    err = capsys.readouterr().err
+    assert "optional ADR plan normalized" in err
+    assert "3 echoed pipeline-required slug(s)" in err

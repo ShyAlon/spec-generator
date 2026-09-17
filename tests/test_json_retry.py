@@ -159,3 +159,27 @@ def test_persistent_contract_drift_gets_friendly_error(monkeypatch):
     assert "does not satisfy the contract" in rendered
     assert "title" in rendered
     assert "without a model upgrade" in rendered
+
+
+def test_contract_failure_reports_feedback_model_timing_tokens_and_full_raw_path(monkeypatch, tmp_path):
+    from langchain_core.messages import AIMessage
+    from spec_generator import model_config
+    from spec_generator.errors import UserFacingError
+    monkeypatch.setenv("VMODEL_LLM_LOG", str(tmp_path / "llm-calls.jsonl"))
+    calls = {"n": 0}
+    def fake_invoke(*args, **kwargs):
+        calls["n"] += 1
+        model_config._CALL_DIAGNOSTICS[("srs", "slot-x", calls["n"])] = {
+            "attempt": calls["n"], "duration_s": 1.25, "tokens": 77,
+            "provider": "ollama", "model": "phi4"}
+        return "{\"bad\": true}"
+    monkeypatch.setattr("spec_generator.graph._invoke", fake_invoke)
+    from spec_generator.skeleton import ModelStructureError
+    def reject(value): raise ModelStructureError("reserved values: ['x']; source: pipeline-required slots")
+    with pytest.raises(UserFacingError) as ei:
+        _call_json("srs", "prompt", UsageLog("s"), validate=reject, item_label="slot-x")
+    rendered = ei.value.render()
+    assert "Retry feedback sent:" in rendered
+    assert "ollama/phi4" in rendered and "1.25s" in rendered and "77 tokens" in rendered
+    assert "failed-srs-slot-x.raw.txt" in rendered
+    assert (tmp_path / "failed-srs-slot-x.raw.txt").read_text() == '{"bad": true}'

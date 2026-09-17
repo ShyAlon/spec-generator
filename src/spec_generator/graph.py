@@ -194,6 +194,7 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
 
     fb = None
     last_raw = ""
+    attempt_diagnostics = []
     for attempt in (1, 2):
         try:
             raw = _invoke(stage, payload, log, progress, feedback=fb, schema=schema,
@@ -212,6 +213,7 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
                 f"the call exceeded {exc.deadline_s:.0f}s twice; only the in-flight item was discarded.",
                 model_config._rerun_guidance(stage) + "; completed item partials are preserved.") from exc
         last_raw = raw
+        attempt_diagnostics.append(model_config.call_diagnostic(stage, item_label, attempt))
         contract_err = None
         try:
             data = json.loads(_extract_json(raw))
@@ -231,11 +233,19 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
         snippet = raw.strip()[:200].replace("\n", " ")
         if attempt == 2:
             if contract_err is not None:
+                raw_path = model_config.capture_failed_completion(stage, item_label, raw)
+                details = "; ".join(
+                    f"attempt {d.get('attempt')}: {d.get('duration_s', '?')}s, "
+                    f"{d.get('tokens', '?')} tokens, {d.get('provider')}/{d.get('model')}"
+                    for d in attempt_diagnostics)
+                feedback_sent = fb or "(none on first attempt)"
                 raise UserFacingError(
                     f"stage '{stage}': the model's output does not satisfy the contract (an automatic retry did not fix it).",
-                    f"contract errors: {_contract_errors(contract_err)}. Raw output began: {snippet!r}",
-                    f"{model_config._rerun_guidance(stage)}; inspect the contract error above and retry with the preserved checkpoint. "
-                    "If it repeats, report the exact error: deterministic repair should handle phi output without a model upgrade.",
+                    f"contract errors: {_contract_errors(contract_err)}. "
+                    f"Retry feedback sent: {feedback_sent}. Call diagnostics: {details}. "
+                    f"Full failed output: {raw_path}.",
+                    f"{model_config._rerun_guidance(stage)}; inspect the full output path above. "
+                    "Deterministic normalization handles known phi echoes; capture a new fixture so it can be repaired without a model upgrade.",
                 ) from contract_err
             raise UserFacingError(
                 f"stage '{stage}': the model returned output that is not valid JSON (an automatic retry did not fix it).",
@@ -1065,8 +1075,13 @@ def _validate_adr_plan(d, taken_slugs: list[str]) -> list[dict]:
         raise ModelStructureError(f"duplicate ADR slugs: {sorted({n for n in slugs if slugs.count(n) > 1})}")
     clash = sorted(set(taken_slugs) & set(slugs))
     if clash:
-        raise ModelStructureError(
-            f"ADR slugs collide with pipeline-required migration slots: {clash}")
+        # The prompt necessarily names code-owned required slots so their ADR
+        # bodies can be authored later. Small models sometimes parrot those
+        # names as optional proposals. They add no decision and are safely
+        # removed by identity; this is normalization, not a model retry.
+        model_config._console_line(
+            f"     - optional ADR plan normalized: removed {len(clash)} echoed pipeline-required slug(s) {clash}")
+        slots = [slot for slot in slots if slot["slug"] not in set(clash)]
     return slots
 
 

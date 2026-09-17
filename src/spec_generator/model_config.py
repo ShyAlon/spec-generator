@@ -173,6 +173,26 @@ def log_raw_completion(stage: str, item: str | None, attempt: int, raw: str) -> 
                   "attempt": attempt, "raw_chars": len(raw), "raw": raw})
 
 
+
+def call_diagnostic(stage: str, item: str | None, attempt: int) -> dict:
+    cfg = for_stage(stage)
+    return dict(_CALL_DIAGNOSTICS.get((stage, item, attempt), {
+        "attempt": attempt, "provider": cfg.provider, "model": cfg.model,
+    }))
+
+
+def capture_failed_completion(stage: str, item: str | None, raw: str) -> str:
+    """Persist byte-exact failed output beside llm-calls.jsonl for diagnosis."""
+    from pathlib import Path
+    sink = _llm_log_sink()
+    root = Path(sink).expanduser().resolve().parent if sink and sink != "stderr" else Path.cwd()
+    safe_item = _re.sub(r"[^A-Za-z0-9_.-]+", "-", item or "call").strip("-")
+    path = root / f"failed-{stage}-{safe_item}.raw.txt"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(raw)
+    os.replace(tmp, path)
+    return str(path)
+
 def _log_llm(event: dict) -> None:
     """One JSON line per LLM call event. Never logs message content or keys -
     metadata, token usage, and provider error payloads only, plus raw
@@ -195,6 +215,7 @@ def _log_llm(event: dict) -> None:
 _CONSOLE_LOCK = threading.Lock()
 _OUTPUT_MODE_ANNOUNCED: set[tuple[str, str]] = set()
 _DEBUG_HTTP_ANNOUNCED: set[str] = set()
+_CALL_DIAGNOSTICS: dict[tuple[str, str | None, int], dict] = {}
 
 
 def _console_level(msg: str) -> str | None:
@@ -612,8 +633,14 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
                 usage = _usage_of(last)
                 durations = {k: usage.get(k) for k in ("prompt_eval_duration", "eval_duration")
                              if usage.get(k) is not None}
-                _ADAPTIVE_WATCHDOG.complete(stage, time.monotonic() - t0)
-                _log_llm({"event": "llm_call_end", **base, "latency_s": round(time.monotonic() - t0, 2),
+                elapsed = time.monotonic() - t0
+                _ADAPTIVE_WATCHDOG.complete(stage, elapsed)
+                _CALL_DIAGNOSTICS[(stage, item, attempt)] = {
+                    "attempt": attempt, "duration_s": round(elapsed, 2),
+                    "tokens": usage.get("total_tokens", usage.get("output_tokens", 0)),
+                    "provider": cfg.provider, "model": cfg.model,
+                }
+                _log_llm({"event": "llm_call_end", **base, "latency_s": round(elapsed, 2),
                           **({"ttft_s": ttft_s} if ttft_s is not None else {}),
                           "usage": usage, **durations})
                 return
