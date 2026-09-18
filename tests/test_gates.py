@@ -456,11 +456,15 @@ def test_expert_garbage_gets_exact_format_retry(monkeypatch):
 def test_parked_gate_objections_are_sectioned_and_wrapped():
     from vmodel_contracts.runtime import format_expert_review_rounds
     rendered=format_expert_review_rounds([
-      {"rationale":"First rationale.","feedback":"Fix trace links. Remove solution language."},
-      {"rationale":"Second rationale.","feedback":"Add measurable criteria. Link requirements by id."}],width=60)
+      {"rationale":"First rationale.","feedback":"Fix trace links. Remove solution language.",
+       "artifact_revision":1,"artifact_saved_at":"2026-09-17T22:31:12+00:00","artifact_sha256":"aaa111"},
+      {"rationale":"Second rationale.","feedback":"Add measurable criteria. Link requirements by id.",
+       "artifact_revision":2,"artifact_saved_at":"2026-09-18T06:45:58+00:00","artifact_sha256":"bbb222"}],width=60)
     assert "Round 1\n\nRationale:" in rendered and "Round 2\n\nRationale:" in rendered
     assert "Feedback:\n  1." in rendered and "\n  2." in rendered
     assert " | round" not in rendered
+    assert "revision 1, saved at 2026-09-17T22:31:12+00:00" in rendered
+    assert "revision 2, saved at 2026-09-18T06:45:58+00:00" in rendered
 
 
 def test_each_regeneration_reviews_current_artifact_not_stale_snapshot():
@@ -523,6 +527,7 @@ def test_regenerated_architecture_and_revision_reach_round_two_reviewer(monkeypa
     assert [o["artifact_revision"] for o in opinions] == [1, 2]
     assert opinions[0]["artifact_sha256"] != opinions[1]["artifact_sha256"]
     assert all(o["artifact_saved_at"].endswith("+00:00") for o in opinions)
+    assert all(o["artifact_saved_at"].startswith("2026-") for o in opinions)  # full date + time, not time-only
     err = capsys.readouterr().err
     for opinion in opinions:
         assert f"artifact_sha256={opinion['artifact_sha256']}" in err
