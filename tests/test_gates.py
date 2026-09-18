@@ -729,3 +729,30 @@ def test_solution_detail_in_requirement_body_stays_flagged_outside_constraint_ca
     from vmodel_contracts import text_qa
     assert text_qa.is_solution_language("The system shall authenticate using OAuth")
     assert text_qa.is_solution_language("The system shall encrypt records with AES-256")
+
+
+def test_dirty_srs_is_rewritten_before_expert_sees_it(monkeypatch, capsys):
+    import spec_generator.graph as graph_mod
+    clean={"purpose":"p","scope_summary":"sc","functional":[],"non_functional":[]}
+    dirty={"purpose":"p","scope_summary":"sc","functional":[{"requirement_id":"R-1","title":"API 47",
+      "statement":"POST /api/users returns 201 JSON using OAuth and AES-256","acceptance":[]}],"non_functional":[]}
+    calls=[]
+    def fake_stage(state, feedback=None, only=None):
+        calls.append(feedback)
+        return dirty if len(calls)==1 else clean
+    # Executable source-level contract: node calls the deterministic shared
+    # linter, feeds exact findings into one rewrite, then gates the new data.
+    source=__import__("inspect").getsource(build_graph)
+    assert "text_qa.srs_draft_findings(data, founder_text)" in source
+    assert "DETERMINISTIC SRS SELF-CHECK - fix every finding" in source
+    assert "decision=targeted-rewrite-before-expert" in source
+    findings=__import__("vmodel_contracts").text_qa.srs_draft_findings(dirty,json.dumps(INTENT))
+    rules={f["rule"] for f in findings}
+    assert {"named_technology","http_verb","http_status","url_path","json_shape","absent_from_interview"} <= rules
+
+
+def test_clean_traced_constraint_is_not_linted_as_requirement_solution_language():
+    from vmodel_contracts import text_qa
+    draft={"functional":[],"non_functional":[],"design_constraints":[{
+      "constraint_id":"DC-1","statement":"Use AES-256","source_turns":[9]}]}
+    assert text_qa.srs_draft_findings(draft,"turn 9 mandates AES-256") == []
