@@ -252,3 +252,36 @@ def test_adr_overlap_boundary_logs_scores_threshold_inputs_and_decision(capsys):
     assert "subject_overlap=" in line and "subject_threshold=0.30" in line
     assert "alternatives_overlap=" in line and "alternatives_threshold=0.65" in line
     assert "decision=duplicate" in line
+
+
+def test_same_selection_alone_does_not_make_unrelated_adrs_duplicates(capsys):
+    from spec_generator.graph import _duplicate_adr_pairs
+    from vmodel_contracts import ArchitectureOverview
+    def adr(i,title,decision,slot): return {"decision_id":f"ADR-{i}","title":title,"decision":decision,"rationale":"r","driver":"simplicity","options_considered":[],"technology_selections":[{"slot_id":slot,"technology_id":"tech:keycloak","display_name":"Keycloak"}],"executes_concept_ids":[]}
+    from vmodel_contracts import ArchitectureDecision
+    arch=ArchitectureOverview.model_construct(session_id="s",stack_entries=[],components=[],
+        decisions=[ArchitectureDecision.model_validate(adr(2,"Identity provider","Choose Keycloak","slot:identity-provider")),
+                   ArchitectureDecision.model_validate(adr(5,"Role audit policy","Record role changes","slot:role-audit"))],non_functionals={})
+    assert _duplicate_adr_pairs(arch)==[]
+    assert "decision=duplicate" not in capsys.readouterr().err
+
+
+def test_duplicate_merge_reassembles_green_with_contiguous_decision_links():
+    from spec_generator.graph import _assemble_architecture, _check_adr_substance, _merge_duplicate_adr_pair
+    from vmodel_contracts import ArchitectureOverview
+    opts=[{"option":"generic insurer integration","reason":"variance"},{"option":"direct point integration","reason":"duplication"}]
+    slots=[{"decision_id":"ADR-1","slug":"adapter-boundary","migration":False,"authorizes":["stack:integration"],"required_concept_ids":[]},
+           {"decision_id":"ADR-2","slug":"storage","migration":False,"authorizes":[],"required_concept_ids":[]},
+           {"decision_id":"ADR-3","slug":"duplicate-adapter","migration":False,"authorizes":[],"required_concept_ids":[]}]
+    def body(title,decision,opts): return {"title":title,"decision":decision,"rationale":"grounded rationale","driver":"simplicity","options_considered":opts,"baseline_refs":[],"migration":False,"evidence":[],"affected_repositories":[],"executes_concept_ids":[],"technology_selections":[],"rejected":[]}
+    bodies={"ADR-1":body("AdapterKit normalized insurer adapter","Use AdapterKit normalized insurer adapters",opts),
+            "ADR-2":body("Storage policy","Use durable storage",[]),
+            "ADR-3":body("Insurer adapter boundary","Use normalized insurer adapters",opts)}
+    entries={"integration":{"value":"AdapterKit","technology_id":"tech:adapterkit","baseline_refs":[],"off_list_justification":None}}
+    _merge_duplicate_adr_pair(slots,bodies,"ADR-1","ADR-3")
+    merged=_assemble_architecture(session_id="s",baseline_id="b",entries=entries,
+        comp_slots=[],comp_bodies={},adr_slots=slots,adr_bodies=bodies,nfr={})
+    arch=ArchitectureOverview.model_validate(merged)
+    _check_adr_substance(arch)
+    assert [d.decision_id for d in arch.decisions]==["ADR-1","ADR-2"]
+    assert arch.stack_entries[0].decision_id=="ADR-1"

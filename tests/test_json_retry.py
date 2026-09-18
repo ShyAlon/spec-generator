@@ -205,3 +205,10 @@ def test_contract_retry_console_names_boundary_evidence(monkeypatch,capsys,tmp_p
     err=capsys.readouterr().err
     assert "boundary=contract-repair stage=tests item=T-1 attempt=1" in err
     assert "decision=retry reason=invalid-json" in err and "rejected_output=" in err
+
+
+def test_architecture_gate_rejection_capture_uses_registered_stage(monkeypatch,tmp_path):
+    from spec_generator import model_config
+    monkeypatch.setenv("VMODEL_LLM_LOG",str(tmp_path/"llm.jsonl"))
+    path=model_config.capture_rejected_completion("architecture","gate:ADR-substance",2,"{}","duplicate")
+    assert "architecture--gate-ADR-substance" in path

@@ -523,3 +523,17 @@ def test_stream_adaptive_watchdog_raises_retry_signal(monkeypatch):
     monkeypatch.setenv("VMODEL_LLM_CALL_TIMEOUT_S", "60")
     with pytest.raises(AdaptiveWatchdogTimeout):
         list(mc.stream_checked(Slow(), [], "architecture", item="ADR-11"))
+
+
+
+def test_assembly_boundary_error_logs_full_shape_evidence(capsys):
+    from spec_generator.graph import _raise_assembly_boundary_error
+    state={"intent_model":{"session_id":"s"},"architecture":{"bad":object()}}
+    err_obj=_raise_assembly_boundary_error("architecture",state,KeyError("unexpected-field"))
+    line=capsys.readouterr().err
+    assert "boundary=assembly-rejection producer_stage=architecture" in line
+    assert "exception=KeyError" in line and "unexpected-field" in line
+    assert "expected=" in line and "input_state_shape=" in line
+    assert "decision=reject-and-checkpoint" in line
+    rendered=err_obj.render()
+    assert "Offending value/key" in rendered and "Expected:" in rendered and "Producer: architecture" in rendered

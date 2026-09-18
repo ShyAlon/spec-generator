@@ -818,14 +818,16 @@ def _duplicate_adr_pairs(arch: ArchitectureOverview) -> list[tuple[str, str, flo
             lo = {" ".join(sorted(words(o.option))) for o in left.options_considered}
             ro = {" ".join(sorted(words(o.option))) for o in right.options_considered}
             subject, options = score(ls, rs), score(lo, ro) if lo and ro else 0.0
-            duplicate = bool(left_tech and left_tech == right_tech) or (len(lo & ro) >= 2 and subject >= .30 and options >= .65)
+            same_selection = bool(left_tech and left_tech == right_tech)
+            duplicate = ((same_selection and subject >= .30)
+                         or (len(lo & ro) >= 2 and subject >= .30 and options >= .65))
             near = len(lo & ro) >= 2 and subject >= .24 and options >= .52
             if duplicate or near:
                 model_config._console_line(
                     f"     - boundary=adr-substance compared={left.decision_id},{right.decision_id} "
                     f"subject_overlap={subject:.2f} subject_threshold=0.30 alternatives_overlap={options:.2f} "
                     f"alternatives_threshold=0.65 shared_alternatives={len(lo & ro)} minimum=2 "
-                    f"same_selection={bool(left_tech and left_tech == right_tech)} "
+                    f"same_selection={same_selection} same_selection_subject_minimum=0.30 "
                     f"decision={'duplicate' if duplicate else 'pass-near-boundary'}")
             if duplicate:
                 found.append((left.decision_id, right.decision_id, subject, options))
@@ -1692,6 +1694,31 @@ def _stage_validation_error(stage: str, exc: ValidationError):
     )
 
 
+def _raise_assembly_boundary_error(stage: str, state: dict, exc: Exception):
+    from .errors import UserFacingError
+    if isinstance(exc, KeyError):
+        offending = repr(exc.args[0]) if exc.args else "unknown"
+        expected = "registered pipeline stage/key and contract-owned field names"
+    elif isinstance(exc, TypeError):
+        offending = f"message={str(exc)}"
+        expected = "the stage contract's declared JSON types"
+    else:
+        offending = str(exc)
+        expected = "the deterministic stage validator requirements named in the message"
+    state_shape = {key: type(value).__name__ for key, value in state.items()}
+    model_config._console_line(
+        f"  ERROR boundary=assembly-rejection producer_stage={stage} exception={type(exc).__name__} "
+        f"offending={offending!r} expected={expected!r} input_state_shape={state_shape} "
+        f"decision=reject-and-checkpoint reason={str(exc)!r}")
+    return UserFacingError(
+        f"stage '{stage}' could not assemble the model output.",
+        f"pipeline boundary rejected an unexpected field shape: {type(exc).__name__}: {str(exc)[:500]}. "
+        f"Offending value/key: {offending}. Expected: {expected}. Producer: {stage}. "
+        f"Input state shape: {state_shape}.",
+        f"{model_config._rerun_guidance(stage)}; the failed stage will retry from its checkpoint. "
+        "The boundary evidence above is also in run.log.")
+
+
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
                 review: bool = False, persist=None, partials=None,
                 only_stage: str | None = None, stop_after: str | None = None,
@@ -1721,13 +1748,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     except ValidationError as exc:
                         raise _stage_validation_error(stage, exc) from exc
                     except (ModelStructureError, KeyError, TypeError) as exc:
-                        from .errors import UserFacingError
-                        raise UserFacingError(
-                            f"stage '{stage}' could not assemble the model output.",
-                            f"pipeline boundary rejected an unexpected field shape: {type(exc).__name__}: {str(exc)[:500]}",
-                            f"{model_config._rerun_guidance(stage)}; the failed stage will retry from its checkpoint. "
-                            "If it repeats, report this Error/Likely cause/Next block; no raw traceback is needed.",
-                        ) from exc
+                        raise _raise_assembly_boundary_error(stage, state, exc) from exc
             return inner
         return deco
 
@@ -2364,7 +2385,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     continue
                 for name, detail in gate_failures:
                     model_config.capture_rejected_completion(
-                        "architecture-gate", name, _adr_attempt,
+                        "architecture", f"gate:{name}", _adr_attempt,
                         json.dumps({"adr_slots": part.get("adr_slots"), "adr_bodies": adr_bodies}, indent=2), detail)
                 duplicate_pairs = _duplicate_adr_pairs(arch)
                 if gate_failures and all(name == "ADR-substance" for name, _ in gate_failures) and duplicate_pairs:
