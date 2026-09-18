@@ -565,3 +565,38 @@ def test_vague_expert_objection_retries_then_specific_objection_passes(monkeypat
     opinion=result["expert_opinions"][0]
     assert opinion["objections"][0]["artifact"] == "srs"
     assert opinion["objections"][0]["location"] == "R-1 field need_ids"
+
+
+def test_architecture_upstream_objection_becomes_advisory_without_regeneration(monkeypatch):
+    from langchain_core.messages import AIMessage
+    from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
+    calls={"architecture":0,"arch_review":0}
+    class Reviewer(FakeModel):
+        def stream(self,messages):
+            prompt="\n".join(str(m.content) for m in messages)
+            if self.stage == "expert_opinion" and "system architecture:" in prompt:
+                calls["arch_review"] += 1
+                yield AIMessage(content=("REGENERATE\nFEEDBACK: OBJECTION: artifact=srs | rule=shall statement grammar | "
+                  "location=R-2 field statement | resolution=Rewrite R-2 as a shall statement\n"
+                  "RATIONALE: This fix belongs in the SRS.")); return
+            if self.stage == "expert_opinion":
+                yield AIMessage(content="APPROVE\nRATIONALE: coherent for its own stage.")
+                return
+            yield from FakeModel(self.stage).stream(messages)
+    class Architecture(SchemaRoutingArchitectureModel):
+        def stream(self,messages):
+            calls["architecture"] += 1
+            yield from super().stream(messages)
+    def factory(stage,**kw):
+        return Architecture(stage,kw.get("schema")) if stage=="architecture" else Reviewer(stage)
+    monkeypatch.setattr(model_config,"build_chat_model",factory)
+    result=build_graph(UsageLog("s"),review=True,expert_opinion=True).invoke(
+      {"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},
+      {"configurable":{"thread_id":"upstream-advisory"}})
+    opinions=[o for o in result["expert_opinions"] if o["gate"]=="architecture"]
+    assert len(opinions)==1 and opinions[0]["action"]=="approve"
+    assert opinions[0]["objections"] == []
+    assert opinions[0]["upstream_advisories"][0]["artifact"] == "srs"
+    assert calls["arch_review"] == 1
+    # One architecture pass is seven micro-calls; no second regeneration pass.
+    assert calls["architecture"] == 7

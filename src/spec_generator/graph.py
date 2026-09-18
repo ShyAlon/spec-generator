@@ -2830,11 +2830,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                              "Non-blocking improvements and polish MUST stay as suggestions in RATIONALE under APPROVE; "
                              "they are not grounds to regenerate. REGENERATE only for a named blocking defect, and write "
                              "FEEDBACK as one or more lines in this exact form: OBJECTION: artifact=<reviewed artifact name> | rule=<named rule or criterion> | location=<section, id, field, or quoted fragment> | resolution=<concrete change>. Every objection must include all four fields. Then write RATIONALE: free prose. "
-                             "Never claim founder approval. Advisories must be considered, but an advisory is not itself "
-                             "blocking unless it establishes one of the blocking conditions above.\nARTIFACT:\n" + json.dumps(state.get(artifact_key))
+                             "You may read the full context for coverage, but REGENERATE may name only defects fixable in this reviewed artifact. "
+                             "For a defect whose fix belongs in an upstream artifact, use the same OBJECTION line with that upstream artifact name; "
+                             "it will be reported as an advisory and must not be a REGENERATE ground. Never claim founder approval. "
+                             "Advisories must be considered, but are not themselves blocking.\nARTIFACT:\n" + json.dumps(state.get(artifact_key))
                              + "\nADVISORIES:\n" + json.dumps(advisories))
                     from .errors import UserFacingError
-                    text="";verdict=None;objections=[];specificity_errors=[];retry_feedback=None
+                    text="";verdict=None;objections=[];upstream_advisories=[];specificity_errors=[];retry_feedback=None
                     for attempt in (1,2):
                         try:
                             raw=_invoke("expert_opinion",payload,log,progress,
@@ -2864,12 +2866,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         specificity_errors = []
                         objections = []
                         if verdict is not None and verdict["action"] == "regenerate" and verdict["feedback"]:
-                            from vmodel_contracts.runtime import validate_expert_objections
-                            objections, specificity_errors = validate_expert_objections(verdict["feedback"], (stage_key,))
+                            from vmodel_contracts.runtime import classify_expert_objections
+                            known_artifacts = ("intent", "srs") if stage_key == "architecture" else ("intent",)
+                            objections, upstream_advisories, specificity_errors = classify_expert_objections(
+                                verdict["feedback"], stage_key, known_artifacts)
                             if specificity_errors:
                                 retry_feedback = ("SPECIFICITY ERROR: " + "; ".join(specificity_errors) + ". Return REGENERATE with "
                                                   "one OBJECTION line per blocker using artifact, rule, location, and resolution fields.")
                                 verdict = None
+                            elif upstream_advisories and not objections:
+                                verdict["action"] = "approve"
+                                model_config._console_line(
+                                    f"     - boundary=expert-scope gate={stage_key} own_blockers=0 "
+                                    f"upstream_advisories={len(upstream_advisories)} decision=approve-with-upstream-advisories")
                         if verdict is not None and (verdict["action"] == "approve" or verdict["feedback"]):
                             if verdict.get("extracted_from") == "json_object":
                                 model_config._console_line(
@@ -2900,7 +2909,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "rerun the same command; the checkpoint is preserved and no model upgrade is required.")
                     record={"gate":stage_key,"mode":"simulated_expert_opinion","human_review_required":True,
                             "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"],
-                            "objections": objections,
+                            "objections": objections, "upstream_advisories": upstream_advisories,
                             "artifact_sha256": artifact_fingerprint, "artifact_revision": artifact_revision["revision"],
                             "artifact_saved_at": artifact_revision["saved_at"]}
                     model_config._console_line(f"   SIMULATED EXPERT OPINION at {stage_key}: {verdict['action']} - human review still required")
