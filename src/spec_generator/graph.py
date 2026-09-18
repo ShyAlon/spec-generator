@@ -2916,6 +2916,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     model_config._console_line(f"     rationale: {verdict['rationale']}")
                     if verdict["action"] == "regenerate":
                         model_config._console_line(f"     regeneration feedback: {verdict['feedback']}")
+                    if upstream_advisories:
+                        from vmodel_contracts.runtime import format_expert_review_rounds
+                        advisory_text = format_expert_review_rounds([record]).split("Upstream advisories:", 1)[1]
+                        model_config._console_line("     Upstream advisories:" + advisory_text)
                     out={"expert_opinions":state.get("expert_opinions",[])+[record]}
                     if verdict["action"]=="regenerate":
                         if stage_key == "architecture" and partials and hasattr(partials, "regenerate"):

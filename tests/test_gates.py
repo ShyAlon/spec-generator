@@ -567,7 +567,7 @@ def test_vague_expert_objection_retries_then_specific_objection_passes(monkeypat
     assert opinion["objections"][0]["location"] == "R-1 field need_ids"
 
 
-def test_architecture_upstream_objection_becomes_advisory_without_regeneration(monkeypatch):
+def test_architecture_upstream_objection_becomes_advisory_without_regeneration(monkeypatch, capsys):
     from langchain_core.messages import AIMessage
     from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
     calls={"architecture":0,"arch_review":0}
@@ -600,3 +600,6 @@ def test_architecture_upstream_objection_becomes_advisory_without_regeneration(m
     assert calls["arch_review"] == 1
     # One architecture pass is seven micro-calls; no second regeneration pass.
     assert calls["architecture"] == 7
+    output=capsys.readouterr().err
+    assert "Upstream advisories:" in output
+    assert "This concerns the srs:" in output
