@@ -645,3 +645,28 @@ def test_legacy_parked_checkpoint_is_rereviewed_under_structured_scope(monkeypat
     assert "decision=re-review-current-artifact" in output
     assert "This concerns the srs:" in output
     assert "expert review parked" not in output
+
+
+def test_live_prose_srs_objection_approves_architecture_as_advisory(monkeypatch, capsys):
+    from langchain_core.messages import AIMessage
+    from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
+    class Reviewer(FakeModel):
+        def stream(self,messages):
+            prompt="\n".join(str(m.content) for m in messages)
+            if self.stage=="expert_opinion" and "system architecture:" in prompt:
+                yield AIMessage(content=('REGENERATE\nFEEDBACK:\n1. OBJECTION: The SRS contains solution-specific details such as "AES-256" and "OAuth".\nRATIONALE: The concern belongs upstream.')); return
+            yield AIMessage(content="APPROVE\nRATIONALE: coherent.")
+    def factory(stage,**kw):
+        if stage=="architecture": return SchemaRoutingArchitectureModel(stage,kw.get("schema"))
+        return Reviewer(stage) if stage=="expert_opinion" else FakeModel(stage)
+    monkeypatch.setattr(model_config,"build_chat_model",factory)
+    result=build_graph(UsageLog("s"),review=True,expert_opinion=True).invoke(
+      {"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},
+      {"configurable":{"thread_id":"live-prose-upstream"}})
+    opinion=[o for o in result["expert_opinions"] if o["gate"]=="architecture"][0]
+    assert opinion["action"]=="approve" and not opinion["objections"]
+    advisory=opinion["upstream_advisories"][0]
+    assert advisory["artifact"]=="srs"
+    assert '"AES-256"' in advisory["location"] and '"OAuth"' in advisory["location"]
+    output=capsys.readouterr().err
+    assert "LOW-SPECIFICITY" not in output and "This concerns the srs:" in output
