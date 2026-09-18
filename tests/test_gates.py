@@ -474,16 +474,57 @@ def test_each_regeneration_reviews_current_artifact_not_stale_snapshot():
     assert "prior_regenerations={len(prior_regenerations)}" in source
 
 
-def test_regenerated_artifact_revision_timestamp_reaches_round_two_reviewer(monkeypatch):
-    """Artifact revision metadata is read from current gate state, not closure/checkpoint history."""
-    import hashlib, json
-    first={"stack_entries":[],"decisions":[{"decision_id":"ADR-1","title":"first"}]}
-    second={"stack_entries":[],"decisions":[{"decision_id":"ADR-1","title":"regenerated"}]}
-    state1={"architecture":first,"artifact_revisions":{"architecture":{"revision":1,"saved_at":"2026-09-18T06:00:00+00:00"}}}
-    state2={"architecture":second,"artifact_revisions":{"architecture":{"revision":2,"saved_at":"2026-09-18T06:10:00+00:00"}}}
-    def evidence(state):
-        artifact=state["architecture"]
-        rev=state["artifact_revisions"]["architecture"]
-        return rev["revision"],rev["saved_at"],hashlib.sha256(json.dumps(artifact,sort_keys=True).encode()).hexdigest()[:12]
-    assert evidence(state1)!=(evidence(state2))
-    assert evidence(state2)[:2]==(2,"2026-09-18T06:10:00+00:00")
+
+def test_regenerated_architecture_and_revision_reach_round_two_reviewer(monkeypatch, capsys):
+    """Round 2 reviews the regenerated graph-state artifact and its new revision."""
+    from langchain_core.messages import AIMessage
+    from conftest import SYSTEM_BASELINE
+    from test_per_item_resume import _arch_answer
+
+    prompts = []
+    counts = {"architecture_reviews": 0}
+
+    class Model:
+        def __init__(self, stage, schema=None):
+            self.stage, self.schema = stage, schema or {}
+        def stream(self, messages):
+            if self.stage == "expert_opinion":
+                prompt = "\n".join(str(m.content) for m in messages)
+                prompts.append(prompt)
+                if "system architecture:" in prompt:
+                    counts["architecture_reviews"] += 1
+                    if counts["architecture_reviews"] == 1:
+                        yield AIMessage(content="REGENERATE\nRATIONALE: first draft marker is stale.\nFEEDBACK: Regenerate the architecture marker.")
+                        return
+                yield AIMessage(content="APPROVE\nRATIONALE: current artifact is coherent.")
+                return
+            if self.stage == "architecture":
+                answer = _arch_answer(self.schema)
+                if "driver" in set(self.schema.get("properties", {})):
+                    prompt = "\n".join(str(m.content) for m in messages)
+                    marker = "regenerated-architecture" if "Regenerate the architecture marker" in prompt else "initial-architecture"
+                    answer["title"] = marker
+                yield AIMessage(content=json.dumps(answer))
+                return
+            yield from FakeModel(self.stage).stream(messages)
+
+    monkeypatch.setattr(model_config, "build_chat_model",
+                        lambda stage, **kw: Model(stage, kw.get("schema")))
+    result = build_graph(UsageLog("s"), review=True, expert_opinion=True).invoke(
+        {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
+        {"configurable": {"thread_id": "fresh-architecture-review"}})
+
+    architecture_prompts = [p for p in prompts if "system architecture:" in p]
+    assert len(architecture_prompts) == 2
+    assert "initial-architecture" in architecture_prompts[0]
+    assert "regenerated-architecture" not in architecture_prompts[0]
+    assert "regenerated-architecture" in architecture_prompts[1]
+    opinions = [o for o in result["expert_opinions"] if o["gate"] == "architecture"]
+    assert [o["artifact_revision"] for o in opinions] == [1, 2]
+    assert opinions[0]["artifact_sha256"] != opinions[1]["artifact_sha256"]
+    assert all(o["artifact_saved_at"].endswith("+00:00") for o in opinions)
+    err = capsys.readouterr().err
+    for opinion in opinions:
+        assert f"artifact_sha256={opinion['artifact_sha256']}" in err
+        assert f"artifact_revision={opinion['artifact_revision']}" in err
+        assert f"artifact_saved_at={opinion['artifact_saved_at']}" in err

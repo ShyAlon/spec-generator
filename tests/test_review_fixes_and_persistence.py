@@ -90,6 +90,10 @@ def test_incremental_bundle_on_disk_and_atomic(tmp_path, queue_models):
         assert (tmp_path / f).exists(), f
     assert (tmp_path / "specs" / "SPEC-1.md").exists()
     assert "Driver:" in (tmp_path / "architecture.md").read_text()  # rendered, not raw JSON
+    for stage in ("srs", "architecture"):
+        revision = json.loads((tmp_path / f"{stage}.revision.json").read_text())
+        assert revision["revision"] == 1
+        assert revision["saved_at"].endswith("+00:00")
     assert not list(tmp_path.glob("*.tmp")) and not list((tmp_path / "specs").glob("*.tmp"))
 
 
