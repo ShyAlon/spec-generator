@@ -1644,10 +1644,13 @@ def _normalized_review_fixes(value) -> list[dict]:
             out.append({"scope": "systemic", "target_ids": [], "fix": fix})
         elif isinstance(fix, dict) and str(fix.get("fix") or "").strip():
             scope = fix.get("scope") if fix.get("scope") in ("requirement", "spec", "test", "systemic") else "systemic"
-            ids = [str(x) for x in (fix.get("target_ids") or []) if str(x)]
+            ids = [str(x) for x in (fix.get("target_ids") or []) if str(x)][:8]
             if scope != "systemic" and not ids:
                 scope = "systemic"
-            out.append({"scope": scope, "target_ids": ids, "fix": str(fix["fix"])})
+            fix_text = str(fix["fix"]).strip()
+            if len(fix_text) > 320:
+                fix_text = fix_text[:317].rstrip() + "..."
+            out.append({"scope": scope, "target_ids": ids, "fix": fix_text})
     return out
 
 

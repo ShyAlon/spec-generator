@@ -248,14 +248,14 @@ def test_large_review_is_requirement_chunked_and_resumable(monkeypatch):
         def clear(self,k): self.data.pop(k,None)
     partials=Partials()
     # Source-level regression keeps this independent of the full authoring fake:
-    # review chunks are max 2 requirements and each successful chunk persists.
+    # review chunks are one requirement and each successful chunk persists.
     import inspect
     source=inspect.getsource(build_graph)
-    assert "requirements[i:i + 2]" in source
+    assert "chunks = [[requirement] for requirement in requirements]" in source
     assert 'partials.save("review", saved)' in source
     assert 'partials.clear("review")' in source
     assert 'f"round-{n}-chunk-{index}"' in source
-    assert 8 // 2 == 4 and 4 < 8 + 10 + 44
+    assert 8 < 8 + 10 + 44
 
 
 def test_review_batches_one_requirement_and_caps_finding_shape():
@@ -266,9 +266,9 @@ def test_review_batches_one_requirement_and_caps_finding_shape():
     assert "chunks = [[requirement] for requirement in requirements]" in source
     assert "max_findings=24 max_fix_chars=320" in source
     assert "Never restate requirements, specs, tests, or rationale" in source
-    schema=for_stage("review")
-    assert schema["items"]["properties"]["fix"]["maxLength"] == 320
-    assert schema["items"]["properties"]["target_ids"]["maxItems"] == 8
+    # Grammar remains Ollama-safe; caps are enforced after parse.
+    assert 'fix_text = fix_text[:317].rstrip() + "..."' in source
+    assert '][:8]' in source
 
 
 def test_review_partial_key_is_stable_per_single_requirement_batch():

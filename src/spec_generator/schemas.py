@@ -408,8 +408,8 @@ def _raw_stage_schema(stage: str) -> dict:
     if stage == "review":
         return {"type": "array", "items": {"type": "object", "properties": {
             "scope": {"enum": ["requirement", "spec", "test", "systemic"]},
-            "target_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
-            "fix": {"type": "string", "maxLength": 320}},
+            "target_ids": {"type": "array", "items": {"type": "string"}},
+            "fix": {"type": "string"}},
             "required": ["scope", "target_ids", "fix"], "additionalProperties": False}}
     raise KeyError(f"no output schema for stage {stage!r}")
 
@@ -420,8 +420,8 @@ def for_stage(stage: str) -> dict:
     if stage == "review":
         return {"type": "array", "items": {"type": "object", "properties": {
             "scope": {"enum": ["requirement", "spec", "test", "systemic"]},
-            "target_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
-            "fix": {"type": "string", "maxLength": 320}},
+            "target_ids": {"type": "array", "items": {"type": "string"}},
+            "fix": {"type": "string"}},
             "required": ["scope", "target_ids", "fix"], "additionalProperties": False}}
     return _grammar_safe(_raw_stage_schema(stage))
 
