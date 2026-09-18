@@ -1,3 +1,4 @@
+from pathlib import Path
 from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
 """2026-09-09 live failure + ask: (1) the review-fix application path re-fired
 the srs stage against the retired full-document validator while the grammar
@@ -251,6 +252,7 @@ def test_large_review_is_requirement_chunked_and_resumable(monkeypatch):
     # review chunks are one requirement and each successful chunk persists.
     import inspect
     source=inspect.getsource(build_graph)
+    module_source=Path(__import__("spec_generator.graph",fromlist=["x"]).__file__).read_text()
     assert "chunks = [[requirement] for requirement in requirements]" in source
     assert 'partials.save("review", saved)' in source
     assert 'partials.clear("review")' in source
@@ -263,12 +265,13 @@ def test_review_batches_one_requirement_and_caps_finding_shape():
     from spec_generator.graph import build_graph
     from spec_generator.schemas import for_stage
     source=inspect.getsource(build_graph)
+    module_source=Path(__import__("spec_generator.graph",fromlist=["x"]).__file__).read_text()
     assert "chunks = [[requirement] for requirement in requirements]" in source
     assert "max_findings=24 max_fix_chars=320" in source
     assert "Never restate requirements, specs, tests, or rationale" in source
     # Grammar remains Ollama-safe; caps are enforced after parse.
-    assert 'fix_text = fix_text[:317].rstrip() + "..."' in source
-    assert '][:8]' in source
+    assert 'fix_text = fix_text[:317].rstrip() + "..."' in module_source
+    assert '][:8]' in module_source
 
 
 def test_review_partial_key_is_stable_per_single_requirement_batch():
