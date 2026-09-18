@@ -665,11 +665,10 @@ def test_live_prose_srs_objection_approves_architecture_as_advisory(monkeypatch,
       {"configurable":{"thread_id":"live-prose-upstream"}})
     opinion=[o for o in result["expert_opinions"] if o["gate"]=="architecture"][0]
     assert opinion["action"]=="approve" and not opinion["objections"]
-    advisory=opinion["upstream_advisories"][0]
-    assert advisory["artifact"]=="srs"
-    assert '"AES-256"' in advisory["location"] and '"OAuth"' in advisory["location"]
+    assert opinion["upstream_advisories"] == []  # both quotes absent: objection invalidated before advisory
     output=capsys.readouterr().err
-    assert "LOW-SPECIFICITY" not in output and "This concerns the srs:" in output
+    assert "LOW-SPECIFICITY" not in output
+    assert "decision=invalidate-objection" in output and "fabricated evidence" in output
 
 
 def test_low_specificity_error_renders_numbered_feedback_not_raw_snippet(monkeypatch):
@@ -764,3 +763,33 @@ def test_reviewer_doctrine_allows_algorithms_and_nonbinding_examples():
     assert "Algorithms and algorithm families (AES-256, Argon2, bcrypt, SHA-256)" in source
     assert "non-binding examples with 'like', 'such as', 'e.g.', or 'for example'" in source
     assert "imperative choices such as 'use OAuth' and API directives remain defects" in source
+
+
+def test_six_live_srs_objections_invalidate_fabrication_then_approve_advisories(monkeypatch,capsys):
+    from langchain_core.messages import AIMessage
+    from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
+    feedback=('1. OBJECTION: The SRS contains solution-specific details such as "AES-256" and "OAuth", which belong to the architecture stage. '
+      '2. OBJECTION: The SRS includes URL paths and JSON shapes without examples. '
+      '3. OBJECTION: The SRS mentions database and UI widgets without examples. '
+      '4. OBJECTION: The SRS includes named technologies and algorithms without examples. '
+      '5. OBJECTION: The SRS invents artifacts, features, or numbers without examples. '
+      '6. OBJECTION: The SRS requirement statements are not observable shall-statements.')
+    class Reviewer(FakeModel):
+        def stream(self,messages):
+            prompt="\n".join(str(m.content) for m in messages)
+            if self.stage=="expert_opinion" and "system architecture:" in prompt:
+                yield AIMessage(content="REGENERATE\nFEEDBACK: "+feedback+"\nRATIONALE: memorized SRS verdict");return
+            yield AIMessage(content="APPROVE\nRATIONALE: coherent.")
+    def factory(stage,**kw):
+        if stage=="architecture": return SchemaRoutingArchitectureModel(stage,kw.get("schema"))
+        return Reviewer(stage) if stage=="expert_opinion" else FakeModel(stage)
+    monkeypatch.setattr(model_config,"build_chat_model",factory)
+    result=build_graph(UsageLog("s"),review=True,expert_opinion=True).invoke(
+      {"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},
+      {"configurable":{"thread_id":"six-live-objections"}})
+    opinion=[o for o in result["expert_opinions"] if o["gate"]=="architecture"][0]
+    assert opinion["action"]=="approve" and not opinion["objections"]
+    assert len(opinion["upstream_advisories"])==5
+    out=capsys.readouterr().err
+    assert "decision=invalidate-objection" in out and "fabricated evidence" in out
+    assert "LOW-SPECIFICITY" not in out

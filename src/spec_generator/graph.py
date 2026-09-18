@@ -2912,13 +2912,18 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             objections, upstream_advisories, specificity_errors = classify_expert_objections(
                                 verdict["feedback"], stage_key, known_artifacts,
                                 json.dumps(artifact_snapshot, sort_keys=True, default=str))
+                            fabricated_evidence = [error for error in specificity_errors if error.startswith("fabricated evidence")]
+                            specificity_errors = [error for error in specificity_errors if not error.startswith("fabricated evidence")]
+                            for error in fabricated_evidence:
+                                model_config._console_line(
+                                    f"     - boundary=expert-evidence gate={stage_key} decision=invalidate-objection reason={error}")
                             if specificity_errors:
                                 low_specificity_feedback = verdict["feedback"]
                                 low_specificity_rationale = verdict["rationale"]
                                 retry_feedback = ("SPECIFICITY ERROR: " + "; ".join(specificity_errors) + ". Return REGENERATE with "
                                                   "one OBJECTION line per blocker using artifact, rule, location, and resolution fields.")
                                 verdict = None
-                            elif upstream_advisories and not objections:
+                            elif not objections and (upstream_advisories or fabricated_evidence):
                                 verdict["action"] = "approve"
                                 model_config._console_line(
                                     f"     - boundary=expert-scope gate={stage_key} own_blockers=0 "
