@@ -723,3 +723,9 @@ def test_reviewer_prompt_names_constraint_carveout_and_verbatim_examples():
     assert "valid interview source_turns" in source
     assert "solution detail in requirement bodies" in source
     assert "location must quote concrete verbatim examples" in source
+
+
+def test_solution_detail_in_requirement_body_stays_flagged_outside_constraint_carveout():
+    from vmodel_contracts import text_qa
+    assert text_qa.is_solution_language("The system shall authenticate using OAuth")
+    assert text_qa.is_solution_language("The system shall encrypt records with AES-256")
