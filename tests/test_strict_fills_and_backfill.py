@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE
+from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
 """2026-09-09 second live failure, three threads:
 1. 'R-5: slot not filled' slipped through the generic fills grammar - the
    grammars are now per-skeleton with every slot id a required property.
@@ -46,7 +46,7 @@ def test_strict_schema_reaches_the_model_build(monkeypatch, tmp_path):
 
     def build(stage, structured=True, schema=None):
         seen[stage] = schema
-        return FakeModel(stage)
+        return SchemaRoutingArchitectureModel(stage, schema or {}) if stage == "architecture" else FakeModel(stage)
 
     monkeypatch.setattr(model_config, "build_chat_model", build)
     db = str(tmp_path / "cp.sqlite")
@@ -82,7 +82,7 @@ def test_backfill_writes_completed_stages_without_rerunning(monkeypatch, tmp_pat
     on resume. Backfill from checkpoint state; zero model calls."""
     box = {}
     monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+                        lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else box.setdefault(stage, FakeModel(stage)))
     db = str(tmp_path / "cp.sqlite")
     cfg = {"configurable": {"thread_id": "s"}}
     g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))

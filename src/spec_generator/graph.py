@@ -171,7 +171,7 @@ def _json(text: str, stage: str = "unknown"):
 def _contract_errors(exc) -> str:
     """Compact one-line-per-error rendering for retry feedback and the
     human-readable failure: 'functional.0.title: Field required'."""
-    if isinstance(exc, ModelStructureError):
+    if isinstance(exc, ModelStructureError) or not callable(getattr(exc, "errors", None)):
         return str(exc)
     return "; ".join(
         f"{'.'.join(str(p) for p in e['loc']) or '(root)'}: {e['msg']}" for e in exc.errors()[:5])

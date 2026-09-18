@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE
+from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
 """ADR-0020 skeletons: code owns ids, kinds, ordering, and trace links; the
 model's prose fills are merged onto them, and unusable structure is a named,
 retryable error (ModelStructureError), never a silent remap."""
@@ -98,7 +98,7 @@ def _run_until_stage_error(monkeypatch, bad_stage, bad_payload):
                 return AIMessage(content=json.dumps(bad_payload))
             return super().invoke(messages)
 
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else FM(stage))
     g = build_graph(UsageLog("s"))
     with pytest.raises(UserFacingError) as ei:
         g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "merged-" + bad_stage}})
@@ -106,15 +106,23 @@ def _run_until_stage_error(monkeypatch, bad_stage, bad_payload):
 
 
 def test_architecture_merged_body_validated_at_stage(monkeypatch):
-    """Architecture: model proposes, code assigns ADR-ids and validates the
-    MERGED overview at the stage. A decision with empty rationale breaks the
-    contract and must fail AT the architecture stage."""
-    bad = {"stack": {"language": "ts"},
-           "components": [{"name": "api", "responsibility": "serve"}],
-           "decisions": [{"title": "t", "decision": "x"}]}  # rationale missing: Field required
-    e = _run_until_stage_error(monkeypatch, "architecture", bad)
-    assert "architecture" in e.render()
-
+    """A contract-broken ADR body fails at the architecture micro-call."""
+    from langchain_core.messages import AIMessage
+    from spec_generator.errors import UserFacingError
+    class BrokenAdr(SchemaRoutingArchitectureModel):
+        def stream(self, messages):
+            if "driver" in self.schema.get("properties", {}):
+                yield AIMessage(content=json.dumps({"title": "t", "decision": "x", "rationale": "",
+                    "driver": "simplicity", "options_considered": [], "baseline_refs": [],
+                    "evidence": [], "affected_repositories": [], "executes_concept_ids": []}))
+                return
+            yield from super().stream(messages)
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw:
+        BrokenAdr(stage, kw.get("schema") or {}) if stage == "architecture" else FakeModel(stage))
+    with pytest.raises(UserFacingError) as ei:
+        build_graph(UsageLog("s")).invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE},
+                                           {"configurable": {"thread_id": "broken-adr"}})
+    assert "architecture" in ei.value.render()
 
 def test_tests_merged_body_validated_at_stage(monkeypatch):
     """Tests: model fills prose per slot, code merges and validates EVERY

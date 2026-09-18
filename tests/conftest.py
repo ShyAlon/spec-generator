@@ -12,8 +12,9 @@ def _bulk_mode_default(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_llm_call_budget(monkeypatch):
-    """Each test is one run: the run-wide LLM call budget starts clean."""
+    """Each test is one isolated run, independent of the developer's shared .env."""
     monkeypatch.setattr(mc, "_CALLS_USED", 0)
+    monkeypatch.setattr(mc, "_DOTENV", {})
 
 
 SYSTEM_BASELINE = {

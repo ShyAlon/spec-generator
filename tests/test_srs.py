@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE
+from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
 """SRS redesign: standalone artifact, deterministic carry, guards, reference doctrine."""
 import json
 
@@ -28,9 +28,9 @@ def _run(monkeypatch, srs_body, thread="srs1"):
         def invoke(self, messages):
             self.calls += 1
             if self.stage == "architecture":
-                return AIMessage(content=json.dumps(self._architecture_answer(messages[-1].content)))
+                return AIMessage(content=json.dumps(self._architecture_answer("\n".join(str(m.content) for m in messages))))
             return AIMessage(content=json.dumps(payloads[self.stage]))
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else FM(stage))
     g = build_graph(UsageLog("s"))
     return g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": thread}})
 
@@ -55,15 +55,16 @@ def test_structure_carried_deterministically(monkeypatch):
     intent = dict(INTENT, glossary={"TMS": "transport mgmt"},
                   constraints=["mandated stack"],
                   assumption_items=[{"statement": "feeds stay up", "source_turns": [0]}],
-                  open_questions=["who owns the data?"])
+                  open_questions=["who owns the data?"],
+                  source_turns={"constraints": [0]})
     payloads = dict(PAYLOADS, srs=_fills(SRS))
     class FM(FakeModel):
         def invoke(self, messages):
             self.calls += 1
             if self.stage == "architecture":
-                return AIMessage(content=json.dumps(self._architecture_answer(messages[-1].content)))
+                return AIMessage(content=json.dumps(self._architecture_answer("\n".join(str(m.content) for m in messages))))
             return AIMessage(content=json.dumps(payloads[self.stage]))
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: FM(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else FM(stage))
     g = build_graph(UsageLog("s"))
     r = g.invoke({"intent_model": intent, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "carry"}})
     srs = r["bundle"]["_srs"]

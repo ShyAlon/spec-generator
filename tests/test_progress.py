@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE
+from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
 """Progress events + crash-resume for the generation pipeline."""
 import json
 import sqlite3
@@ -95,7 +95,7 @@ class FakeModel:
     def invoke(self, messages):
         self.calls += 1
         if self.stage == "architecture":
-            return AIMessage(content=json.dumps(self._architecture_answer(messages[-1].content)))
+            return AIMessage(content=json.dumps(self._architecture_answer("\n".join(str(m.content) for m in messages))))
         return AIMessage(content=json.dumps(PAYLOADS[self.stage]))
 
     def stream(self, messages):
@@ -110,7 +110,7 @@ class FakeModel:
 @pytest.fixture
 def fake_models(monkeypatch):
     box = {}
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: box.setdefault(stage, FakeModel(stage)))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else box.setdefault(stage, FakeModel(stage)))
     return box
 
 
@@ -151,7 +151,7 @@ def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
     fake_models["architecture"] = FakeModel("architecture")
     g2 = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
     monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: fake_models.setdefault(stage, FakeModel(stage)))
+                        lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else fake_models.setdefault(stage, FakeModel(stage)))
     r = g2.invoke(None, cfg)
     assert "bundle" in r
     assert "needs" not in fake_models, "needs are deterministically carried, never paid"

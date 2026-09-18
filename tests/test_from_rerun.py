@@ -233,7 +233,8 @@ def test_only_stage_graph_ends_after_named_node(monkeypatch):
     result = build_graph(UsageLog("s"), only_stage="items").invoke(
         state, {"configurable": {"thread_id": "only-items"}})
     assert "items" in result
-    assert set(box) == {"items"}
+    assert set(box) == {"items", "architecture"}
+    assert box["architecture"].calls == 0
 
 
 def test_default_outdir_lands_in_workspace_sibling_artifacts(tmp_path, monkeypatch):
@@ -340,7 +341,7 @@ def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(mon
 
     class AcceptanceModel(FakeModel):
         def invoke(self, messages):
-            prompt = messages[-1].content
+            prompt = "\n".join(str(m.content) for m in messages)
             if self.stage == "srs" and "Author ONE requirement fill" in prompt:
                 from langchain_core.messages import AIMessage
                 self.calls += 1

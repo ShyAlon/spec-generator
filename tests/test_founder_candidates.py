@@ -263,7 +263,7 @@ class _InsistentReact(_MicroModel):
                 "THE STACK KEY TO DECIDE: mobile_framework" in m.content for m in messages):
             yield _AIMessage(content=json.dumps({"technology": "React", "off_list_justification": None, "baseline_refs": []}))
             return
-        if "driver" in props and '"migration": true' not in messages[-1].content:
+        if "driver" in props and '"migration": true' not in "\n".join(str(m.content) for m in messages):
             yield _AIMessage(content=json.dumps({
                 "title": "Frontend: React", "decision": "Use React",
                 "rationale": "Web-first PWA is a deliberate product call: one codebase now, "

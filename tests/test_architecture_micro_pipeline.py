@@ -132,7 +132,7 @@ class _MicroModel:
             out = {"stack_keys": self.plan_keys or (["language", self.depart_key] if self.depart
                                   else ["language", "database"])}
         elif props == {"technology", "off_list_justification", "baseline_refs"}:
-            prompt = messages[-1].content
+            prompt = "\n".join(str(m.content) for m in messages)
             if (f"THE STACK KEY TO DECIDE: {self.depart_key}" in prompt and self.depart):
                 out = {"technology": self.DEPART_VALUES[self.depart_key][0], "off_list_justification": None, "baseline_refs": []}
             elif any(f"THE STACK KEY TO DECIDE: {k}" in m.content for k in ("database", "persistence")
@@ -147,7 +147,7 @@ class _MicroModel:
         elif props == {"position"}:
             out = {"position": "fast"}
         elif "driver" in props:
-            prompt = messages[-1].content
+            prompt = "\n".join(str(m.content) for m in messages)
             migration = '"migration": true' in prompt
             out = {"title": self.DEPART_VALUES[self.depart_key][1] if migration else "t",
                    "decision": "Adopt the replacement", "rationale": "shared transactional state",
@@ -229,7 +229,7 @@ def test_per_slot_resume_skips_completed_entries(monkeypatch, tmp_path):
 
     class CrashSecond(_MicroModel):
         def stream(self, messages):
-            if "THE STACK KEY TO DECIDE: database" in messages[-1].content:
+            if "THE STACK KEY TO DECIDE: database" in "\n".join(str(m.content) for m in messages):
                 raise RuntimeError("crash on second entry")
             yield from super().stream(messages)
 
@@ -350,7 +350,7 @@ def test_empty_answer_gets_targeted_proposal_feedback(monkeypatch):
                 if seen["n"] == 1:
                     yield AIMessage(content=json.dumps({"technology": "", "off_list_justification": None, "baseline_refs": []}))
                     return
-                seen["retry_feedback"] = messages[-1].content
+                seen["retry_feedback"] = "\n".join(str(m.content) for m in messages)
                 yield AIMessage(content=json.dumps({"technology": "Keycloak", "off_list_justification": None, "baseline_refs": []}))
                 return
             yield from super().stream(messages)
@@ -529,7 +529,7 @@ def test_entry_point_shape_cannot_answer_a_technology_slot():
     monkeypatch.undo()
 
 
-def test_wrong_kind_value_rejected_deterministically():
+def test_wrong_kind_value_rejected_deterministically(monkeypatch):
     # P3 layer 2, deterministic (the regen's encryption='Pydantic'): a value in a
     # KNOWN lexicon of the wrong kind cannot answer the slot. No model call.
     class PydanticAnswer(_MicroModel):
@@ -545,7 +545,6 @@ def test_wrong_kind_value_rejected_deterministically():
                 return
             yield from super().stream(messages)
 
-    monkeypatch = __import__("pytest").MonkeyPatch()
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **k: PydanticAnswer(
                             stage, k.get("schema") or {}, [],
@@ -556,10 +555,9 @@ def test_wrong_kind_value_rejected_deterministically():
     enc = next(e for e in r["architecture"]["stack_entries"] if e["key"] == "encryption")
     assert enc["value"] == "AES-256"           # the wrong-kind candidate was rejected
     assert enc["migration_adr_id"] is not None
-    monkeypatch.undo()
 
 
-def test_founder_constraint_driver_needs_a_recorded_preference():
+def test_founder_constraint_driver_needs_a_recorded_preference(monkeypatch):
     # P1 (the regen's ADR-1 'Auth0'): founder_constraint with NO founder tech
     # preferences on record is impossible, not merely unproven - per-ADR retry
     class OverclaimingAdr(_MicroModel):
@@ -569,7 +567,7 @@ def test_founder_constraint_driver_needs_a_recorded_preference():
                 migration = any('"migration": true' in m.content for m in messages)
                 driver = "founder_constraint"
                 rat = "the founder mandated it"
-                if any("never mandated" in m.content for m in messages):
+                if any("driver founder_constraint requires" in m.content for m in messages):
                     driver, rat = "ecosystem_maturity", "mature ecosystem"
                 yield AIMessage(content=json.dumps(
                     {"title": "Adopt PostgreSQL", "decision": "Use PostgreSQL",
@@ -581,7 +579,6 @@ def test_founder_constraint_driver_needs_a_recorded_preference():
                 return
             yield from super().stream(messages)
 
-    monkeypatch = __import__("pytest").MonkeyPatch()
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **k: OverclaimingAdr(stage, k.get("schema") or {}, [], depart=True))
     r = build_graph(UsageLog("s")).invoke(
@@ -590,10 +587,9 @@ def test_founder_constraint_driver_needs_a_recorded_preference():
     drivers = [d["driver"] for d in r["architecture"]["decisions"]]
     assert "founder_constraint" not in drivers
     assert "ecosystem_maturity" in drivers
-    monkeypatch.undo()
 
 
-def test_mandate_language_under_another_driver_is_rejected():
+def test_mandate_language_under_another_driver_is_rejected(monkeypatch):
     # P1 consistency: claiming the founder's mandate in prose while the driver
     # says something else is the same lie with a quieter label
     class QuietlyOverclaimingAdr(_MicroModel):
@@ -615,14 +611,12 @@ def test_mandate_language_under_another_driver_is_rejected():
                 return
             yield from super().stream(messages)
 
-    monkeypatch = __import__("pytest").MonkeyPatch()
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **k: QuietlyOverclaimingAdr(stage, k.get("schema") or {}, [], depart=True))
     r = build_graph(UsageLog("s")).invoke(
         {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
         {"configurable": {"thread_id": "quiet-overclaim"}})
     assert all("founder" not in d["rationale"] for d in r["architecture"]["decisions"])
-    monkeypatch.undo()
 
 
 def test_js_suffixed_technology_names_are_not_entry_points():
@@ -648,7 +642,7 @@ def test_js_suffixed_technology_names_are_not_entry_points():
     assert _wrong_kind("data_visualization_library", "FastAPI") == "framework"
 
 
-def test_d3js_accepted_for_a_visualization_slot_end_to_end():
+def test_d3js_accepted_for_a_visualization_slot_end_to_end(monkeypatch):
     # the exact answer his run died on: D3.js for data_visualization_library,
     # declared as a departure (empty refs) - must land with a migration ADR,
     # not a contract failure.
@@ -662,7 +656,6 @@ def test_d3js_accepted_for_a_visualization_slot_end_to_end():
                 return
             yield from super().stream(messages)
 
-    monkeypatch = __import__("pytest").MonkeyPatch()
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **k: D3Answer(
                             stage, k.get("schema") or {}, [],
@@ -675,7 +668,6 @@ def test_d3js_accepted_for_a_visualization_slot_end_to_end():
                if e["key"] == "data_visualization_library")
     assert viz["value"] == "D3.js"
     assert viz["migration_adr_id"] is not None
-    monkeypatch.undo()
 
 
 GREENFIELD_BASELINE = {"contract_version": "0.16.0", "baseline_id": "gf-test",
@@ -830,7 +822,7 @@ def test_conops_execution_gate_repairs_by_redrafting_adr(monkeypatch):
     assert any("concept:pwa" in d["executes_concept_ids"] for d in result["architecture"]["decisions"])
 
 
-def test_conops_execution_gate_exhaustion_is_human_readable(monkeypatch):
+def test_conops_execution_slot_exhaustion_is_human_readable(monkeypatch):
     class OmitsConcept(_MicroModel):
         def stream(self, messages):
             for chunk in super().stream(messages):
@@ -843,10 +835,9 @@ def test_conops_execution_gate_exhaustion_is_human_readable(monkeypatch):
         build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-fail"}})
     rendered=ei.value.render()
     assert rendered.startswith("Error: stage 'architecture'")
-    assert "still failed deterministic gates" in rendered
+    assert "model's output does not satisfy the contract" in rendered
     assert "Likely cause:" in rendered and "concept:pwa" in rendered
     assert "Next:" in rendered
-
 
 def test_pwa_python_fastapi_adrs_do_not_dedupe_and_repair_reaches_body(monkeypatch):
     from spec_generator.graph import _dedupe_adr_slots
@@ -865,19 +856,17 @@ def test_conops_repair_feedback_is_in_adr_body_prompt(monkeypatch):
     seen=[]
     class CaptureRepair(_MicroModel):
         def stream(self,messages):
-            props=set(self.schema.get("properties",{}));prompt=messages[-1].content
+            props=set(self.schema.get("properties",{}));prompt="\n".join(str(m.content) for m in messages)
             if "driver" in props:
                 seen.append(prompt)
-                if "FAILED THESE ACTIVE DETERMINISTIC GATES" in prompt:
-                    yield AIMessage(content=json.dumps({"title":"Adopt Progressive Web Application (PWA)","decision":"Execute the PWA concept","rationale":"confirmed concept","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":["concept:pwa"]}));return
+                if "must declare these exact ids" in prompt:
+                    yield AIMessage(content=json.dumps({"title":"Adopt PWA","decision":"Execute PWA","rationale":"confirmed","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":["concept:pwa"]}));return
                 yield AIMessage(content=json.dumps({"title":"Other","decision":"Other","rationale":"other","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":[]}));return
             yield from super().stream(messages)
     monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: CaptureRepair(stage,k.get("schema") or {},[]))
     result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-body-feedback"}})
-    assert any("CONOPS concept id 'concept:pwa'" in p for p in seen)
-    from spec_generator.graph import _check_conops_execution
-    _check_conops_execution(__import__('vmodel_contracts').ArchitectureOverview.model_validate(result['architecture']),_pwa_conops())
-
+    assert any("must declare these exact ids" in p for p in seen)
+    assert any("concept:pwa" in d["executes_concept_ids"] for d in result["architecture"]["decisions"])
 
 def test_advisory_subject_uses_each_fixed_slot_not_repeated_model_title():
     from spec_generator.graph import _dedupe_adr_slots
@@ -888,30 +877,6 @@ def test_advisory_subject_uses_each_fixed_slot_not_repeated_model_title():
     assert _dedupe_adr_slots(slots,bodies)==[]
     assert [s['slug'] for s in slots]==slugs
 
-
-def test_gate_repair_accumulates_conops_and_candidate_requirements(monkeypatch):
-    prompts=[]
-    class BothMissingThenFixed(_MicroModel):
-        def stream(self,messages):
-            props=set(self.schema.get('properties',{}));prompt=messages[-1].content
-            if 'driver' in props:
-                prompts.append(prompt)
-                if 'THE PREVIOUS ARCHITECTURE FAILED THESE ACTIVE DETERMINISTIC GATES' in prompt:
-                    migration='"migration": true' in prompt
-                    yield AIMessage(content=json.dumps({"title":"Execute PWA with Kubernetes","decision":"Build the Progressive Web Application (PWA) and deploy with Kubernetes","rationale":"PWA executes the confirmed concept; Kubernetes provides horizontal scaling beyond curated choices","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":["scaling requirement"] if migration else [],"affected_repositories":["spec-generator"] if migration else [],"executes_concept_ids":["concept:pwa"]}));return
-            yield from super().stream(messages)
-    class OffListModel(BothMissingThenFixed):
-        def stream(self,messages):
-            if any('THE STACK KEY TO DECIDE: scalability_strategy' in m.content for m in messages):
-                yield AIMessage(content=json.dumps({"technology":"Kubernetes","off_list_justification":"horizontal scaling beyond curated candidates","baseline_refs":[]}));return
-            yield from super().stream(messages)
-    monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**k: OffListModel(stage,k.get('schema') or {},[],plan_keys=['language','database','scalability_strategy']))
-    result=build_graph(UsageLog('s')).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"both-gates"}})
-    repair=next(p for p in prompts if 'FAILED THESE ACTIVE' in p)
-    assert 'candidate-grounding' in repair
-    arch=__import__('vmodel_contracts').ArchitectureOverview.model_validate(result['architecture'])
-    from spec_generator.graph import _check_conops_execution,_check_candidate_grounding
-    _check_conops_execution(arch,_pwa_conops());_check_candidate_grounding(arch,dict(INTENT))
 
 def test_stack_is_exact_projection_and_repeated_titles_do_not_bind_identity():
     from pydantic import ValidationError
