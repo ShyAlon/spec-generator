@@ -151,7 +151,9 @@ STRICT JSON array of {slug} objects - slugs only, no other fields ([] when there
 optional decisions)."""
 
 ARCH_ADR_BODY = """Write ONE architecture decision record against its fixed slot: title, the
-decision itself, the rationale, its driver, the rejected options.
+decision itself, the rationale, its driver, the rejected options. Never use the ADR id as the
+decision (for example, "consolidate into ADR-2"); name the concrete architecture choice.
+Slots shown as research_required are unresolved: do not claim, imply, or select a technology for them.
 DRIVER DISCIPLINE (hard rule, checked mechanically): founder_constraint is legal ONLY when
 the founder's stated tech preferences in the context actually mandate this decision - name
 the preference in the text. When no founder preference is on record, the founder mandated

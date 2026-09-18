@@ -2283,6 +2283,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "rejected": []}
                     if not body["title"] or not body["decision"] or not body["rationale"]:
                         raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
+                    self_ref_fields = [name for name in ("title", "decision", "rationale")
+                                       if _re.search(rf"\b{_re.escape(slot['decision_id'])}\b", body[name], _re.IGNORECASE)]
+                    if self_ref_fields:
+                        raise ModelStructureError(
+                            f"{slot['decision_id']}: self-reference in {self_ref_fields} does not state the "
+                            "architecture decision - replace the ADR id with the concrete choice and consequence")
                     if any(not isinstance(opt, dict) or not str(opt.get("option", "")).strip()
                            or not str(opt.get("reason", "")).strip()
                            for opt in body["options_considered"]):

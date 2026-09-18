@@ -936,3 +936,35 @@ def test_phi_echo_of_all_required_adr_slugs_is_removed_without_model_retry(capsy
     err = capsys.readouterr().err
     assert "boundary=adr-slug-collision" in err
     assert "decision=remove-echoed count=3" in err
+
+
+def test_self_referential_adr_body_is_reasked_locally(monkeypatch):
+    seen=[]
+    class SelfRefThenConcrete(_MicroModel):
+        def stream(self, messages):
+            prompt="\n".join(str(m.content) for m in messages)
+            if "driver" in self.schema.get("properties", {}):
+                seen.append(prompt)
+                if "self-reference" not in prompt:
+                    yield AIMessage(content=json.dumps({"title":"Consolidate ADR-1","decision":"Use ADR-1","rationale":"ADR-1 owns this","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":[]})); return
+                yield AIMessage(content=json.dumps({"title":"Choose Python","decision":"Use Python","rationale":"Matches the existing runtime","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":[]})); return
+            yield from super().stream(messages)
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: SelfRefThenConcrete(stage,k.get("schema") or {},[],plan_keys=["language"]))
+    result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},{"configurable":{"thread_id":"self-ref"}})
+    assert len(seen) >= 2 and "self-reference" in seen[1]
+    owner = next(d for d in result["architecture"]["decisions"] if d["title"] == "Choose Python")
+    assert "ADR-" not in owner["decision"]
+
+
+def test_assembly_keeps_research_unresolved_and_materializes_every_nfr():
+    from spec_generator.graph import _assemble_architecture
+    merged=_assemble_architecture(session_id="s",baseline_id="b",entries={
+      "language":{"key":"language","value":"Python","technology_id":"tech:python","baseline_refs":[]},
+      "hosting":{"key":"hosting","status":"research_required","research_brief":"Compare current regional terms"}},
+      comp_slots=[],comp_bodies={},adr_slots=[{"decision_id":"ADR-1","slug":"language","migration":False,"authorizes":["stack:language"]}],
+      adr_bodies={"ADR-1":{"title":"Choose Python","decision":"Use Python","rationale":"fit","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":[],"rejected":[]}},
+      nfr={"R-NF-1":"p95 latency is measured and held under 300 ms"})
+    assert [e["key"] for e in merged["stack_entries"]] == ["language"]
+    assert merged["stack_entry_dispositions"] == [{"key":"hosting","status":"research_required","research_brief":"Compare current regional terms"}]
+    assert merged["decisions"][0]["technology_selections"][0]["display_name"] == "Python"
+    assert merged["non_functionals"] == {"R-NF-1":"p95 latency is measured and held under 300 ms"}
