@@ -1637,19 +1637,24 @@ def _clear_feedback(state: GenState, stage: str) -> dict:
     return {k: v for k, v in (state.get("gate_feedback") or {}).items() if k != stage}
 
 
+REVIEW_MAX_FINDINGS = 24
+REVIEW_MAX_TARGET_IDS = 8
+REVIEW_MAX_FIX_CHARS = 320
+
+
 def _normalized_review_fixes(value) -> list[dict]:
     out = []
-    for fix in value or []:
+    for fix in (value or [])[:REVIEW_MAX_FINDINGS]:
         if isinstance(fix, str):
             out.append({"scope": "systemic", "target_ids": [], "fix": fix})
         elif isinstance(fix, dict) and str(fix.get("fix") or "").strip():
             scope = fix.get("scope") if fix.get("scope") in ("requirement", "spec", "test", "systemic") else "systemic"
-            ids = [str(x) for x in (fix.get("target_ids") or []) if str(x)][:8]
+            ids = [str(x) for x in (fix.get("target_ids") or []) if str(x)][:REVIEW_MAX_TARGET_IDS]
             if scope != "systemic" and not ids:
                 scope = "systemic"
             fix_text = str(fix["fix"]).strip()
-            if len(fix_text) > 320:
-                fix_text = fix_text[:317].rstrip() + "..."
+            if len(fix_text) > REVIEW_MAX_FIX_CHARS:
+                fix_text = fix_text[:REVIEW_MAX_FIX_CHARS - 3].rstrip() + "..."
             out.append({"scope": scope, "target_ids": ids, "fix": fix_text})
     return out
 

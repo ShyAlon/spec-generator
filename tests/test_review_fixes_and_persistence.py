@@ -252,7 +252,6 @@ def test_large_review_is_requirement_chunked_and_resumable(monkeypatch):
     # review chunks are one requirement and each successful chunk persists.
     import inspect
     source=inspect.getsource(build_graph)
-    module_source=Path(__import__("spec_generator.graph",fromlist=["x"]).__file__).read_text()
     assert "chunks = [[requirement] for requirement in requirements]" in source
     assert 'partials.save("review", saved)' in source
     assert 'partials.clear("review")' in source
@@ -263,15 +262,18 @@ def test_large_review_is_requirement_chunked_and_resumable(monkeypatch):
 def test_review_batches_one_requirement_and_caps_finding_shape():
     import inspect
     from spec_generator.graph import build_graph
-    from spec_generator.schemas import for_stage
+    from spec_generator.graph import _normalized_review_fixes
     source=inspect.getsource(build_graph)
-    module_source=Path(__import__("spec_generator.graph",fromlist=["x"]).__file__).read_text()
     assert "chunks = [[requirement] for requirement in requirements]" in source
     assert "max_findings=24 max_fix_chars=320" in source
     assert "Never restate requirements, specs, tests, or rationale" in source
     # Grammar remains Ollama-safe; caps are enforced after parse.
-    assert 'fix_text = fix_text[:317].rstrip() + "..."' in module_source
-    assert '][:8]' in module_source
+    findings = [{"scope": "requirement", "target_ids": [f"R-{j}" for j in range(12)],
+                 "fix": "x" * 400} for _ in range(30)]
+    normalized = _normalized_review_fixes(findings)
+    assert len(normalized) == 24
+    assert all(len(f["target_ids"]) == 8 for f in normalized)
+    assert all(len(f["fix"]) == 320 and f["fix"].endswith("...") for f in normalized)
 
 
 def test_review_partial_key_is_stable_per_single_requirement_batch():
