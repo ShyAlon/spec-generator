@@ -756,3 +756,11 @@ def test_clean_traced_constraint_is_not_linted_as_requirement_solution_language(
     draft={"functional":[],"non_functional":[],"design_constraints":[{
       "constraint_id":"DC-1","statement":"Use AES-256","source_turns":[9]}]}
     assert text_qa.srs_draft_findings(draft,"turn 9 mandates AES-256") == []
+
+
+def test_reviewer_doctrine_allows_algorithms_and_nonbinding_examples():
+    import inspect
+    source=inspect.getsource(build_graph)
+    assert "Algorithms and algorithm families (AES-256, Argon2, bcrypt, SHA-256)" in source
+    assert "non-binding examples with 'like', 'such as', 'e.g.', or 'for example'" in source
+    assert "imperative choices such as 'use OAuth' and API directives remain defects" in source
