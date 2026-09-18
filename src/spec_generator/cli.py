@@ -291,7 +291,8 @@ def _invalidate_from(graph, cfg: dict, stage: str, review_mode: bool) -> None:
         "decision=rewind-current-and-downstream")
 
 
-def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool = False) -> dict:
+def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool = False,
+                    auto_approve: bool = False) -> dict:
     """ADR-0019 review gates (opt-in via --review): after the SRS and after the
     architecture, the founder accepts, edits (JSON, contract-validated), sends
     feedback (stage re-runs with it), or rejects. Crash mid-gate: rerun the
@@ -347,10 +348,17 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
         if advisories:
             print(f"(review advisories: {outdir}/gate_{gate}.advisories.json)", file=sys.stderr)
         print(f"(full artifact: {outdir}/gate_{gate}.md | editable JSON: {outdir}/gate_{gate}.json)", file=sys.stderr)
-        while True:
-            action = input("[a]ccept / [e]dit / [f]eedback / [r]eject? ").strip().lower()
-            if action in ("a", "e", "f", "r"):
-                break
+        if auto_approve:
+            action = "a"
+            record={"event":"gate.auto_decision", "gate":gate, "action":"accept", "mode":"hands_free",
+                    "artifact":f"gate_{gate}.json", "advisory_count":len(advisories)}
+            with (outdir/"audit.jsonl").open("a") as fh: fh.write(json.dumps(record)+"\n")
+            print(f"boundary=hands-free-gate gate={gate} action=accept advisories={len(advisories)} decision=continue", file=sys.stderr)
+        else:
+            while True:
+                action = input("[a]ccept / [e]dit / [f]eedback / [r]eject? ").strip().lower()
+                if action in ("a", "e", "f", "r"):
+                    break
         if action == "r":
             print(f"Rejected at the {gate} gate. The run is checkpointed - {_mc._rerun_guidance(gate)}.", file=sys.stderr)
             raise SystemExit(1)
@@ -633,6 +641,8 @@ def main() -> None:
                     help="opt-in human review gates after the SRS and architecture stages")
     ap.add_argument("--expert-opinion", action="store_true",
                     help="simulate gate decisions with an LLM for test runs; records pending human review")
+    ap.add_argument("--auto-approve", action="store_true",
+                    help="accept SRS/architecture gates unattended; every decision is written to audit.jsonl")
     ap.add_argument("--from", dest="from_stage", metavar="STAGE", default=None,
                     help="rewind the checkpoint: re-run STAGE and everything after it under the "
                          "current code, earlier stages preserved (stages: needs, srs, architecture, "
@@ -902,7 +912,7 @@ def main() -> None:
     if args.review:
         result = _run_with_gates(graph, cfg,
                                  {"intent_model": intent, "system_baseline": baseline, "conops": conops},
-                                 outdir, resume=resume)
+                                 outdir, resume=resume, auto_approve=args.auto_approve)
         if args.expert_opinion:
             opinions=(graph.get_state(cfg).values.get("expert_opinions") or [])
             _atomic_write(outdir / "expert-opinions.json",json.dumps({"mode":"simulated_expert_opinion","founder_approved":False,"human_review_required":True,"decisions":opinions},indent=2))

@@ -793,3 +793,14 @@ def test_six_live_srs_objections_invalidate_fabrication_then_approve_advisories(
     out=capsys.readouterr().err
     assert "decision=invalidate-objection" in out and "fabricated evidence" in out
     assert "LOW-SPECIFICITY" not in out
+
+
+def test_hands_free_gate_accepts_and_audits_without_input(monkeypatch, tmp_path):
+    from spec_generator.cli import _run_with_gates
+    graph, _ = _review_graph(monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda *_: (_ for _ in ()).throw(AssertionError("prompted")))
+    result = _run_with_gates(graph,{"configurable":{"thread_id":"auto"}},
+        {"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},tmp_path,auto_approve=True)
+    assert result.get("bundle")
+    rows=[json.loads(x) for x in (tmp_path/"audit.jsonl").read_text().splitlines()]
+    assert [(x["gate"],x["action"]) for x in rows]==[("srs","accept"),("architecture","accept")]
