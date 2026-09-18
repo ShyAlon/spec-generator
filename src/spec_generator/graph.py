@@ -1899,6 +1899,26 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         data = _run_srs_fill_stage(state, feedback)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
+        # Mechanical pre-review pass: one targeted rewrite gets exact
+        # rule/location/span evidence before an expert ever sees the draft.
+        interview_corpus = json.dumps(state["intent_model"])
+        findings = text_qa.srs_draft_findings(data, interview_corpus)
+        if findings:
+            model_config._console_line(
+                f"     - boundary=srs-self-check findings={len(findings)} classes={sorted({f['rule'] for f in findings})} "
+                "decision=targeted-rewrite-before-expert")
+            for finding in findings:
+                model_config._console_line(
+                    f"       rule={finding['rule']} location={finding['location']} offending_span={finding['span']!r}")
+            data = _run_srs_fill_stage(
+                {**state, "srs": data},
+                "DETERMINISTIC SRS SELF-CHECK - fix every finding before review:\n" + json.dumps(findings))
+            data.setdefault("session_id", state["intent_model"]["session_id"])
+            data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
+            remaining = text_qa.srs_draft_findings(data, interview_corpus)
+            model_config._console_line(
+                f"     - boundary=srs-self-check-rewrite initial_findings={len(findings)} remaining_findings={len(remaining)} "
+                f"decision={'accept-cleaned-draft' if not remaining else 'preserve-findings-for-expert'}")
         # mechanical guards: solution-agnostic + grounded (ADR-0015 doctrine)
         founder_text = json.dumps({k: state["intent_model"].get(k) for k in
                                    ("problem_statement", "core_value_proposition", "in_scope")})
