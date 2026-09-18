@@ -389,9 +389,9 @@ def test_expert_park_error_carries_both_prior_objections():
     import inspect
     from spec_generator.graph import build_graph
     source = inspect.getsource(build_graph)
-    assert "Reviewer objections:" in source
-    assert "rationale={o.get('rationale')" in source
-    assert "feedback={o.get('feedback')" in source
+    assert "format_expert_review_rounds(prior_regenerations)" in source
+    assert "for line in objections.splitlines()" in source
+    assert "boundary=expert-park" in source
 
 
 def test_expert_review_bar_keeps_polish_under_approve_and_regenerates_only_blockers():
@@ -451,3 +451,22 @@ def test_expert_garbage_gets_exact_format_retry(monkeypatch):
             {"configurable":{"thread_id":"garbage-expert"}})
     assert len(prompts) == 2
     assert "FORMAT ERROR" in prompts[1] and "FEEDBACK:" in prompts[1]
+
+
+def test_parked_gate_objections_are_sectioned_and_wrapped():
+    from vmodel_contracts.runtime import format_expert_review_rounds
+    rendered=format_expert_review_rounds([
+      {"rationale":"First rationale.","feedback":"Fix trace links. Remove solution language."},
+      {"rationale":"Second rationale.","feedback":"Add measurable criteria. Link requirements by id."}],width=60)
+    assert "Round 1\n\nRationale:" in rendered and "Round 2\n\nRationale:" in rendered
+    assert "Feedback:\n  1." in rendered and "\n  2." in rendered
+    assert " | round" not in rendered
+
+
+def test_each_regeneration_reviews_current_artifact_not_stale_snapshot():
+    import inspect
+    source=inspect.getsource(build_graph)
+    assert "artifact_snapshot = state.get(artifact_key)" in source
+    assert "json.dumps(artifact_snapshot" in source
+    assert '"artifact_sha256": artifact_fingerprint' in source
+    assert "prior_regenerations={len(prior_regenerations)}" in source

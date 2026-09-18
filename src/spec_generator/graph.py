@@ -2784,21 +2784,30 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                            if o.get("gate") == stage_key and o.get("action") == "regenerate"]
                     if len(prior_regenerations) >= 2:
                         from .errors import UserFacingError
-                        objections = " | ".join(
-                            f"round {i}: rationale={o.get('rationale') or '(none)'}; "
-                            f"feedback={o.get('feedback') or '(none)'}"
-                            for i, o in enumerate(prior_regenerations, 1)
-                        )
+                        from vmodel_contracts.runtime import format_expert_review_rounds
+                        objections = format_expert_review_rounds(prior_regenerations)
+                        model_config._console_line(
+                            f"  WARNING boundary=expert-park gate={stage_key} regeneration_rounds={len(prior_regenerations)} "
+                            "limit=2 decision=park-for-human-review")
+                        for line in objections.splitlines():
+                            model_config._console_line("  " + line)
                         raise UserFacingError(
                             f"expert review parked the {stage_key} gate for human review after two regeneration rounds.",
                             "the independent reviewer requested changes twice; another automatic full-stage rewrite "
-                            "would be an unbounded token loop, not stronger evidence. Reviewer objections: " + objections,
+                            "would be an unbounded token loop, not stronger evidence.\n\n" + objections,
                             "rerun the same command without --expert-opinion to inspect and decide this gate manually; "
                             "the latest artifact and checkpoint are preserved, along with the reviewer objections above.")
                     artifact_label = {
                         "srs": "Software Requirements Specification (SRS): requirements and acceptance criteria, not executable tests",
                         "architecture": "system architecture: stack, components, ADRs, and non-functional positions",
                     }[stage_key]
+                    artifact_snapshot = state.get(artifact_key)
+                    artifact_fingerprint = __import__("hashlib").sha256(
+                        json.dumps(artifact_snapshot, sort_keys=True, default=str).encode()).hexdigest()[:12]
+                    model_config._console_line(
+                        f"     - boundary=expert-input gate={stage_key} artifact_key={artifact_key} "
+                        f"artifact_sha256={artifact_fingerprint} prior_regenerations={len(prior_regenerations)} "
+                        "decision=review-current-checkpoint-artifact")
                     payload=(f"Act as an independent expert reviewer. You are judging this exact artifact type: {artifact_label}. "
                              "Judge it for its own V-model stage; do not demand artifacts owned by a later stage. "
                              "First line: APPROVE or REGENERATE. APPROVE when there is no "
@@ -2857,7 +2866,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             f"Expected first line APPROVE or REGENERATE (with FEEDBACK for regeneration). Output began: {text[:200]!r}",
                             "rerun the same command; the checkpoint is preserved and no model upgrade is required.")
                     record={"gate":stage_key,"mode":"simulated_expert_opinion","human_review_required":True,
-                            "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"]}
+                            "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"],
+                            "artifact_sha256": artifact_fingerprint}
                     model_config._console_line(f"   SIMULATED EXPERT OPINION at {stage_key}: {verdict['action']} - human review still required")
                     model_config._console_line(f"     rationale: {verdict['rationale']}")
                     if verdict["action"] == "regenerate":
