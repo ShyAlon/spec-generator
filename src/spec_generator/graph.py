@@ -2848,6 +2848,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                              + "\nADVISORIES:\n" + json.dumps(advisories))
                     from .errors import UserFacingError
                     text="";verdict=None;objections=[];upstream_advisories=[];specificity_errors=[];retry_feedback=None
+                    low_specificity_feedback="";low_specificity_rationale="No separate rationale supplied."
                     for attempt in (1,2):
                         try:
                             raw=_invoke("expert_opinion",payload,log,progress,
@@ -2882,6 +2883,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             objections, upstream_advisories, specificity_errors = classify_expert_objections(
                                 verdict["feedback"], stage_key, known_artifacts)
                             if specificity_errors:
+                                low_specificity_feedback = verdict["feedback"]
+                                low_specificity_rationale = verdict["rationale"]
                                 retry_feedback = ("SPECIFICITY ERROR: " + "; ".join(specificity_errors) + ". Return REGENERATE with "
                                                   "one OBJECTION line per blocker using artifact, rule, location, and resolution fields.")
                                 verdict = None
@@ -2912,9 +2915,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     if verdict is None or (verdict["action"]=="regenerate" and not verdict["feedback"]):
                         from .errors import UserFacingError
                         if specificity_errors:
+                            from vmodel_contracts.runtime import format_expert_review_rounds
+                            low_specificity = format_expert_review_rounds([{
+                                "rationale": low_specificity_rationale,
+                                "feedback": low_specificity_feedback or text,
+                                "artifact_revision": artifact_revision["revision"],
+                                "artifact_saved_at": artifact_revision["saved_at"],
+                                "artifact_sha256": artifact_fingerprint,
+                            }])
                             raise UserFacingError(f"expert opinion returned low-specificity {stage_key} objections twice.",
-                                "LOW-SPECIFICITY: " + "; ".join(specificity_errors) + f". Output began: {text[:300]!r}",
-                                "inspect the preserved output; each objection must name artifact, rule, location, and resolution.")
+                                "LOW-SPECIFICITY: " + "; ".join(specificity_errors) + "
+
+" + low_specificity,
+                                "inspect the numbered objections above; each blocker must name artifact, rule, location, and resolution.")
                         raise UserFacingError(f"expert opinion could not parse the {stage_key} gate verdict.",
                             f"Expected first line APPROVE or REGENERATE (with structured OBJECTION feedback). Output began: {text[:200]!r}",
                             "rerun the same command; the checkpoint is preserved and no model upgrade is required.")

@@ -670,3 +670,26 @@ def test_live_prose_srs_objection_approves_architecture_as_advisory(monkeypatch,
     assert '"AES-256"' in advisory["location"] and '"OAuth"' in advisory["location"]
     output=capsys.readouterr().err
     assert "LOW-SPECIFICITY" not in output and "This concerns the srs:" in output
+
+
+def test_low_specificity_error_renders_numbered_feedback_not_raw_snippet(monkeypatch):
+    from langchain_core.messages import AIMessage
+    from conftest import SYSTEM_BASELINE
+    from spec_generator.errors import UserFacingError
+    class Reviewer(FakeModel):
+        def stream(self,messages):
+            if self.stage=="expert_opinion":
+                yield AIMessage(content=("REGENERATE\nFEEDBACK: The architecture hierarchy is unclear. "
+                                         "The architecture rules are not followed.\nRATIONALE: The architecture needs work.")); return
+            yield from super().stream(messages)
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**kw:Reviewer(stage))
+    with pytest.raises(UserFacingError) as exc:
+        build_graph(UsageLog("s"),review=True,expert_opinion=True).invoke(
+          {"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},
+          {"configurable":{"thread_id":"low-specificity-render"}})
+    rendered=exc.value.render()
+    assert "Reviewer objections:" in rendered
+    assert "Rationale:\n  The architecture needs work." in rendered
+    assert "Feedback:\n  1. The architecture hierarchy is unclear." in rendered
+    assert "2. The architecture rules are not followed." in rendered
+    assert "Output began:" not in rendered
