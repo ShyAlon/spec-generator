@@ -288,6 +288,14 @@ def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
     resolved = set(data.pop("_resolved_open_questions", []))
     data["definitions"] = intent.glossary
     data["constraints"] = intent.constraints
+    constraint_turns = intent.source_turns.get("constraints", [])
+    if intent.constraints and not constraint_turns:
+        raise ValueError("design constraints require source_turns['constraints'] provenance from the interview")
+    data["design_constraints"] = [
+        {"constraint_id": f"DC-{index}", "statement": statement,
+         "source_field": "constraints", "source_turns": list(constraint_turns)}
+        for index, statement in enumerate(intent.constraints, 1)
+    ]
     data["assumptions"] = [a.model_dump(mode="json") for a in intent.assumption_items]
     data["open_questions"] = [q for q in intent.open_questions if q not in resolved]
     # Future-phase commitments (founder decision 2026-09-13): a need deferred
@@ -2881,7 +2889,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             from vmodel_contracts.runtime import classify_expert_objections
                             known_artifacts = ("intent", "srs") if stage_key == "architecture" else ("intent",)
                             objections, upstream_advisories, specificity_errors = classify_expert_objections(
-                                verdict["feedback"], stage_key, known_artifacts)
+                                verdict["feedback"], stage_key, known_artifacts,
+                                json.dumps(artifact_snapshot, sort_keys=True, default=str))
                             if specificity_errors:
                                 low_specificity_feedback = verdict["feedback"]
                                 low_specificity_rationale = verdict["rationale"]

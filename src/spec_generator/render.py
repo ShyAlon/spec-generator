@@ -109,8 +109,13 @@ def render_srs(srs: SRSDocument) -> str:
     L.append("")
     for r in srs.non_functional:
         L += _render_req(r)
-    if srs.constraints:
-        L += ["## 6. Constraints (design-space limits)", *[f"- {c}" for c in srs.constraints], ""]
+    if srs.design_constraints:
+        L += ["## 6. Design constraints (mandated, interview-traced)"]
+        L += [f"- **{c.constraint_id}** {c.statement} _(source: interview turns {', '.join(map(str, c.source_turns))})_"
+              for c in srs.design_constraints]
+        L.append("")
+    elif srs.constraints:
+        L += ["## 6. Constraints (legacy, provenance unavailable)", *[f"- {c}" for c in srs.constraints], ""]
     if srs.assumptions:
         L += ["## 7. Assumptions (validated later, not built)",
               *[f"- {a.statement}" for a in srs.assumptions], ""]

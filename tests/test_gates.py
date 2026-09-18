@@ -693,3 +693,33 @@ def test_low_specificity_error_renders_numbered_feedback_not_raw_snippet(monkeyp
     assert "Feedback:\n  1. The architecture hierarchy is unclear." in rendered
     assert "2. The architecture rules are not followed." in rendered
     assert "Output began:" not in rendered
+
+
+def test_srs_design_constraints_are_traced_from_intent_and_rendered():
+    from spec_generator.render import render_srs
+    from vmodel_contracts import SRSDocument
+    intent=dict(INTENT)
+    intent["constraints"]=["Data at rest must use AES-256"]
+    intent["source_turns"]={**intent.get("source_turns",{}),"constraints":[9]}
+    data=srs_document_data(intent,dict(CONTRACT_SRS))
+    assert data["design_constraints"] == [{"constraint_id":"DC-1","statement":"Data at rest must use AES-256",
+      "source_field":"constraints","source_turns":[9]}]
+    rendered=render_srs(SRSDocument.model_validate(data))
+    assert "Design constraints (mandated, interview-traced)" in rendered
+    assert "DC-1" in rendered and "interview turns 9" in rendered
+
+
+def test_untraced_srs_design_constraint_is_rejected():
+    intent=dict(INTENT);intent["constraints"]=["Use AES-256"]
+    intent["source_turns"]={k:v for k,v in intent.get("source_turns",{}).items() if k!="constraints"}
+    with pytest.raises(ValueError,match="design constraints require source_turns"):
+        srs_document_data(intent,dict(CONTRACT_SRS))
+
+
+def test_reviewer_prompt_names_constraint_carveout_and_verbatim_examples():
+    import inspect
+    source=inspect.getsource(build_graph)
+    assert "solution-agnostic except its design_constraints section" in source
+    assert "valid interview source_turns" in source
+    assert "solution detail in requirement bodies" in source
+    assert "location must quote concrete verbatim examples" in source
