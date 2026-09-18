@@ -368,7 +368,7 @@ def test_expert_regenerate_prints_rationale_and_feedback(monkeypatch, capsys):
     class Reviewer(FakeModel):
         def stream(self, messages):
             if self.stage == "expert_opinion":
-                yield AIMessage(content="REGENERATE\nRATIONALE: R-2 is not measurable.\nFEEDBACK: Give R-2 a numeric threshold.")
+                yield AIMessage(content="REGENERATE\nRATIONALE: R-2 is not measurable.\nFEEDBACK: OBJECTION: artifact=srs | rule=measurable acceptance criterion | location=R-2 field acceptance | resolution=Add a numeric threshold to R-2 acceptance")
                 return
             yield from super().stream(messages)
     def factory(stage, **kw):
@@ -382,7 +382,7 @@ def test_expert_regenerate_prints_rationale_and_feedback(monkeypatch, capsys):
             {"configurable": {"thread_id": "visible-objections"}})
     err = capsys.readouterr().err
     assert "rationale: R-2 is not measurable." in err
-    assert "regeneration feedback: Give R-2 a numeric threshold." in err
+    assert "regeneration feedback: OBJECTION: artifact=srs" in err
 
 
 def test_expert_park_error_carries_both_prior_objections():
@@ -390,7 +390,7 @@ def test_expert_park_error_carries_both_prior_objections():
     from spec_generator.graph import build_graph
     source = inspect.getsource(build_graph)
     assert "format_expert_review_rounds(prior_regenerations)" in source
-    assert "for line in objections.splitlines()" in source
+    assert 'model_config._console_line("  " + line)' not in source
     assert "boundary=expert-park" in source
 
 
@@ -402,7 +402,10 @@ def test_expert_review_bar_keeps_polish_under_approve_and_regenerates_only_block
     assert "blocking contradiction, missing trace, unsafe assumption, or build-stopping ambiguity" in source
     assert "Non-blocking improvements and polish MUST stay as suggestions in RATIONALE under APPROVE" in source
     assert "REGENERATE only for a named blocking defect" in source
-    assert "FEEDBACK naming that blocker plus a concrete correction" in source
+    assert "OBJECTION: artifact=<reviewed artifact name>" in source
+    assert "rule=<named rule or criterion>" in source
+    assert "location=<section, id, field, or quoted fragment>" in source
+    assert "resolution=<concrete change>" in source
 
 
 def test_expert_json_verdict_is_extracted_without_format_retry(monkeypatch):
@@ -416,7 +419,7 @@ def test_expert_json_verdict_is_extracted_without_format_retry(monkeypatch):
     class Reviewer(FakeModel):
         def stream(self, messages):
             calls["expert"] += 1
-            yield AIMessage(content='```json\n{"action":"REGENERATE","stakeholderNeeds":[{"id":"SN-1"}],"feedback":"Fix trace links"}\n```')
+            yield AIMessage(content='```json\n{"action":"REGENERATE","stakeholderNeeds":[{"id":"SN-1"}],"feedback":"OBJECTION: artifact=srs | rule=requirement traceability criterion | location=R-1 field need_ids | resolution=Add the governing SN-1 trace link"}\n```')
     def factory(stage, **kw):
         if stage == "architecture": return SchemaRoutingArchitectureModel(stage, kw.get("schema"))
         return Reviewer(stage) if stage == "expert_opinion" else FakeModel(stage)
@@ -499,7 +502,7 @@ def test_regenerated_architecture_and_revision_reach_round_two_reviewer(monkeypa
                 if "system architecture:" in prompt:
                     counts["architecture_reviews"] += 1
                     if counts["architecture_reviews"] == 1:
-                        yield AIMessage(content="REGENERATE\nRATIONALE: first draft marker is stale.\nFEEDBACK: Regenerate the architecture marker.")
+                        yield AIMessage(content="REGENERATE\nRATIONALE: first draft marker is stale.\nFEEDBACK: OBJECTION: artifact=architecture | rule=current artifact marker criterion | location=ADR-1 field title | resolution=Regenerate the architecture marker in ADR-1")
                         return
                 yield AIMessage(content="APPROVE\nRATIONALE: current artifact is coherent.")
                 return
@@ -534,3 +537,31 @@ def test_regenerated_architecture_and_revision_reach_round_two_reviewer(monkeypa
         assert f"artifact_sha256={opinion['artifact_sha256']}" in err
         assert f"artifact_revision={opinion['artifact_revision']}" in err
         assert f"artifact_saved_at={opinion['artifact_saved_at']}" in err
+
+
+
+def test_vague_expert_objection_retries_then_specific_objection_passes(monkeypatch):
+    from langchain_core.messages import AIMessage
+    from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
+    replies = iter([
+      "REGENERATE\nFEEDBACK: The artifact hierarchy and authoring rules are not strictly adhered to.\nRATIONALE: vague.",
+      "REGENERATE\nFEEDBACK: OBJECTION: artifact=srs | rule=stakeholder need traceability criterion | location=R-1 field need_ids | resolution=Add the governing SN-1 id to need_ids\nRATIONALE: R-1 lacks its source trace.",
+      "APPROVE\nRATIONALE: corrected SRS is coherent.",
+      "APPROVE\nRATIONALE: architecture is coherent."])
+    prompts=[]
+    class Reviewer(FakeModel):
+        def stream(self,messages):
+            prompts.append("\n".join(str(m.content) for m in messages))
+            yield AIMessage(content=next(replies))
+    def factory(stage,**kw):
+        if stage == "architecture": return SchemaRoutingArchitectureModel(stage,kw.get("schema"))
+        return Reviewer(stage) if stage == "expert_opinion" else FakeModel(stage)
+    monkeypatch.setattr(model_config,"build_chat_model",factory)
+    result=build_graph(UsageLog("s"),review=True,expert_opinion=True).invoke(
+      {"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},
+      {"configurable":{"thread_id":"specificity-retry"}})
+    assert "SPECIFICITY ERROR" in prompts[1]
+    assert "objection 1 has no structured OBJECTION line" in prompts[1]
+    opinion=result["expert_opinions"][0]
+    assert opinion["objections"][0]["artifact"] == "srs"
+    assert opinion["objections"][0]["location"] == "R-1 field need_ids"

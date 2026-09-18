@@ -2802,8 +2802,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         model_config._console_line(
                             f"  WARNING boundary=expert-park gate={stage_key} regeneration_rounds={len(prior_regenerations)} "
                             "limit=2 decision=park-for-human-review")
-                        for line in objections.splitlines():
-                            model_config._console_line("  " + line)
+                        # Keep console/run.log to one summary line. The structured
+                        # objections belong once in the Error/Likely cause block.
                         raise UserFacingError(
                             f"expert review parked the {stage_key} gate for human review after two regeneration rounds.",
                             "the independent reviewer requested changes twice; another automatic full-stage rewrite "
@@ -2829,16 +2829,16 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                              "blocking contradiction, missing trace, unsafe assumption, or build-stopping ambiguity. "
                              "Non-blocking improvements and polish MUST stay as suggestions in RATIONALE under APPROVE; "
                              "they are not grounds to regenerate. REGENERATE only for a named blocking defect, and write "
-                             "FEEDBACK naming that blocker plus a concrete correction. Then write RATIONALE: free prose. "
+                             "FEEDBACK as one or more lines in this exact form: OBJECTION: artifact=<reviewed artifact name> | rule=<named rule or criterion> | location=<section, id, field, or quoted fragment> | resolution=<concrete change>. Every objection must include all four fields. Then write RATIONALE: free prose. "
                              "Never claim founder approval. Advisories must be considered, but an advisory is not itself "
                              "blocking unless it establishes one of the blocking conditions above.\nARTIFACT:\n" + json.dumps(state.get(artifact_key))
                              + "\nADVISORIES:\n" + json.dumps(advisories))
                     from .errors import UserFacingError
-                    text="";verdict=None
+                    text="";verdict=None;objections=[];specificity_errors=[];retry_feedback=None
                     for attempt in (1,2):
                         try:
                             raw=_invoke("expert_opinion",payload,log,progress,
-                                        feedback=("FORMAT ERROR: return either APPROVE on the first nonblank line, followed by RATIONALE:, or REGENERATE on the first nonblank line, followed by FEEDBACK: naming the blocker and RATIONALE:." if attempt==2 else None),
+                                        feedback=retry_feedback,
                                         stream_items=False,item_label=f"{stage_key} gate",attempt=attempt,
                                         retry_reason=("verdict" if attempt==2 else None))
                         except __import__("vmodel_contracts.runtime", fromlist=["AdaptiveWatchdogTimeout"]).AdaptiveWatchdogTimeout as exc:
@@ -2861,6 +2861,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         text=raw
                         from vmodel_contracts.runtime import parse_expert_verdict
                         verdict = parse_expert_verdict(raw, ("approve", "regenerate"))
+                        specificity_errors = []
+                        objections = []
+                        if verdict is not None and verdict["action"] == "regenerate" and verdict["feedback"]:
+                            from vmodel_contracts.runtime import validate_expert_objections
+                            objections, specificity_errors = validate_expert_objections(verdict["feedback"], (stage_key,))
+                            if specificity_errors:
+                                retry_feedback = ("SPECIFICITY ERROR: " + "; ".join(specificity_errors) + ". Return REGENERATE with "
+                                                  "one OBJECTION line per blocker using artifact, rule, location, and resolution fields.")
+                                verdict = None
                         if verdict is not None and (verdict["action"] == "approve" or verdict["feedback"]):
                             if verdict.get("extracted_from") == "json_object":
                                 model_config._console_line(
@@ -2868,7 +2877,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                     f"allowed=APPROVE,REGENERATE action={verdict['action']} "
                                     f"feedback_present={bool(verdict['feedback'])} decision=accept-deterministic-extraction")
                             break
-                        reason = "regenerate verdict missing FEEDBACK" if verdict else "unparseable expert verdict"
+                        reason = ("low-specificity objection: " + "; ".join(specificity_errors) if specificity_errors
+                                  else "regenerate verdict missing FEEDBACK" if verdict else "unparseable expert verdict")
+                        if attempt == 1 and not retry_feedback:
+                            retry_feedback = ("FORMAT ERROR: return APPROVE or REGENERATE on the first nonblank line. "
+                                              "For REGENERATE, add FEEDBACK: with one structured OBJECTION line per blocker, "
+                                              "then RATIONALE:.")
                         path = model_config.capture_rejected_completion("expert_opinion", f"{stage_key} gate", attempt, raw, reason)
                         model_config._console_line(
                             f"     - boundary=expert-verdict gate={stage_key} attempt={attempt} allowed=APPROVE,REGENERATE "
@@ -2877,11 +2891,16 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         verdict = None
                     if verdict is None or (verdict["action"]=="regenerate" and not verdict["feedback"]):
                         from .errors import UserFacingError
+                        if specificity_errors:
+                            raise UserFacingError(f"expert opinion returned low-specificity {stage_key} objections twice.",
+                                "LOW-SPECIFICITY: " + "; ".join(specificity_errors) + f". Output began: {text[:300]!r}",
+                                "inspect the preserved output; each objection must name artifact, rule, location, and resolution.")
                         raise UserFacingError(f"expert opinion could not parse the {stage_key} gate verdict.",
-                            f"Expected first line APPROVE or REGENERATE (with FEEDBACK for regeneration). Output began: {text[:200]!r}",
+                            f"Expected first line APPROVE or REGENERATE (with structured OBJECTION feedback). Output began: {text[:200]!r}",
                             "rerun the same command; the checkpoint is preserved and no model upgrade is required.")
                     record={"gate":stage_key,"mode":"simulated_expert_opinion","human_review_required":True,
                             "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"],
+                            "objections": objections,
                             "artifact_sha256": artifact_fingerprint, "artifact_revision": artifact_revision["revision"],
                             "artifact_saved_at": artifact_revision["saved_at"]}
                     model_config._console_line(f"   SIMULATED EXPERT OPINION at {stage_key}: {verdict['action']} - human review still required")
