@@ -63,3 +63,8 @@ class SchemaRoutingArchitectureModel:
         from test_per_item_resume import _arch_answer
         self.calls += 1
         yield AIMessage(content=json.dumps(_arch_answer(self.schema)))
+
+
+def schema_routing_factory(stage, schema, fallback):
+    """Route architecture's current micro-contract while preserving a test's stage fake."""
+    return SchemaRoutingArchitectureModel(stage, schema or {}) if stage == "architecture" else fallback()

@@ -317,15 +317,6 @@ def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
     return data
 
 
-def _check(fn):
-    """A validator that only RAISES (returns no normalized form): wrap it so
-    its pydantic return value is not mistaken for normalized data."""
-    def go(d):
-        fn(d)
-        return None
-    return go
-
-
 def _strip_pipeline_owned(data):
     """The LLM body must not carry pipeline-owned fields; a model that copies
     them anyway is tolerated (the pipeline overwrites), anything else extra

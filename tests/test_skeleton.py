@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
+from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel, schema_routing_factory
 """ADR-0020 skeletons: code owns ids, kinds, ordering, and trace links; the
 model's prose fills are merged onto them, and unusable structure is a named,
 retryable error (ModelStructureError), never a silent remap."""
@@ -98,7 +98,7 @@ def _run_until_stage_error(monkeypatch, bad_stage, bad_payload):
                 return AIMessage(content=json.dumps(bad_payload))
             return super().invoke(messages)
 
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else FM(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: schema_routing_factory(stage, kw.get("schema"), lambda: FM(stage)))
     g = build_graph(UsageLog("s"))
     with pytest.raises(UserFacingError) as ei:
         g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "merged-" + bad_stage}})

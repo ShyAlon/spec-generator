@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
+from conftest import SYSTEM_BASELINE, schema_routing_factory
 """2026-09-09 third live failure (issues 1, 2, 4):
 1. Items stage invented requirement ids (R-001..R-005) and left all ten real
    requirements uncovered - references are now an ENUM of the real ids in the
@@ -35,7 +35,7 @@ def test_items_grammar_reaches_the_model_build(monkeypatch, tmp_path):
 
     def build(stage, structured=True, schema=None):
         seen[stage] = schema
-        return SchemaRoutingArchitectureModel(stage, schema or {}) if stage == "architecture" else FakeModel(stage)
+        return schema_routing_factory(stage, schema, lambda: FakeModel(stage))
 
     monkeypatch.setattr(model_config, "build_chat_model", build)
     g = build_graph(UsageLog("s"))
@@ -61,7 +61,7 @@ def test_unknown_requirement_id_retried_with_named_feedback(monkeypatch, tmp_pat
 
     box = {}
     monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else box.setdefault(stage, InventingItems(stage) if stage == "items" else FakeModel(stage)))
+                        lambda stage, **kw: schema_routing_factory(stage, kw.get("schema"), lambda: box.setdefault(stage, InventingItems(stage) if stage == "items" else FakeModel(stage))))
     g = build_graph(UsageLog("s"))
     r = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert "bundle" in r
@@ -82,7 +82,7 @@ def test_uncovered_requirement_named_in_retry_feedback(monkeypatch):
 
     box = {}
     monkeypatch.setattr(model_config, "build_chat_model",
-                        lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else box.setdefault(stage, LazyItems(stage) if stage == "items" else FakeModel(stage)))
+                        lambda stage, **kw: schema_routing_factory(stage, kw.get("schema"), lambda: box.setdefault(stage, LazyItems(stage) if stage == "items" else FakeModel(stage))))
     g = build_graph(UsageLog("s"))
     r = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert box["items"].calls == 2
@@ -169,7 +169,7 @@ def test_items_payload_closes_with_the_contract():
 def test_checkpoint_state_is_plain_json_after_assemble(monkeypatch):
     """No enum instances in state: json.dumps needs no custom encoder, and
     types are exactly str (mode='json' dumps)."""
-    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: SchemaRoutingArchitectureModel(stage, kw.get("schema") or {}) if stage == "architecture" else FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: schema_routing_factory(stage, kw.get("schema"), lambda: FakeModel(stage)))
     g = build_graph(UsageLog("s"))
     r = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert type(r["bundle"]["items"][0]["kind"]) is str
