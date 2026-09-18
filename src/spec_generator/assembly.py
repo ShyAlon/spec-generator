@@ -32,44 +32,10 @@ def validate_traceability(
     items: list[ItemSpec],
     tests: list[AcceptanceTest],
 ) -> list[str]:
-    """V-model invariants. Returns a list of violations (empty = clean)."""
-    violations: list[str] = []
-    need_ids = {n.need_id for n in needs.needs}
-    req_ids = requirements.requirement_ids()
-    spec_ids = {i.spec_id for i in items}
-    test_ids = {t.test_id for t in tests}
-
-    for r in requirements.requirements:
-        missing = set(r.need_ids) - need_ids
-        if missing:
-            violations.append(f"{r.requirement_id} traces to unknown needs {sorted(missing)}")
-        if not r.need_ids:
-            violations.append(f"{r.requirement_id} traces to no stakeholder need")
-    covered_reqs = {rid for i in items for rid in i.requirement_ids}
-    for rid in req_ids - covered_reqs:
-        violations.append(f"{rid} is covered by no item spec")
-    for i in items:
-        unknown = set(i.requirement_ids) - req_ids
-        if unknown:
-            violations.append(f"{i.spec_id} claims unknown requirements {sorted(unknown)}")
-        unknown_deps = set(i.depends_on) - spec_ids
-        if unknown_deps:
-            violations.append(f"{i.spec_id} depends on unknown specs {sorted(unknown_deps)}")
-    for t in tests:
-        if t.spec_id and t.spec_id not in spec_ids:
-            violations.append(f"{t.test_id} targets unknown spec {t.spec_id}")
-        if t.criterion_id and all(
-            t.criterion_id != ac.criterion_id
-            for r in requirements.requirements for ac in r.acceptance
-        ):
-            violations.append(f"{t.test_id} realizes unknown criterion {t.criterion_id}")
-    # The demo's promise: every requirement has at least one test.
-    tested = {t.criterion_id for t in tests if t.criterion_id}
-    for r in requirements.requirements:
-        for ac in r.acceptance:
-            if ac.criterion_id not in tested:
-                violations.append(f"{ac.criterion_id} ({r.requirement_id}) has no test")
-    return violations
+    """Producer adapter over the canonical cross-repository graph validator."""
+    from vmodel_contracts import validate_traceability_graph
+    return [f"{d.path}: {d.message}" for d in validate_traceability_graph(
+        needs, requirements, items, tests)]
 
 
 def build_traceability(requirements: RequirementSet, items: list[ItemSpec], tests: list[AcceptanceTest]) -> list[TraceabilityEntry]:
