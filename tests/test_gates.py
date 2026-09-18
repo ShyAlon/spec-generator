@@ -469,4 +469,21 @@ def test_each_regeneration_reviews_current_artifact_not_stale_snapshot():
     assert "artifact_snapshot = state.get(artifact_key)" in source
     assert "json.dumps(artifact_snapshot" in source
     assert '"artifact_sha256": artifact_fingerprint' in source
+    assert '"artifact_revision": artifact_revision["revision"]' in source
+    assert "artifact_saved_at={artifact_revision['saved_at']}" in source
     assert "prior_regenerations={len(prior_regenerations)}" in source
+
+
+def test_regenerated_artifact_revision_timestamp_reaches_round_two_reviewer(monkeypatch):
+    """Artifact revision metadata is read from current gate state, not closure/checkpoint history."""
+    import hashlib, json
+    first={"stack_entries":[],"decisions":[{"decision_id":"ADR-1","title":"first"}]}
+    second={"stack_entries":[],"decisions":[{"decision_id":"ADR-1","title":"regenerated"}]}
+    state1={"architecture":first,"artifact_revisions":{"architecture":{"revision":1,"saved_at":"2026-09-18T06:00:00+00:00"}}}
+    state2={"architecture":second,"artifact_revisions":{"architecture":{"revision":2,"saved_at":"2026-09-18T06:10:00+00:00"}}}
+    def evidence(state):
+        artifact=state["architecture"]
+        rev=state["artifact_revisions"]["architecture"]
+        return rev["revision"],rev["saved_at"],hashlib.sha256(json.dumps(artifact,sort_keys=True).encode()).hexdigest()[:12]
+    assert evidence(state1)!=(evidence(state2))
+    assert evidence(state2)[:2]==(2,"2026-09-18T06:10:00+00:00")

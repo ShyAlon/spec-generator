@@ -182,6 +182,9 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
     sid = intent["session_id"]
 
     def _persist(stage: str, data, state: dict) -> None:
+        revision = (state.get("artifact_revisions") or {}).get(stage)
+        if revision:
+            _atomic_write(outdir / f"{stage}.revision.json", json.dumps(revision, indent=2))
         if stage == "needs":
             body = {**data, "session_id": sid}
             _atomic_write(outdir / "needs.json", json.dumps(body, indent=2))

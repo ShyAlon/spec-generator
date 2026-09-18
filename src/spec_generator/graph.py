@@ -68,6 +68,7 @@ class GenState(TypedDict, total=False):
     bundle: dict
     violations: list[str]
     gate_feedback: dict[str, str]  # stage -> founder feedback from a review gate (ADR-0019)
+    artifact_revisions: dict[str, dict]  # stage -> {saved_at, revision}; gate staleness evidence
 
 
 def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
@@ -1910,9 +1911,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     kept.append(ac)
                 if kept or not req.get("acceptance"):
                     req["acceptance"] = kept
+        revisions = dict(state.get("artifact_revisions") or {})
+        prior_revision = revisions.get("srs") or {}
+        revision = int(prior_revision.get("revision") or 0) + 1
+        saved_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+        revisions["srs"] = {"saved_at": saved_at, "revision": revision}
         if persist:
-            persist("srs", data, state)
+            persist("srs", data, {**state, "artifact_revisions": revisions})
         return {"srs": data, "guard_flags": state.get("guard_flags", []) + flags,
+                "artifact_revisions": revisions,
                 "gate_feedback": _clear_feedback(state, "srs")}
 
     def node_architecture(state: GenState) -> dict:
@@ -2415,10 +2422,16 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if partials:
             partials.clear("architecture")
         data = merged
+        revisions = dict(state.get("artifact_revisions") or {})
+        prior_revision = revisions.get("architecture") or {}
+        revision = int(prior_revision.get("revision") or 0) + 1
+        saved_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+        revisions["architecture"] = {"saved_at": saved_at, "revision": revision}
         if persist:
-            persist("architecture", data, state)
+            persist("architecture", data, {**state, "artifact_revisions": revisions})
         resolved_questions = _resolve_answered_open_questions(state, persist, architecture=data)
         result = {"architecture": data, "architecture_advisories": _advisories,
+                  "artifact_revisions": revisions,
                   "gate_feedback": _clear_feedback(state, "architecture")}
         # Nested mutation is not a LangGraph state update. Return the changed
         # SRS explicitly so the resolution marker survives the checkpoint and
@@ -2802,11 +2815,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         "architecture": "system architecture: stack, components, ADRs, and non-functional positions",
                     }[stage_key]
                     artifact_snapshot = state.get(artifact_key)
+                    artifact_revision = (state.get("artifact_revisions") or {}).get(stage_key) or {"revision": 0, "saved_at": "legacy-unknown"}
                     artifact_fingerprint = __import__("hashlib").sha256(
                         json.dumps(artifact_snapshot, sort_keys=True, default=str).encode()).hexdigest()[:12]
                     model_config._console_line(
                         f"     - boundary=expert-input gate={stage_key} artifact_key={artifact_key} "
-                        f"artifact_sha256={artifact_fingerprint} prior_regenerations={len(prior_regenerations)} "
+                        f"artifact_sha256={artifact_fingerprint} artifact_revision={artifact_revision['revision']} "
+                        f"artifact_saved_at={artifact_revision['saved_at']} prior_regenerations={len(prior_regenerations)} "
                         "decision=review-current-checkpoint-artifact")
                     payload=(f"Act as an independent expert reviewer. You are judging this exact artifact type: {artifact_label}. "
                              "Judge it for its own V-model stage; do not demand artifacts owned by a later stage. "
@@ -2867,7 +2882,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "rerun the same command; the checkpoint is preserved and no model upgrade is required.")
                     record={"gate":stage_key,"mode":"simulated_expert_opinion","human_review_required":True,
                             "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"],
-                            "artifact_sha256": artifact_fingerprint}
+                            "artifact_sha256": artifact_fingerprint, "artifact_revision": artifact_revision["revision"],
+                            "artifact_saved_at": artifact_revision["saved_at"]}
                     model_config._console_line(f"   SIMULATED EXPERT OPINION at {stage_key}: {verdict['action']} - human review still required")
                     model_config._console_line(f"     rationale: {verdict['rationale']}")
                     if verdict["action"] == "regenerate":
