@@ -2924,9 +2924,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                 "artifact_sha256": artifact_fingerprint,
                             }])
                             raise UserFacingError(f"expert opinion returned low-specificity {stage_key} objections twice.",
-                                "LOW-SPECIFICITY: " + "; ".join(specificity_errors) + "
-
-" + low_specificity,
+                                "LOW-SPECIFICITY: " + "; ".join(specificity_errors) + "\n\n" + low_specificity,
                                 "inspect the numbered objections above; each blocker must name artifact, rule, location, and resolution.")
                         raise UserFacingError(f"expert opinion could not parse the {stage_key} gate verdict.",
                             f"Expected first line APPROVE or REGENERATE (with structured OBJECTION feedback). Output began: {text[:200]!r}",
