@@ -2793,8 +2793,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             def node_gate(state: GenState) -> dict:
                 advisories=state.get("architecture_advisories", []) if stage_key == "architecture" else []
                 if expert_opinion:
-                    prior_regenerations = [o for o in (state.get("expert_opinions") or [])
-                                           if o.get("gate") == stage_key and o.get("action") == "regenerate"]
+                    all_prior_regenerations = [o for o in (state.get("expert_opinions") or [])
+                                               if o.get("gate") == stage_key and o.get("action") == "regenerate"]
+                    # Pre-structured checkpoints cannot be meaningfully rendered,
+                    # scoped, or counted against today's retry budget. Re-review
+                    # the current artifact under the current protocol on resume.
+                    prior_regenerations = [o for o in all_prior_regenerations
+                                           if o.get("review_protocol") == 2]
+                    legacy_regenerations = len(all_prior_regenerations) - len(prior_regenerations)
+                    if legacy_regenerations:
+                        model_config._console_line(
+                            f"     - boundary=expert-checkpoint-migration gate={stage_key} "
+                            f"legacy_regenerations={legacy_regenerations} current_protocol_regenerations={len(prior_regenerations)} "
+                            "decision=re-review-current-artifact reason=stored-opinions-predate-structured-objection-scope")
                     if len(prior_regenerations) >= 2:
                         from .errors import UserFacingError
                         from vmodel_contracts.runtime import format_expert_review_rounds
@@ -2907,7 +2918,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         raise UserFacingError(f"expert opinion could not parse the {stage_key} gate verdict.",
                             f"Expected first line APPROVE or REGENERATE (with structured OBJECTION feedback). Output began: {text[:200]!r}",
                             "rerun the same command; the checkpoint is preserved and no model upgrade is required.")
-                    record={"gate":stage_key,"mode":"simulated_expert_opinion","human_review_required":True,
+                    record={"gate":stage_key,"mode":"simulated_expert_opinion","human_review_required":True,"review_protocol":2,
                             "action":verdict["action"],"feedback":verdict.get("feedback","")+"", "rationale":verdict["rationale"],
                             "objections": objections, "upstream_advisories": upstream_advisories,
                             "artifact_sha256": artifact_fingerprint, "artifact_revision": artifact_revision["revision"],

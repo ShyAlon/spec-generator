@@ -603,3 +603,45 @@ def test_architecture_upstream_objection_becomes_advisory_without_regeneration(m
     output=capsys.readouterr().err
     assert "Upstream advisories:" in output
     assert "This concerns the srs:" in output
+
+
+
+def test_legacy_parked_checkpoint_is_rereviewed_under_structured_scope(monkeypatch, capsys):
+    """Two pre-protocol regenerations re-enter the gate under today's protocol."""
+    from langchain_core.messages import AIMessage
+    from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
+    phase={"legacy_resume":False}; architecture_reviews=[]
+    class Reviewer(FakeModel):
+        def stream(self,messages):
+            prompt="\n".join(str(m.content) for m in messages)
+            if self.stage == "expert_opinion" and "system architecture:" in prompt:
+                architecture_reviews.append(prompt)
+                if phase["legacy_resume"]:
+                    yield AIMessage(content=("REGENERATE\nFEEDBACK: OBJECTION: artifact=srs | rule=shall statement grammar | "
+                      "location=R-2 field statement | resolution=Rewrite R-2 as a shall statement\n"
+                      "RATIONALE: The stored concern belongs upstream.")); return
+            yield AIMessage(content="APPROVE\nRATIONALE: coherent.")
+    def factory(stage,**kw):
+        if stage=="architecture": return SchemaRoutingArchitectureModel(stage,kw.get("schema"))
+        return Reviewer(stage) if stage=="expert_opinion" else FakeModel(stage)
+    monkeypatch.setattr(model_config,"build_chat_model",factory)
+    g=build_graph(UsageLog("s"),review=True,expert_opinion=True)
+    cfg={"configurable":{"thread_id":"legacy-park-resume"}}
+    g.invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},cfg)
+    legacy=[{"gate":"architecture","action":"regenerate","feedback":"The artifact hierarchy is wrong."},
+            {"gate":"architecture","action":"regenerate","feedback":"The artifact hierarchy is wrong."}]
+    phase["legacy_resume"]=True
+    # This reproduces a persisted run paused immediately before the architecture
+    # gate with two old opinions. Updating as the predecessor routes into gate.
+    g.update_state(cfg,{"expert_opinions":legacy},as_node="architecture")
+    result=g.invoke(None,cfg)
+    assert len(architecture_reviews) == 2  # initial review plus fresh resume review
+    current=[o for o in result["expert_opinions"] if o.get("review_protocol")==2 and o["gate"]=="architecture"]
+    assert len(current)==1 and current[0]["action"]=="approve"
+    assert current[0]["upstream_advisories"][0]["artifact"]=="srs"
+    output=capsys.readouterr().err
+    assert "boundary=expert-checkpoint-migration" in output
+    assert "legacy_regenerations=2" in output
+    assert "decision=re-review-current-artifact" in output
+    assert "This concerns the srs:" in output
+    assert "expert review parked" not in output
