@@ -460,7 +460,8 @@ def test_parked_gate_objections_are_sectioned_and_wrapped():
        "artifact_revision":1,"artifact_saved_at":"2026-09-17T22:31:12+00:00","artifact_sha256":"aaa111"},
       {"rationale":"Second rationale.","feedback":"Add measurable criteria. Link requirements by id.",
        "artifact_revision":2,"artifact_saved_at":"2026-09-18T06:45:58+00:00","artifact_sha256":"bbb222"}],width=60)
-    assert "Round 1\n\nRationale:" in rendered and "Round 2\n\nRationale:" in rendered
+    assert "Round 1\n\nArtifact reviewed:" in rendered and "Round 2\n\nArtifact reviewed:" in rendered
+    assert rendered.count("\nRationale:") == 2
     assert "Feedback:\n  1." in rendered and "\n  2." in rendered
     assert " | round" not in rendered
     assert "revision 1, saved at 2026-09-17T22:31:12+00:00" in rendered
