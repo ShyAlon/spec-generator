@@ -256,3 +256,25 @@ def test_large_review_is_requirement_chunked_and_resumable(monkeypatch):
     assert 'partials.clear("review")' in source
     assert 'f"round-{n}-chunk-{index}"' in source
     assert 8 // 2 == 4 and 4 < 8 + 10 + 44
+
+
+def test_review_batches_one_requirement_and_caps_finding_shape():
+    import inspect
+    from spec_generator.graph import build_graph
+    from spec_generator.schemas import for_stage
+    source=inspect.getsource(build_graph)
+    assert "chunks = [[requirement] for requirement in requirements]" in source
+    assert "max_findings=24 max_fix_chars=320" in source
+    assert "Never restate requirements, specs, tests, or rationale" in source
+    schema=for_stage("review")
+    assert schema["items"]["properties"]["fix"]["maxLength"] == 320
+    assert schema["items"]["properties"]["target_ids"]["maxItems"] == 8
+
+
+def test_review_partial_key_is_stable_per_single_requirement_batch():
+    import inspect
+    from spec_generator.graph import build_graph
+    source=inspect.getsource(build_graph)
+    assert 'chunk_id = f"round-{n}-chunk-{index}"' in source
+    assert 'if chunk_id not in saved:' in source
+    assert 'partials.save("review", saved)' in source

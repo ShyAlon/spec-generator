@@ -2672,13 +2672,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         from .schemas import for_stage as output_schema
 
         n = state.get("review_round", 0) + 1
-        # Review by requirement cluster. A single 8-req/10-spec/44-test call
-        # produced 70 findings and hit 8192 output tokens. Requirement is the
-        # semantic join key across SRS, specs, and tests, so each chunk remains
-        # a complete vertical V slice rather than an arbitrary token window.
+        # One requirement per review call bounds output by construction. The
+        # prior two-requirement batches could exceed 8192 completion tokens on
+        # dense vertical slices. Requirement remains the semantic join key.
         requirements = [r for sec in ("functional", "non_functional")
                         for r in state["srs"].get(sec) or []]
-        chunks = [requirements[i:i + 2] for i in range(0, len(requirements), 2)] or [[]]
+        chunks = [[requirement] for requirement in requirements] or [[]]
         saved = (partials.load("review") if partials else None) or {}
         findings = []
         for index, req_chunk in enumerate(chunks, 1):
@@ -2692,10 +2691,17 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 spec_ids = {i.get("spec_id") for i in chunk_items}
                 chunk_tests = [t for t in state["tests"]
                                if t.get("criterion_id") in criterion_ids or t.get("spec_id") in spec_ids]
+                projected_input_chars = len(json.dumps(req_chunk)) + len(json.dumps(chunk_items)) + len(json.dumps(chunk_tests))
+                model_config._console_line(
+                    f"     - boundary=review-batch round={n} batch={index}/{len(chunks)} requirements={len(req_chunk)} "
+                    f"linked_items={len(chunk_items)} linked_tests={len(chunk_tests)} projected_input_chars={projected_input_chars} "
+                    "max_findings=24 max_fix_chars=320 decision=bounded-single-requirement-review")
                 saved[chunk_id] = _call_json(
                     "review", STAGE_PROMPTS["review"].format(n=n)
-                    + f"\n\nREVIEW CHUNK {index}/{len(chunks)}. Report only findings whose primary target "
-                      "is in this requirement cluster. Cross-chunk consistency is checked deterministically after aggregation."
+                    + f"\n\nREVIEW CHUNK {index}/{len(chunks)}. Return ONLY concrete findings whose primary target "
+                      "is in this one-requirement cluster. Never restate requirements, specs, tests, or rationale. "
+                      "At most 24 findings. Each fix is one imperative sentence, at most 320 characters. "
+                      "Cross-chunk consistency is checked deterministically after aggregation."
                     + "\n\nSRS REQUIREMENTS:\n" + json.dumps(_prompt_view(req_chunk))
                     + "\n\nLINKED ITEMS:\n" + json.dumps(_prompt_view(chunk_items))
                     + "\n\nLINKED TESTS:\n" + json.dumps(_prompt_view(chunk_tests)),
