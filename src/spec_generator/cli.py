@@ -836,12 +836,13 @@ def main() -> None:
     if resume and prior.get("architecture"):
         architecture_lifecycle.bootstrap_complete(
             prior["architecture"], prior.get("system_baseline") or baseline)
-    if resume and not args.to_stage:
+    if resume:
         bounded_stage = _resume_after_bounded_stop(graph, cfg, prior)
         if bounded_stage:
             if bounded_stage == "architecture":
                 architecture_lifecycle.resume("gate_architecture" if args.review else "items")
-            print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through the full pipeline.", file=sys.stderr)
+            destination = f"the requested '{args.to_stage}' boundary" if args.to_stage else "the full pipeline"
+            print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through {destination}.", file=sys.stderr)
     if resume:
         prior_conops = prior.get("conops")
         if prior_conops != conops:

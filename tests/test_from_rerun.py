@@ -668,3 +668,21 @@ def test_from_accepts_fulfilled_sequential_prerequisites(monkeypatch,tmp_path):
     state=graph.get_state(cfg).values
     assert state['needs'] is not None and state['srs'] is not None and state['architecture'] is not None
     assert state['items'] is None and state['tests'] is None
+
+
+def test_bounded_checkpoint_can_reconnect_into_later_bounded_graph(tmp_path):
+    """One process per phase still advances the shared checkpoint."""
+    import sqlite3
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from spec_generator.cli import _resume_after_bounded_stop
+    from spec_generator.graph import build_graph
+    from spec_generator.telemetry import UsageLog
+    cfg={"configurable":{"thread_id":"bounded-to-bounded"}}
+    db_path=str(tmp_path/"bounded.sqlite")
+    first=build_graph(UsageLog("bounded"),checkpointer=SqliteSaver(sqlite3.connect(db_path,check_same_thread=False)),stop_after="needs")
+    # A minimal complete node value is enough to exercise checkpoint topology.
+    first.update_state(cfg,{"needs":{"stakeholder_needs":[]}},as_node="needs")
+    later=build_graph(UsageLog("bounded"),checkpointer=SqliteSaver(sqlite3.connect(db_path,check_same_thread=False)),stop_after="srs")
+    prior=later.get_state(cfg).values
+    assert _resume_after_bounded_stop(later,cfg,prior)=="needs"
+    assert later.get_state(cfg).next
