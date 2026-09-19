@@ -617,6 +617,8 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
     threading.Thread(target=_pump, daemon=True).start()
     last = None  # final chunk carries the truncation metadata (done_reason/finish_reason)
     first_chunk_seen = False  # prefill silence is healthy; only mid-stream quiet is a stall
+    accumulated_usage: dict = {}
+    accumulated_meta: dict = {}
     ttft_s: float | None = None  # time to first token - the prefill cost, made visible
     try:
         while True:
@@ -649,10 +651,27 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
                     ttft_s = round(time.monotonic() - t0, 2)
                 first_chunk_seen = True
                 last = payload
+                chunk_usage = dict(getattr(payload, "usage_metadata", None) or {})
+                if chunk_usage:
+                    accumulated_usage.update(chunk_usage)
+                chunk_meta = dict(getattr(payload, "response_metadata", None) or {})
+                if chunk_meta:
+                    accumulated_meta.update(chunk_meta)
                 yield payload
             elif kind == "done":
                 _check_truncated(last, stage, cfg)
-                usage = _usage_of(last)
+                usage = dict(accumulated_usage)
+                aliases = {"prompt_eval_count": "input_tokens", "eval_count": "output_tokens"}
+                for source, target in aliases.items():
+                    if accumulated_meta.get(source) is not None and target not in usage:
+                        usage[target] = accumulated_meta[source]
+                if "total_tokens" not in usage and ("input_tokens" in usage or "output_tokens" in usage):
+                    usage["total_tokens"] = int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+                for key in ("prompt_eval_count", "eval_count", "prompt_eval_duration", "eval_duration"):
+                    if accumulated_meta.get(key) is not None:
+                        usage[key] = accumulated_meta[key]
+                if not usage:
+                    usage = _usage_of(last)
                 durations = {k: usage.get(k) for k in ("prompt_eval_duration", "eval_duration")
                              if usage.get(k) is not None}
                 elapsed = time.monotonic() - t0

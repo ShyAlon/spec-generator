@@ -938,22 +938,23 @@ def test_phi_echo_of_all_required_adr_slugs_is_removed_without_model_retry(capsy
     assert "decision=remove-echoed count=3" in err
 
 
-def test_self_referential_adr_body_is_reasked_locally(monkeypatch):
+def test_phi_self_reference_in_decision_and_rationale_is_repaired_locally(monkeypatch,capsys):
     seen=[]
-    class SelfRefThenConcrete(_MicroModel):
+    class SelfRefConcrete(_MicroModel):
         def stream(self, messages):
             prompt="\n".join(str(m.content) for m in messages)
             if "driver" in self.schema.get("properties", {}):
                 seen.append(prompt)
-                if "self-reference" not in prompt:
-                    yield AIMessage(content=json.dumps({"title":"Consolidate ADR-1","decision":"Use ADR-1","rationale":"ADR-1 owns this","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":[]})); return
-                yield AIMessage(content=json.dumps({"title":"Choose Python","decision":"Use Python","rationale":"Matches the existing runtime","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":[]})); return
+                yield AIMessage(content=json.dumps({"title":"Select task scheduler","decision":"ADR-1 selects Celery with Redis","rationale":"ADR-1 is preferred because scheduled retries need durable delivery","driver":"simplicity","options_considered":[],"baseline_refs":[],"evidence":[],"affected_repositories":[],"executes_concept_ids":[]})); return
             yield from super().stream(messages)
-    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: SelfRefThenConcrete(stage,k.get("schema") or {},[],plan_keys=["language"]))
+    monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: SelfRefConcrete(stage,k.get("schema") or {},[],plan_keys=["task-scheduler"]))
     result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},{"configurable":{"thread_id":"self-ref"}})
-    assert len(seen) >= 2 and "self-reference" in seen[1]
-    owner = next(d for d in result["architecture"]["decisions"] if d["title"] == "Choose Python")
-    assert "ADR-" not in owner["decision"]
+    owner = next(d for d in result["architecture"]["decisions"] if d["title"] == "Select task scheduler")
+    assert not any("previous reply failed" in prompt and "self-reference" in prompt for prompt in seen)
+    assert owner["decision"] == "Celery with Redis"
+    assert owner["rationale"] == "preferred because scheduled retries need durable delivery"
+    log=capsys.readouterr().err
+    assert "repair=remove-self-reference" in log and "fields=['decision', 'rationale']" in log
 
 
 def test_assembly_keeps_research_unresolved_and_materializes_every_nfr():

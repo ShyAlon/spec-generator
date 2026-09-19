@@ -537,3 +537,14 @@ def test_assembly_boundary_error_logs_full_shape_evidence(capsys):
     assert "decision=reject-and-checkpoint" in line
     rendered=err_obj.render()
     assert "Offending value/key" in rendered and "Expected:" in rendered and "Producer: architecture" in rendered
+
+def test_stream_diagnostic_keeps_usage_from_nonfinal_chunk(monkeypatch):
+ from langchain_core.messages import AIMessageChunk
+ from spec_generator import model_config as mc
+ class M:
+  def stream(self,messages):
+   yield AIMessageChunk(content='{"ok":',usage_metadata={"input_tokens":11,"output_tokens":3,"total_tokens":14})
+   yield AIMessageChunk(content='true}')
+ monkeypatch.setattr(mc,"for_stage",lambda stage: mc.StageModel("ollama","phi4"))
+ list(mc.stream_checked(M(),[],"architecture",item="ADR-7",attempt=1))
+ assert mc.call_diagnostic("architecture","ADR-7",1)["tokens"]==14

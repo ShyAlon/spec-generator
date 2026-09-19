@@ -2274,12 +2274,25 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "rejected": []}
                     if not body["title"] or not body["decision"] or not body["rationale"]:
                         raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
-                    self_ref_fields = [name for name in ("title", "decision", "rationale")
-                                       if _re.search(rf"\b{_re.escape(slot['decision_id'])}\b", body[name], _re.IGNORECASE)]
-                    if self_ref_fields:
+                    # phi4 often prefixes otherwise concrete prose with the fixed id
+                    # in decision/rationale. The id adds no substance and code already
+                    # owns it, so remove that mechanical echo locally. A field that
+                    # becomes empty still fails below rather than fabricating content.
+                    healed_self_refs = []
+                    for name in ("decision", "rationale"):
+                        before = body[name]
+                        body[name] = _re.sub(
+                            rf"\b{_re.escape(slot['decision_id'])}\b\s*(?:[:.,;\-]|(?:is|selects?|chooses?|decides?)\b)?\s*",
+                            "", before, flags=_re.IGNORECASE).strip()
+                        if body[name] != before:
+                            healed_self_refs.append(name)
+                    if healed_self_refs:
+                        model_config._console_line(
+                            f"     - boundary=deterministic-repair stage=architecture item={slot['decision_id']} "
+                            f"repair=remove-self-reference fields={healed_self_refs} decision=continue")
+                    if not body["decision"] or not body["rationale"]:
                         raise ModelStructureError(
-                            f"{slot['decision_id']}: self-reference in {self_ref_fields} does not state the "
-                            "architecture decision - replace the ADR id with the concrete choice and consequence")
+                            f"{slot['decision_id']}: removing the self-reference left no concrete decision substance")
                     if any(not isinstance(opt, dict) or not str(opt.get("option", "")).strip()
                            or not str(opt.get("reason", "")).strip()
                            for opt in body["options_considered"]):
