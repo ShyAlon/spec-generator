@@ -804,3 +804,26 @@ def test_hands_free_gate_accepts_and_audits_without_input(monkeypatch, tmp_path)
     assert result.get("bundle")
     rows=[json.loads(x) for x in (tmp_path/"audit.jsonl").read_text().splitlines()]
     assert [(x["gate"],x["action"]) for x in rows]==[("srs","accept"),("architecture","accept")]
+
+def test_quote_free_stale_srs_verdict_cannot_block_architecture_gate(monkeypatch,capsys):
+    from langchain_core.messages import AIMessage
+    from conftest import SYSTEM_BASELINE, SchemaRoutingArchitectureModel
+    feedback=("OBJECTION: artifact=architecture | rule=solution-agnostic requirement criterion | "
+              "location=requirement statements | resolution=Remove HTTP verbs, URL paths, JSON shapes, database choices, and UI widgets")
+    class Reviewer(FakeModel):
+        def stream(self,messages):
+            prompt="\n".join(str(m.content) for m in messages)
+            if self.stage=="expert_opinion" and "system architecture:" in prompt:
+                yield AIMessage(content="REGENERATE\nFEEDBACK: "+feedback+"\nRATIONALE: stale SRS verdict"); return
+            yield AIMessage(content="APPROVE\nRATIONALE: coherent.")
+    def factory(stage,**kw):
+        if stage=="architecture": return SchemaRoutingArchitectureModel(stage,kw.get("schema"))
+        return Reviewer(stage) if stage=="expert_opinion" else FakeModel(stage)
+    monkeypatch.setattr(model_config,"build_chat_model",factory)
+    result=build_graph(UsageLog("s"),review=True,expert_opinion=True).invoke(
+      {"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},
+      {"configurable":{"thread_id":"stale-srs-scope"}})
+    opinion=[o for o in result["expert_opinions"] if o["gate"]=="architecture"][0]
+    assert opinion["action"]=="approve" and opinion["objections"]==[]
+    assert opinion["upstream_advisories"][0]["artifact"]=="srs"
+    assert "decision=approve-with-upstream-advisories" in capsys.readouterr().err
