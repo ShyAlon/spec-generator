@@ -246,6 +246,22 @@ def _predecessor(stage: str, review_mode: bool) -> str:
             "assemble": "review"}[stage]
 
 
+def _rerun_missing_prerequisite(stage: str, current: dict) -> str | None:
+    """First absent upstream stage for a sequential --from rewind."""
+    prerequisites = {
+        "needs": (), "srs": ("needs",), "architecture": ("needs", "srs"),
+        "items": ("needs", "srs", "architecture"),
+        "tests": ("needs", "srs", "architecture", "items"),
+        "review": ("needs", "srs", "architecture", "items", "tests"),
+        "assemble": ("needs", "srs", "architecture", "items", "tests", "review"),
+    }
+    for prerequisite in prerequisites[stage]:
+        fulfilled = current.get(prerequisite) is not None
+        if prerequisite == "review": fulfilled = bool(current.get("review_round"))
+        if not fulfilled: return prerequisite
+    return None
+
+
 def _invalidate_from(graph, cfg: dict, stage: str, review_mode: bool) -> None:
     """--from <stage>: rewind a checkpoint so the named stage and everything
     after it re-runs under the CURRENT code, state before it preserved (his
@@ -266,6 +282,13 @@ def _invalidate_from(graph, cfg: dict, stage: str, review_mode: bool) -> None:
     if stage == "needs":
         return  # a fresh run already starts at needs and overwrites everything
     current = graph.get_state(cfg).values
+    missing = _rerun_missing_prerequisite(stage, current)
+    if missing:
+        raise UserFacingError(
+            f"--from {stage}: prerequisite stage '{missing}' is not complete.",
+            "stages are sequential; rewinding downstream without every upstream result would produce ungrounded output.",
+            f"run or rerun from '{missing}' first, then retry --from {stage}.",
+        )
     invalidated_gates = {
         "srs": {"srs", "architecture"},
         "architecture": {"architecture"},

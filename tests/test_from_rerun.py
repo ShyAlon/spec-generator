@@ -650,3 +650,21 @@ def test_from_boundary_invalidation_matrix(
         exists = partials.load(key) is not None
         assert exists is (key not in cleared_partials), (stage, key)
     assert lifecycle.read_bytes() == before_lifecycle  # append-only audit evidence
+
+def test_from_refuses_missing_sequential_prerequisite(monkeypatch,tmp_path):
+    db=str(tmp_path/'missing-prereq.sqlite')
+    graph=build_graph(UsageLog('missing'),checkpointer=SqliteSaver(sqlite3.connect(db,check_same_thread=False)))
+    cfg={'configurable':{'thread_id':'missing'}}
+    graph.update_state(cfg,{'intent_model':dict(INTENT),'system_baseline':SYSTEM_BASELINE,'needs':{'stakeholders':[]}},as_node='needs')
+    with pytest.raises(UserFacingError) as caught:_invalidate_from(graph,cfg,'items',review_mode=False)
+    message=caught.value.render()
+    assert "prerequisite stage 'srs' is not complete" in message
+    assert "run or rerun from 'srs' first" in message
+
+
+def test_from_accepts_fulfilled_sequential_prerequisites(monkeypatch,tmp_path):
+    box={};graph,cfg=_run_once(box,monkeypatch,str(tmp_path/'fulfilled.sqlite'))
+    _invalidate_from(graph,cfg,'items',review_mode=False)
+    state=graph.get_state(cfg).values
+    assert state['needs'] is not None and state['srs'] is not None and state['architecture'] is not None
+    assert state['items'] is None and state['tests'] is None
