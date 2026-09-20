@@ -378,6 +378,12 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             with (outdir/"audit.jsonl").open("a") as fh: fh.write(json.dumps(record)+"\n")
             print(f"boundary=hands-free-gate gate={gate} action=accept advisories={len(advisories)} decision=continue", file=sys.stderr)
         else:
+            from vmodel_contracts.decisions import emit_decision,founder_decision
+            emit_decision(founder_decision(f"{gate}-review",f"Review {title}",f"What should happen at the {gate} gate?",[
+                {"value":"a","label":"Accept","summary":"Approve this artifact and continue."},
+                {"value":"e","label":"Edit","summary":"Open the generated JSON for a validated edit."},
+                {"value":"f","label":"Feedback","summary":"Regenerate this phase from founder feedback."},
+                {"value":"r","label":"Reject","summary":"Stop at this checkpoint."}]))
             while True:
                 action = input("[a]ccept / [e]dit / [f]eedback / [r]eject? ").strip().lower()
                 if action in ("a", "e", "f", "r"):
@@ -386,7 +392,11 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             print(f"Rejected at the {gate} gate. The run is checkpointed - {_mc._rerun_guidance(gate)}.", file=sys.stderr)
             raise SystemExit(1)
         if action == "f":
-            fb = input("Feedback (one line, founder language): ").strip()
+            emit_decision(founder_decision(f"{gate}-feedback",f"Feedback for {title}","What should regeneration change?",[
+                {"value":"feedback","label":"Send feedback","summary":"Regenerate the phase using your written steer."}],
+                rationale_required=True,rationale_label="Founder feedback",answer_format="feedback - <rationale>"))
+            raw_feedback = input("Feedback (one line, founder language): ").strip()
+            fb = raw_feedback.partition(" - ")[2].strip() if raw_feedback.startswith("feedback - ") else raw_feedback
             if fb:
                 result = graph.invoke(Command(resume={"action": "regenerate", "feedback": fb}), cfg)
             continue
