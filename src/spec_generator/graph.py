@@ -660,6 +660,8 @@ def _founder_required_tech(intent_model: dict, key: str, value: str) -> bool:
         return False
     from .tech_candidates import normalize_technology_alias
     desired = normalize_technology_alias(value)
+    # Names are case-insensitive, but aliases and families do not grant an
+    # exemption: "React Native" is not a founder choice of "React".
     for pref in intent_model.get("tech_preferences") or []:
         if (pref.get("source_turns") and str(pref.get("area", "")).casefold() == area
                 and normalize_technology_alias(str(pref.get("preference", ""))) == desired):
@@ -668,8 +670,14 @@ def _founder_required_tech(intent_model: dict, key: str, value: str) -> bool:
         if not need.get("source_turns"):
             continue
         statement = str(need.get("statement", ""))
-        if _re.search(r"\b(?:use|using|require|requires|required|must use|must be built with)\s+"
-                      + _re.escape(value) + r"(?=$|[\s.,;:!?])", statement, _re.I):
+        # "Use React Native" must never exempt React by prefix. The need's
+        # chosen technology is the longest matching registered name.
+        directive = r"\b(?:use|using|require|requires|required|must use|must be built with)\s+"
+        longer = any(r["name"].casefold().startswith(value.casefold() + " ")
+                     and _re.search(directive + _re.escape(r["name"]) + r"(?=$|[\s.,;:!?])",
+                                    statement, _re.I) for r in TECH_ROWS)
+        if not longer and _re.search(directive + _re.escape(value) + r"(?=$|[\s.,;:!?])",
+                                     statement, _re.I):
             return True
     return False
 
@@ -741,7 +749,7 @@ def _candidate_block(key: str, founder_techs: list[str]) -> str:
                       and "backend" not in row["kinds"]
                       and ("web" in row["platforms"] or "ios" in row["platforms"]
                            or "android" in row["platforms"]))
-        cands = tuple(dict(((name, note), None) for name, note in cands))
+        cands = tuple(dict.fromkeys(cands))
     lines = []
     if cands:
         lines.append(f"CANDIDATE TECHNOLOGIES for this slot's kind ({kind}) - curated list as of "
@@ -2162,10 +2170,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             f"{'/'.join(sorted(need))} product) - an ADR must carry the explicit justification")
                     else:
                         conflicts.append(value)
-                        candidate_rows = (TECH_CANDIDATES.get(kind3, ()) + TECH_CANDIDATES.get("mobile_framework", ())) if key == "ui_framework" else TECH_CANDIDATES.get(kind3, ())
-                        fitting = list(dict.fromkeys(n for n, _ in candidate_rows
-                                   if (r2 := tech_row(n)) and (set(r2["platforms"]) & need or "any" in r2["platforms"])
-                                   and (key != "ui_framework" or "backend" not in r2["kinds"])))
+                        candidate_rows = TECH_CANDIDATES.get(kind3, ())
+                        if key == "ui_framework":
+                            candidate_rows += TECH_CANDIDATES.get("mobile_framework", ())
+                        fitting = list(dict.fromkeys(
+                            n for n, _ in candidate_rows
+                            if (r2 := tech_row(n))
+                            and (set(r2["platforms"]) & need or "any" in r2["platforms"])
+                            and (key != "ui_framework" or "backend" not in r2["kinds"])))
                         raise ModelStructureError(
                             f"stack.{key}: {value!r} is a {'/'.join(row['platforms'])} technology, but the "
                             f"product context is {'/'.join(sorted(need))} - it cannot answer this slot "

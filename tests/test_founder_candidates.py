@@ -344,6 +344,8 @@ def test_founder_required_tech_needs_exact_sourced_case_insensitive_choice():
     assert not _founder_required_tech({"tech_preferences":[{**intent["tech_preferences"][0],"preference":"React and Vue"}]},"ui_framework","React")
     assert _founder_required_tech({"stakeholder_needs":[{"statement":"Use react for the interface", "source_turns":[2]}]},"ui_framework","React")
     assert not _founder_required_tech({"stakeholder_needs":[{"statement":"React in one click", "source_turns":[2]}]},"ui_framework","React")
+    assert not _founder_required_tech({"stakeholder_needs":[{"statement":"Use React Native for mobile", "source_turns":[2]}]},"ui_framework","React")
+    assert _founder_required_tech({"stakeholder_needs":[{"statement":"Use React; later consider React Native", "source_turns":[2]}]},"ui_framework","React")
     assert not _founder_required_tech({"stakeholder_needs":[{"statement":"Use React", "source_turns":[]}]},"ui_framework","React")
 
 
