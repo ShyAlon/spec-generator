@@ -551,7 +551,7 @@ def _experiment_cap(name: str, items: list, label: str,
 _KIND_LEXICONS = KIND_LEXICONS
 _SLOT_KIND = {
     "language": "language", "runtime": "language", "framework": "framework",
-    "web_framework": "framework", "database": "database", "persistence": "database",
+    "web_framework": "framework", "ui_framework": "framework", "database": "database", "persistence": "database",
     "orm": "orm", "ci": "ci", "ci_tool": "ci", "auth": "auth",
     "sso_integration": "auth", "authentication": "auth", "encryption": "encryption",
     "message_queue": "queue", "queue": "queue",
@@ -646,6 +646,41 @@ def _tech_kinds(name: str) -> list[str]:
     return kinds
 
 
+
+def _founder_required_tech(intent_model: dict, key: str, value: str) -> bool:
+    """Only a sourced, exact founder choice bypasses platform contest.
+
+    Preference areas use contract areas (framework), not arbitrary slot names
+    (ui_framework). Needs must state an actual technology directive, not merely
+    mention a technology while describing product behavior.
+    """
+    kind = _candidate_kind(key)
+    area = "framework" if kind in ("framework", "mobile_framework") else kind
+    if not area:
+        return False
+    from .tech_candidates import normalize_technology_alias
+    desired = normalize_technology_alias(value)
+    # Names are case-insensitive, but aliases and families do not grant an
+    # exemption: "React Native" is not a founder choice of "React".
+    for pref in intent_model.get("tech_preferences") or []:
+        if (pref.get("source_turns") and str(pref.get("area", "")).casefold() == area
+                and normalize_technology_alias(str(pref.get("preference", ""))) == desired):
+            return True
+    for need in intent_model.get("stakeholder_needs") or []:
+        if not need.get("source_turns"):
+            continue
+        statement = str(need.get("statement", ""))
+        # "Use React Native" must never exempt React by prefix. The need's
+        # chosen technology is the longest matching registered name.
+        directive = r"\b(?:use|using|require|requires|required|must use|must be built with)\s+"
+        longer = any(r["name"].casefold().startswith(value.casefold() + " ")
+                     and _re.search(directive + _re.escape(r["name"]) + r"(?=$|[\s.,;:!?])",
+                                    statement, _re.I) for r in TECH_ROWS)
+        if not longer and _re.search(directive + _re.escape(value) + r"(?=$|[\s.,;:!?])",
+                                     statement, _re.I):
+            return True
+    return False
+
 def _founder_named_techs(intent_model: dict) -> list[str]:
     """Technologies the founder NAMED inside their stated tech preferences
     ('free resources like Supabase' -> ['supabase']). Only names the pipeline
@@ -704,6 +739,17 @@ def _candidate_block(key: str, founder_techs: list[str]) -> str:
     slot's kind, with founder-named technologies marked and weighted."""
     kind = _candidate_kind(key)
     cands = TECH_CANDIDATES.get(kind, ()) if kind else ()
+    if key == "ui_framework":
+        # An explicit UI slot includes both browser and native UI frameworks.
+        # The broad framework kind also contains backend services, which are
+        # never substitutes for the product's UI.
+        cands = tuple((name, note) for name, note in
+                      (cands + TECH_CANDIDATES.get("mobile_framework", ()))
+                      if (row := tech_row(name))
+                      and "backend" not in row["kinds"]
+                      and ("web" in row["platforms"] or "ios" in row["platforms"]
+                           or "android" in row["platforms"]))
+        cands = tuple(dict.fromkeys(cands))
     lines = []
     if cands:
         lines.append(f"CANDIDATE TECHNOLOGIES for this slot's kind ({kind}) - curated list as of "
@@ -2111,6 +2157,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             # values are facts about the repo, not proposals: not re-judged.
             kind3 = _candidate_kind(key)
             if (kind3 in PLATFORM_CHECKED_KINDS and not entry["baseline_refs"]
+                    and not _founder_required_tech(state["intent_model"], key, value)
                     and product_platforms & {"ios", "android"}):
                 row = tech_row(value)
                 need = product_platforms & {"ios", "android"}
@@ -2123,14 +2170,22 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             f"{'/'.join(sorted(need))} product) - an ADR must carry the explicit justification")
                     else:
                         conflicts.append(value)
-                        fitting = [n for n, _ in TECH_CANDIDATES.get(kind3, ())
-                                   if (r2 := tech_row(n)) and (set(r2["platforms"]) & need or "any" in r2["platforms"])]
+                        candidate_rows = TECH_CANDIDATES.get(kind3, ())
+                        if key == "ui_framework":
+                            candidate_rows += TECH_CANDIDATES.get("mobile_framework", ())
+                        fitting = list(dict.fromkeys(
+                            n for n, _ in candidate_rows
+                            if (r2 := tech_row(n))
+                            and (set(r2["platforms"]) & need or "any" in r2["platforms"])
+                            and (key != "ui_framework" or "backend" not in r2["kinds"])))
                         raise ModelStructureError(
                             f"stack.{key}: {value!r} is a {'/'.join(row['platforms'])} technology, but the "
                             f"product context is {'/'.join(sorted(need))} - it cannot answer this slot "
                             f"directly. Matching-platform candidates: {', '.join(fitting[:6]) or '(none on file)'}. "
-                            f"If {value!r} is a DELIBERATE call (e.g. web-first PWA), repeat it and the "
-                            "covering ADR must carry the explicit platform justification for founder veto.")
+                            f"If {value!r} is a DELIBERATE call (e.g. web-first PWA), repeat it with "
+                            "off_list_justification: null (this is a registered technology; that field is only "
+                            "for an unresolved technology). The covering ADR must name it in title/decision "
+                            "and argue the platform trade-off in its rationale for founder veto.")
             entry["technology_id"] = technology_id
             entry["off_list_justification"] = justification
             return entry
