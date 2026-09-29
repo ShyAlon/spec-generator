@@ -1,4 +1,4 @@
-from conftest import SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
+from conftest import SYSTEM_BASELINE as ORIGINAL_SYSTEM_BASELINE, ModelFactoryLedger, SchemaRoutingArchitectureModel
 """--from <stage>: rewind a checkpoint so a stage and everything after it
 re-runs under the CURRENT code (his 2026-09-09 need: the completed run held
 pre-fix items with invented requirement ids; a plain resume re-reported the
@@ -17,6 +17,11 @@ from spec_generator.graph import build_graph
 from spec_generator.telemetry import UsageLog
 from test_progress import CONTRACT_SRS, INTENT, PAYLOADS, FakeModel
 from vmodel_contracts import CONTRACT_VERSION
+
+# These CLI tests create a new baseline, rather than exercise version migration.
+SYSTEM_BASELINE = {**ORIGINAL_SYSTEM_BASELINE, "contract_version": CONTRACT_VERSION,
+                   "repositories": [{**repo, "contract_version": CONTRACT_VERSION}
+                                    for repo in ORIGINAL_SYSTEM_BASELINE["repositories"]]}
 
 
 def _run_once(box, monkeypatch, db):
@@ -686,3 +691,20 @@ def test_bounded_checkpoint_can_reconnect_into_later_bounded_graph(tmp_path):
     prior=later.get_state(cfg).values
     assert _resume_after_bounded_stop(later,cfg,prior)=="needs"
     assert later.get_state(cfg).next
+
+
+def test_bounded_items_checkpoint_reconnects_to_tests_without_repeating_items(monkeypatch,tmp_path):
+    """One --to per phase: items -> tests must not exit 0 without tests.json."""
+    from spec_generator.cli import _resume_after_bounded_stop
+    from spec_generator.graph import build_graph
+    box={}
+    monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**kw:box.setdefault(stage,FakeModel(stage)))
+    path=str(tmp_path/'items-to-tests.sqlite');cfg={'configurable':{'thread_id':'items-to-tests'}}
+    first=build_graph(UsageLog('items-to-tests'),checkpointer=SqliteSaver(sqlite3.connect(path,check_same_thread=False)),stop_after='items')
+    stopped=first.invoke({'intent_model':dict(INTENT),'system_baseline':SYSTEM_BASELINE},cfg)
+    assert stopped.get('items') and not stopped.get('tests') and not first.get_state(cfg).next
+    items_calls=box['items'].calls
+    later=build_graph(UsageLog('items-to-tests'),checkpointer=SqliteSaver(sqlite3.connect(path,check_same_thread=False)),stop_after='tests')
+    assert _resume_after_bounded_stop(later,cfg,later.get_state(cfg).values)=='items'
+    result=later.invoke(None,cfg)
+    assert result.get('tests') and box['items'].calls==items_calls

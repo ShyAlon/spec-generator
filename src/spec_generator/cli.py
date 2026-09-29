@@ -426,7 +426,8 @@ def _resume_after_bounded_stop(graph, cfg: dict, prior: dict) -> str | None:
     """
     if prior.get("bundle") or graph.get_state(cfg).next:
         return None
-    for stage, downstream in (("architecture", "items"), ("srs", "architecture"), ("needs", "srs")):
+    for stage, downstream in (("items", "tests"), ("architecture", "items"),
+                              ("srs", "architecture"), ("needs", "srs")):
         if prior.get(stage) and not prior.get(downstream):
             graph.update_state(cfg, {}, as_node=stage)
             return stage
@@ -555,6 +556,11 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     print(f"New output: {outdir} (source will not be modified)", file=sys.stderr)
     log = UsageLog(sid, sink=jsonl_sink(outdir / "usage.jsonl"))
     bus = ProgressBus(); bus.subscribe(stderr_printer())
+    from .structured_progress import StructuredProgress
+    emitter=StructuredProgress(os.environ.get("VMODEL_PROGRESS_TASK_ID") or sid,sid,args.only_stage)
+    bus.subscribe(emitter.subscriber)
+    from . import structured_progress
+    structured_progress.active_sink=emitter
     persist = _make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield")
     graph = build_graph(log, progress=bus, persist=persist, partials=_make_partials(outdir),
                         only_stage=args.only_stage)
@@ -815,6 +821,12 @@ def main() -> None:
     log = UsageLog(sid, sink=jsonl_sink(outdir / "usage.jsonl"))
     bus = ProgressBus()
     bus.subscribe(stderr_printer())
+    from .structured_progress import StructuredProgress
+    from .structured_progress import STAGE_PHASE
+    emitter=StructuredProgress(os.environ.get("VMODEL_PROGRESS_TASK_ID") or sid,sid,STAGE_PHASE.get(args.to_stage or "needs","needs"))
+    bus.subscribe(emitter.subscriber)
+    from . import structured_progress
+    structured_progress.active_sink=emitter
 
     # Disk checkpoints: a crash mid-generation resumes from the last completed
     # stage on rerun (same command) - no stage is paid for twice.
