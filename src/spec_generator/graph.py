@@ -551,7 +551,7 @@ def _experiment_cap(name: str, items: list, label: str,
 _KIND_LEXICONS = KIND_LEXICONS
 _SLOT_KIND = {
     "language": "language", "runtime": "language", "framework": "framework",
-    "web_framework": "framework", "database": "database", "persistence": "database",
+    "web_framework": "framework", "ui_framework": "framework", "database": "database", "persistence": "database",
     "orm": "orm", "ci": "ci", "ci_tool": "ci", "auth": "auth",
     "sso_integration": "auth", "authentication": "auth", "encryption": "encryption",
     "message_queue": "queue", "queue": "queue",
@@ -704,6 +704,13 @@ def _candidate_block(key: str, founder_techs: list[str]) -> str:
     slot's kind, with founder-named technologies marked and weighted."""
     kind = _candidate_kind(key)
     cands = TECH_CANDIDATES.get(kind, ()) if kind else ()
+    if key == "ui_framework":
+        # The broad framework kind also contains backend services. A UI slot
+        # must not suggest Express/FastAPI/LangGraph as mobile alternatives.
+        cands = tuple((name, note) for name, note in cands
+                      if (row := tech_row(name)) and "backend" not in row["kinds"]
+                      and ("web" in row["platforms"] or "ios" in row["platforms"]
+                           or "android" in row["platforms"]))
     lines = []
     if cands:
         lines.append(f"CANDIDATE TECHNOLOGIES for this slot's kind ({kind}) - curated list as of "
@@ -2124,13 +2131,16 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     else:
                         conflicts.append(value)
                         fitting = [n for n, _ in TECH_CANDIDATES.get(kind3, ())
-                                   if (r2 := tech_row(n)) and (set(r2["platforms"]) & need or "any" in r2["platforms"])]
+                                   if (r2 := tech_row(n)) and (set(r2["platforms"]) & need or "any" in r2["platforms"])
+                                   and (key != "ui_framework" or "backend" not in r2["kinds"])]
                         raise ModelStructureError(
                             f"stack.{key}: {value!r} is a {'/'.join(row['platforms'])} technology, but the "
                             f"product context is {'/'.join(sorted(need))} - it cannot answer this slot "
                             f"directly. Matching-platform candidates: {', '.join(fitting[:6]) or '(none on file)'}. "
-                            f"If {value!r} is a DELIBERATE call (e.g. web-first PWA), repeat it and the "
-                            "covering ADR must carry the explicit platform justification for founder veto.")
+                            f"If {value!r} is a DELIBERATE call (e.g. web-first PWA), repeat it with "
+                            "off_list_justification: null (this is a registered technology; that field is only "
+                            "for an unresolved technology). The covering ADR must name it in title/decision "
+                            "and argue the platform trade-off in its rationale for founder veto.")
             entry["technology_id"] = technology_id
             entry["off_list_justification"] = justification
             return entry

@@ -326,3 +326,9 @@ def test_off_list_pick_credits_structured_stack_to_adr_link_not_exact_prose():
       "display_name":long_pick,"off_list_justification":"Keeps insurer-specific transport differences outside the claim domain while concrete channels remain research-bound."}]}],
       "non_functionals":{}}
     _check_candidate_grounding(ArchitectureOverview.model_validate(data),{"tech_preferences":[],"stakeholder_needs":[]})
+
+
+def test_ui_framework_candidates_exclude_backend_substitutes():
+    block = _candidate_block("ui_framework", [])
+    assert "React" in block and "Vue" in block
+    assert all(name not in block for name in ("Express:", "FastAPI:", "LangChain:", "Flask:", "NestJS:", "LangGraph:"))
