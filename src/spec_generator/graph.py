@@ -646,6 +646,33 @@ def _tech_kinds(name: str) -> list[str]:
     return kinds
 
 
+
+def _founder_required_tech(intent_model: dict, key: str, value: str) -> bool:
+    """Only a sourced, exact founder choice bypasses platform contest.
+
+    Preference areas use contract areas (framework), not arbitrary slot names
+    (ui_framework). Needs must state an actual technology directive, not merely
+    mention a technology while describing product behavior.
+    """
+    kind = _candidate_kind(key)
+    area = "framework" if kind in ("framework", "mobile_framework") else kind
+    if not area:
+        return False
+    from .tech_candidates import normalize_technology_alias
+    desired = normalize_technology_alias(value)
+    for pref in intent_model.get("tech_preferences") or []:
+        if (pref.get("source_turns") and str(pref.get("area", "")).casefold() == area
+                and normalize_technology_alias(str(pref.get("preference", ""))) == desired):
+            return True
+    for need in intent_model.get("stakeholder_needs") or []:
+        if not need.get("source_turns"):
+            continue
+        statement = str(need.get("statement", ""))
+        if _re.search(r"\b(?:use|using|require|requires|required|must use|must be built with)\s+"
+                      + _re.escape(value) + r"(?=$|[\s.,;:!?])", statement, _re.I):
+            return True
+    return False
+
 def _founder_named_techs(intent_model: dict) -> list[str]:
     """Technologies the founder NAMED inside their stated tech preferences
     ('free resources like Supabase' -> ['supabase']). Only names the pipeline
@@ -705,12 +732,16 @@ def _candidate_block(key: str, founder_techs: list[str]) -> str:
     kind = _candidate_kind(key)
     cands = TECH_CANDIDATES.get(kind, ()) if kind else ()
     if key == "ui_framework":
-        # The broad framework kind also contains backend services. A UI slot
-        # must not suggest Express/FastAPI/LangGraph as mobile alternatives.
-        cands = tuple((name, note) for name, note in cands
-                      if (row := tech_row(name)) and "backend" not in row["kinds"]
+        # An explicit UI slot includes both browser and native UI frameworks.
+        # The broad framework kind also contains backend services, which are
+        # never substitutes for the product's UI.
+        cands = tuple((name, note) for name, note in
+                      (cands + TECH_CANDIDATES.get("mobile_framework", ()))
+                      if (row := tech_row(name))
+                      and "backend" not in row["kinds"]
                       and ("web" in row["platforms"] or "ios" in row["platforms"]
                            or "android" in row["platforms"]))
+        cands = tuple(dict(((name, note), None) for name, note in cands))
     lines = []
     if cands:
         lines.append(f"CANDIDATE TECHNOLOGIES for this slot's kind ({kind}) - curated list as of "
@@ -2118,6 +2149,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             # values are facts about the repo, not proposals: not re-judged.
             kind3 = _candidate_kind(key)
             if (kind3 in PLATFORM_CHECKED_KINDS and not entry["baseline_refs"]
+                    and not _founder_required_tech(state["intent_model"], key, value)
                     and product_platforms & {"ios", "android"}):
                 row = tech_row(value)
                 need = product_platforms & {"ios", "android"}
@@ -2130,9 +2162,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             f"{'/'.join(sorted(need))} product) - an ADR must carry the explicit justification")
                     else:
                         conflicts.append(value)
-                        fitting = [n for n, _ in TECH_CANDIDATES.get(kind3, ())
+                        candidate_rows = (TECH_CANDIDATES.get(kind3, ()) + TECH_CANDIDATES.get("mobile_framework", ())) if key == "ui_framework" else TECH_CANDIDATES.get(kind3, ())
+                        fitting = list(dict.fromkeys(n for n, _ in candidate_rows
                                    if (r2 := tech_row(n)) and (set(r2["platforms"]) & need or "any" in r2["platforms"])
-                                   and (key != "ui_framework" or "backend" not in r2["kinds"])]
+                                   and (key != "ui_framework" or "backend" not in r2["kinds"])))
                         raise ModelStructureError(
                             f"stack.{key}: {value!r} is a {'/'.join(row['platforms'])} technology, but the "
                             f"product context is {'/'.join(sorted(need))} - it cannot answer this slot "

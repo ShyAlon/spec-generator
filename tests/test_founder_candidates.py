@@ -330,5 +330,67 @@ def test_off_list_pick_credits_structured_stack_to_adr_link_not_exact_prose():
 
 def test_ui_framework_candidates_exclude_backend_substitutes():
     block = _candidate_block("ui_framework", [])
-    assert "React" in block and "Vue" in block
+    assert "React" in block and "Vue" in block and "React Native" in block and "SwiftUI" in block
     assert all(name not in block for name in ("Express:", "FastAPI:", "LangChain:", "Flask:", "NestJS:", "LangGraph:"))
+
+
+def test_founder_required_tech_needs_exact_sourced_case_insensitive_choice():
+    from spec_generator.graph import _founder_required_tech
+    intent={"tech_preferences": [{"area":"framework","preference":"rEaCt", "strength":"required", "source_turns":[4]}]}
+    assert _founder_required_tech(intent,"ui_framework","React")
+    assert not _founder_required_tech(intent,"ui_framework","React Native")
+    assert not _founder_required_tech({"tech_preferences":[{**intent["tech_preferences"][0],"source_turns":[]}]},"ui_framework","React")
+    assert not _founder_required_tech({"tech_preferences":[{**intent["tech_preferences"][0],"area":"database"}]},"ui_framework","React")
+    assert not _founder_required_tech({"tech_preferences":[{**intent["tech_preferences"][0],"preference":"React and Vue"}]},"ui_framework","React")
+    assert _founder_required_tech({"stakeholder_needs":[{"statement":"Use react for the interface", "source_turns":[2]}]},"ui_framework","React")
+    assert not _founder_required_tech({"stakeholder_needs":[{"statement":"React in one click", "source_turns":[2]}]},"ui_framework","React")
+    assert not _founder_required_tech({"stakeholder_needs":[{"statement":"Use React", "source_turns":[]}]},"ui_framework","React")
+
+
+class _ReactUiWithIllegalJustification(_InsistentReact):
+    DEPART_VALUES = {**_MicroModel.DEPART_VALUES, "ui_framework": ("React", "Adopt React for ui_framework")}
+    def stream(self, messages):
+        props=set(self.schema.get("properties",{}))
+        if props=={"technology","off_list_justification","baseline_refs"} and any("THE STACK KEY TO DECIDE: ui_framework" in m.content for m in messages):
+            reason="cannot answer this slot directly" in "\n".join(str(m.content) for m in messages)
+            yield _AIMessage(content=json.dumps({"technology":"React","off_list_justification":"PWA works on iOS" if reason else None,"baseline_refs":[]}))
+            return
+        yield from super().stream(messages)
+
+
+def test_registered_react_illegal_justification_rejects_with_schema_legal_feedback():
+    with _pytest.raises(_UFE) as ei:
+        _run(_ReactUiWithIllegalJustification, depart=True, depart_key="ui_framework",plan_keys=["language","ui_framework"])
+    rendered=ei.value.render()
+    assert "off_list_justification is only for unresolved technology" in rendered
+    assert "off_list_justification: null" in rendered
+    assert "React Native" in rendered and "FastAPI" not in rendered
+
+
+class _ReactUiContested(_InsistentReact):
+    DEPART_VALUES = {**_MicroModel.DEPART_VALUES, "ui_framework": ("React", "Adopt React for ui_framework")}
+    def stream(self,messages):
+        props=set(self.schema.get("properties",{}))
+        if props=={"technology","off_list_justification","baseline_refs"} and any("THE STACK KEY TO DECIDE: ui_framework" in m.content for m in messages):
+            yield _AIMessage(content=json.dumps({"technology":"React","off_list_justification":None,"baseline_refs":[]}));return
+        yield from super().stream(messages)
+
+
+def test_ui_framework_contested_repeat_reaches_adr_gate():
+    r=_run(_ReactUiContested,depart=True,depart_key="ui_framework",plan_keys=["language","ui_framework"])
+    assert any(e["key"]=="ui_framework" and e["value"]=="React" for e in r["architecture"]["stack_entries"])
+    assert any("React" in d["title"] and "PWA" in d["rationale"] for d in r["architecture"]["decisions"])
+
+
+def test_sourced_exact_founder_react_bypasses_contest_and_adr_tax():
+    import spec_generator.graph as graph
+    from test_architecture_micro_pipeline import SYSTEM_BASELINE
+    from test_progress import INTENT
+    calls=[];mp=_pytest.MonkeyPatch()
+    mp.setattr(_mc,"build_chat_model",lambda stage,**k:_ReactUiContested(stage,k.get("schema") or {},calls,depart=True,depart_key="ui_framework",plan_keys=["language","ui_framework"]))
+    try:
+        intent={**INTENT,"problem_statement":"An iOS habit app", "tech_preferences":[{"area":"framework","preference":"rEaCt","strength":"required","source_turns":[1]}]}
+        r=graph.build_graph(UsageLog("s")).invoke({"intent_model":intent,"system_baseline":SYSTEM_BASELINE},{"configurable":{"thread_id":"founder-react"}})
+    finally:mp.undo()
+    assert any(e["key"]=="ui_framework" and e["value"]=="React" for e in r["architecture"]["stack_entries"])
+    assert not any("boundary=contract-repair" in str(c) for c in calls)
