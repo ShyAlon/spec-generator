@@ -299,7 +299,13 @@ def _start_heartbeat(label: str):
         while not stop.wait(interval):
             if stop.is_set():  # a beat already past the wait must not print after the call returned
                 break
-            _console_line(f"  ... still working - {label}, {time.monotonic() - t0:.0f}s elapsed")
+            elapsed=time.monotonic()-t0
+            _console_line(f"  ... still working - {label}, {elapsed:.0f}s elapsed")
+            from . import structured_progress
+            sink=structured_progress.active_sink
+            if sink is not None and sink._enabled:
+                try:sink.emit(label,label,"heartbeat",f"Model call still running, {elapsed:.0f}s elapsed")
+                except Exception:pass
 
     threading.Thread(target=_beat, daemon=True).start()
     return stop.set

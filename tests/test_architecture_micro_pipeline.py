@@ -1,4 +1,8 @@
-from conftest import SYSTEM_BASELINE
+from vmodel_contracts import CONTRACT_VERSION
+from conftest import SYSTEM_BASELINE as ORIGINAL_SYSTEM_BASELINE
+SYSTEM_BASELINE = {**ORIGINAL_SYSTEM_BASELINE, "contract_version": CONTRACT_VERSION,
+                   "repositories": [{**repo, "contract_version": CONTRACT_VERSION}
+                                    for repo in ORIGINAL_SYSTEM_BASELINE["repositories"]]}
 """0.13.0 architecture micro-pipeline: the 2026-09-11 phi4 failure made
 structural.
 
@@ -384,7 +388,7 @@ def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monke
     from spec_generator.errors import UserFacingError
     from spec_generator.graph import checkpoint_serde
 
-    intent = {**INTENT, "contract_version": "0.16.0"}
+    intent = {**INTENT, "contract_version": CONTRACT_VERSION}
     intent_path = tmp_path / "intent.json"
     intent_path.write_text(json.dumps(intent))
     baseline_path = tmp_path / "baseline.json"
@@ -423,7 +427,7 @@ def test_review_resume_after_accepted_srs_merges_baseline_without_rerunning_srs(
     from spec_generator import cli
     from spec_generator.graph import checkpoint_serde
 
-    intent={**INTENT,"contract_version":"0.16.0"}
+    intent={**INTENT,"contract_version":CONTRACT_VERSION}
     ip=tmp_path/"intent.json";ip.write_text(json.dumps(intent))
     bp=tmp_path/"baseline.json";bp.write_text(json.dumps(SYSTEM_BASELINE))
     out=tmp_path/"artifacts";out.mkdir();sid=intent["session_id"]
@@ -670,7 +674,7 @@ def test_d3js_accepted_for_a_visualization_slot_end_to_end(monkeypatch):
     assert viz["migration_adr_id"] is not None
 
 
-GREENFIELD_BASELINE = {"contract_version": "0.16.0", "baseline_id": "gf-test",
+GREENFIELD_BASELINE = {"contract_version": CONTRACT_VERSION, "baseline_id": "gf-test",
                        "system_name": "New product", "mode": "greenfield",
                        "repositories": [], "immutable_decisions": []}
 
@@ -758,7 +762,7 @@ def test_brownfield_still_requires_cite_or_migrate(monkeypatch):
     from vmodel_contracts import ArchitectureOverview
     from conftest import SYSTEM_BASELINE
     arch = ArchitectureOverview.model_validate({
-        "contract_version": "0.16.0", "session_id": "s", "baseline_id": "test-baseline",
+        "contract_version": CONTRACT_VERSION, "session_id": "s", "baseline_id": "test-baseline",
         "stack_entries": [{"key": "language", "value": "ts", "technology_id": "tech:typescript", "decision_id": "ADR-1",
                            "baseline_refs": ["repo:spec-generator"], "migration_adr_id": None}],
         "components": [{"name": "api", "responsibility": "serve", "requirement_ids": ["R-1"],
@@ -777,7 +781,7 @@ def test_fresh_review_cli_carries_baseline_and_conops_into_architecture(monkeypa
     """Real CLI boundary regression: --review used to discard both fields."""
     import sys
     from spec_generator import cli
-    intent={**INTENT,"contract_version":"0.16.0"}
+    intent={**INTENT,"contract_version":CONTRACT_VERSION}
     ip=tmp_path/"intent.json";ip.write_text(json.dumps(intent))
     bp=tmp_path/"baseline.json";bp.write_text(json.dumps(SYSTEM_BASELINE))
     # A minimal valid ConOps fixture from the contract, tied to this session.
