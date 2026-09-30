@@ -576,6 +576,20 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
 _SEMANTIC_EQUIVALENCE_VERSION = "1"
 
 
+def _resume_constraint_content(value):
+    """Ignore version stamps for resume equality, preserving every other field.
+
+    Load-time contract compatibility checks remain authoritative. A re-stamp
+    does not change the constraint that completed stages were grounded in.
+    """
+    if isinstance(value, dict):
+        return {key: _resume_constraint_content(item)
+                for key, item in value.items() if key != "contract_version"}
+    if isinstance(value, list):
+        return [_resume_constraint_content(item) for item in value]
+    return value
+
+
 def _semantic_hash(value) -> str:
     """Hash contract meaning, not rendering or retrieval annotations.
 
@@ -795,11 +809,11 @@ def main() -> None:
             probe=build_graph(UsageLog(sid),checkpointer=SqliteSaver(conn,serde=checkpoint_serde()),review=args.review)
             prior=probe.get_state({"configurable":{"thread_id":sid}}).values
             if prior:
-                if prior.get("conops") != conops:
+                if _resume_constraint_content(prior.get("conops")) != _resume_constraint_content(conops):
                     raise UserFacingError("preflight: checkpoint Concept of Operations is incompatible.",
                         "the existing output was started without this CONOPS or with a different one.",
                         "choose a fresh -o directory, or pass the original CONOPS used by this checkpoint.")
-                if prior.get("system_baseline") not in (None,baseline):
+                if prior.get("system_baseline") is not None and _resume_constraint_content(prior["system_baseline"]) != _resume_constraint_content(baseline):
                     raise UserFacingError("preflight: checkpoint system baseline is incompatible.",
                         "the existing output was generated under a different architecture anchor.",
                         "choose a fresh -o directory, or explicitly rerun from architecture under the new baseline.")
@@ -842,7 +856,7 @@ def main() -> None:
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
-    from .artifact_lifecycle import ArchitectureLifecycle
+    from .artifact_lifecycle import ArchitectureLifecycle, stable_hash
     architecture_lifecycle = ArchitectureLifecycle(outdir, sid, baseline)
     partials = _make_partials(outdir, architecture_lifecycle)
     graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion,
@@ -862,6 +876,12 @@ def main() -> None:
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
     resume = bool(prior)
+    if (resume and prior.get("system_baseline") is not None
+            and _resume_constraint_content(prior["system_baseline"]) == _resume_constraint_content(baseline)):
+        # Keep the original sealed anchor, including its stamp, when only
+        # versions changed. The adapter is shared with persistence callbacks;
+        # do not replace it or rewrite historical lifecycle hashes.
+        architecture_lifecycle.anchor_hash = stable_hash(prior["system_baseline"])
     if resume and prior.get("architecture"):
         architecture_lifecycle.bootstrap_complete(
             prior["architecture"], prior.get("system_baseline") or baseline)
@@ -885,7 +905,7 @@ def main() -> None:
             print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
     if resume:
         prior_conops = prior.get("conops")
-        if prior_conops != conops:
+        if _resume_constraint_content(prior_conops) != _resume_constraint_content(conops):
             if prior_conops and conops:
                 reason = "the supplied Concept of Operations differs from the checkpoint"
             elif conops:
@@ -913,7 +933,7 @@ def main() -> None:
         if written:
             print(f"Artifacts for already-completed stages written to the bundle dir ({', '.join(written)}).",
                   file=sys.stderr)
-    if resume and prior.get("system_baseline") is not None and prior["system_baseline"] != baseline:
+    if resume and prior.get("system_baseline") is not None and _resume_constraint_content(prior["system_baseline"]) != _resume_constraint_content(baseline):
         # A completed stage is only "completed" under the baseline it was
         # built with. Resuming under a DIFFERENT anchor must never silently
         # re-label old output (2026-09-13: the poisoned overnight six-repo
