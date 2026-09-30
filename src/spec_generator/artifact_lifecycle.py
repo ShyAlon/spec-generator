@@ -110,7 +110,31 @@ class ArchitectureLifecycle:
         if event is not None:
             append_lifecycle_event(self.path,event)
 
-    def resume(self, next_artifact: str) -> None:
+    def resume(self, next_artifact: str, *, content=None, compatible_anchor_hashes=()) -> None:
+        """Replay only an evidenced continuation of the same sealed artifact.
+
+        The caller validates checkpoint content and proves any alternate anchor
+        hashes represent stamp-only drift. No shared transition is weakened.
+        """
+        events = self._events()
+        if self.state == ArtifactState.PARTIAL:
+            last = events[-1]
+            guards = last.get("guard_evidence") or {}
+            if (last.get("transition") != LifecycleTransition.RESUME.value
+                    or guards.get("named_next_artifact") != next_artifact
+                    or guards.get("legal_outgoing_arc") != f"architecture->{next_artifact}"):
+                raise ValueError("partial architecture is not the same recorded continuation")
+            seals = [event for event in events[:-1]
+                     if event.get("transition") == LifecycleTransition.FINALIZE.value]
+            seal = seals[-1] if seals else None
+            if (seal is None or events[-2] != seal or content is None
+                    or seal.get("content_hash") != stable_hash(content)
+                    or seal.get("anchor_hash") != self.anchor_hash):
+                raise ValueError("resume retry does not match the sealed checkpoint architecture")
+            allowed = {self.anchor_hash, *compatible_anchor_hashes}
+            if last.get("anchor_hash") not in allowed:
+                raise ValueError("resume retry has a changed anchor")
+            return  # Already recorded; validated backfill appends FINALIZE.
         append_lifecycle_event(self.path,self._event(LifecycleTransition.RESUME,ArtifactState.PARTIAL,
             f"bounded architecture stop resumed toward {next_artifact}",
             {"named_next_artifact":next_artifact,"legal_outgoing_arc":f"architecture->{next_artifact}"}))

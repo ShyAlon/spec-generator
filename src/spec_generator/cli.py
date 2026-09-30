@@ -876,33 +876,6 @@ def main() -> None:
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
     resume = bool(prior)
-    if (resume and prior.get("system_baseline") is not None
-            and _resume_constraint_content(prior["system_baseline"]) == _resume_constraint_content(baseline)):
-        # Keep the original sealed anchor, including its stamp, when only
-        # versions changed. The adapter is shared with persistence callbacks;
-        # do not replace it or rewrite historical lifecycle hashes.
-        architecture_lifecycle.anchor_hash = stable_hash(prior["system_baseline"])
-    if resume and prior.get("architecture"):
-        architecture_lifecycle.bootstrap_complete(
-            prior["architecture"], prior.get("system_baseline") or baseline)
-    if resume:
-        bounded_stage = _resume_after_bounded_stop(graph, cfg, prior)
-        if bounded_stage:
-            if bounded_stage == "architecture":
-                architecture_lifecycle.resume("gate_architecture" if args.review else "items")
-            destination = f"the requested '{args.to_stage}' boundary" if args.to_stage else "the full pipeline"
-            print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through {destination}.", file=sys.stderr)
-    if resume and (prior.get('semantic_reviews') or {}).get('srs'):
-        from .semantic_review import load_reviewed_srs
-        try:resolved=load_reviewed_srs(intent,outdir,prior)
-        except ValueError as exc:
-            raise UserFacingError('SRS candidate review is not ready.',str(exc),'Review every flagged SRS item with Remove, Replace, or Accept before continuing.') from exc
-        if resolved:
-            candidate,reviewed=resolved
-            reviews={**prior['semantic_reviews'],'srs':reviewed.model_dump(mode='json')}
-            graph.update_state(cfg,{'srs':candidate,'semantic_reviews':reviews},as_node=_predecessor('architecture',args.review))
-            prior={**prior,'srs':candidate,'semantic_reviews':reviews}
-            print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
     if resume:
         prior_conops = prior.get("conops")
         if _resume_constraint_content(prior_conops) != _resume_constraint_content(conops):
@@ -917,6 +890,47 @@ def main() -> None:
                 reason + "; completed Stakeholder Needs and downstream artifacts are grounded in the prior concept state.",
                 "start a new output directory for this concept, or rerun the original command with the same --conops file."
             )
+    if (resume and prior.get("system_baseline") is not None
+            and _resume_constraint_content(prior["system_baseline"]) == _resume_constraint_content(baseline)):
+        # Keep the original sealed anchor, including its stamp, when only
+        # versions changed. The adapter is shared with persistence callbacks;
+        # do not replace it or rewrite historical lifecycle hashes.
+        architecture_lifecycle.anchor_hash = stable_hash(prior["system_baseline"])
+    if resume and prior.get("architecture"):
+        architecture_lifecycle.bootstrap_complete(
+            prior["architecture"], prior.get("system_baseline") or baseline)
+    baseline_changed = (resume and prior.get("system_baseline") is not None
+                        and _resume_constraint_content(prior["system_baseline"]) != _resume_constraint_content(baseline))
+    if resume and not baseline_changed:
+        next_artifact = "gate_architecture" if args.review else "items"
+        # Check a previously recorded continuation even if SQLite was already
+        # reconnected before the crash. Never reseal an arbitrary partial.
+        if (prior.get("architecture") and architecture_lifecycle.state.value == "partial"):
+            body = _legacy_arch_fill({**prior["architecture"], "session_id": sid})
+            ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
+            architecture_lifecycle.resume(next_artifact, content=body,
+                compatible_anchor_hashes=(stable_hash(baseline),))
+        bounded_stage = _resume_after_bounded_stop(graph, cfg, prior)
+        if bounded_stage:
+            if bounded_stage == "architecture":
+                body = _legacy_arch_fill({**prior["architecture"], "session_id": sid})
+                ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
+                architecture_lifecycle.resume(next_artifact, content=body,
+                    compatible_anchor_hashes=(stable_hash(baseline),))
+            destination = f"the requested '{args.to_stage}' boundary" if args.to_stage else "the full pipeline"
+            print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through {destination}.", file=sys.stderr)
+    if resume and (prior.get('semantic_reviews') or {}).get('srs'):
+        from .semantic_review import load_reviewed_srs
+        try:resolved=load_reviewed_srs(intent,outdir,prior)
+        except ValueError as exc:
+            raise UserFacingError('SRS candidate review is not ready.',str(exc),'Review every flagged SRS item with Remove, Replace, or Accept before continuing.') from exc
+        if resolved:
+            candidate,reviewed=resolved
+            reviews={**prior['semantic_reviews'],'srs':reviewed.model_dump(mode='json')}
+            graph.update_state(cfg,{'srs':candidate,'semantic_reviews':reviews},as_node=_predecessor('architecture',args.review))
+            prior={**prior,'srs':candidate,'semantic_reviews':reviews}
+            print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
+    if resume:
         print("Checkpoint found - resuming; completed stages are NOT re-run.", file=sys.stderr)
         # backfill-persist artifacts for stages completed BEFORE incremental
         # persistence shipped: resume skips completed stages (persist never
