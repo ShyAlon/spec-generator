@@ -10,7 +10,7 @@ from vmodel_contracts import CONTRACT_VERSION, ConOpsDocument, SystemBaseline
 from spec_generator import cli
 from spec_generator.artifact_lifecycle import stable_hash
 from spec_generator.errors import UserFacingError
-from test_progress import INTENT
+from test_progress import INTENT, PAYLOADS
 from test_conops_consumption import conops
 
 
@@ -54,7 +54,7 @@ def resume_case(tmp_path, monkeypatch):
     prior = {
         "conops": restamp(current_conops, "0.19.0"),
         "system_baseline": restamp(current_baseline, "0.19.0"),
-        "architecture": {"completed": True}, "needs": {"completed": True},
+        "architecture": copy.deepcopy(PAYLOADS["architecture"]), "needs": {"completed": True},
         "srs": {"completed": True},
     }
     updates = []
@@ -84,7 +84,8 @@ def resume_case(tmp_path, monkeypatch):
             self.reanchors = []
             adapters.append(self)
         def bootstrap_complete(self, *args): pass
-        def resume(self, *args): pass
+        state = SimpleNamespace(value="complete")
+        def resume(self, *args, **kwargs): pass
         def reanchor(self, invalidates): self.reanchors.append(invalidates)
     monkeypatch.setattr(artifact_lifecycle, "ArchitectureLifecycle", Lifecycle)
 
