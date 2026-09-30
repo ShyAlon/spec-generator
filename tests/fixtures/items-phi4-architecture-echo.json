@@ -1,0 +1,102 @@
+[
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "User Data Model",
+    "requirement_ids": [
+      "R-1",
+      "R-2",
+      "R-3",
+      "R-4",
+      "R-5"
+    ]
+  },
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "Alert Data Model",
+    "requirement_ids": [
+      "R-6",
+      "R-7"
+    ]
+  },
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "Disagreement Data Model",
+    "requirement_ids": [
+      "R-8",
+      "R-9",
+      "R-10"
+    ]
+  },
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "Encryption Data Model",
+    "requirement_ids": [
+      "R-11",
+      "R-12"
+    ]
+  },
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "User Authentication Data Model",
+    "requirement_ids": [
+      "R-13",
+      "R-14",
+      "R-15"
+    ]
+  },
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "User Data Model",
+    "requirement_ids": [
+      "R-1",
+      "R-2",
+      "R-3",
+      "R-4",
+      "R-5"
+    ]
+  },
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "Alert Data Model",
+    "requirement_ids": [
+      "R-6",
+      "R-7"
+    ]
+  },
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "Disagreement Data Model",
+    "requirement_ids": [
+      "R-8",
+      "R-9",
+      "R-10"
+    ]
+  },
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "Encryption Data Model",
+    "requirement_ids": [
+      "R-11",
+      "R-12"
+    ]
+  },
+  {
+    "slug": "architecture",
+    "kind": "data_model",
+    "title": "User Authentication Data Model",
+    "requirement_ids": [
+      "R-13",
+      "R-14",
+      "R-15"
+    ]
+  }
+]
