@@ -33,6 +33,8 @@ def render_agents_md(
         "",
         "You are building against a systems-engineering specification. Do not guess.",
         "If a behavior is not specified, stop and ask - an unspecified behavior is a gap, not an invitation.",
+        "Never silently substitute defaults for OPEN or DEFERRED founder inputs. Read founder-decisions.json, list unresolved IDs back to the founder, and stop dependent work until explicit decisions are recorded. Independent work may proceed only without assuming an answer.",
+        "Cite decided choices from README.md and their phase/ADR sources instead of asking the founder again.",
         "",
         "## Architecture (decided - do not re-litigate)",
         "",
@@ -55,7 +57,7 @@ def render_agents_md(
         L.append(f"   Done when: {m.done_when}")
     L += ["", "## Specs", ""]
     for i in items:
-        L.append(f"- `{i.spec_id}` ({i.kind.value}) {i.title} -> spec file `{i.spec_id}.md`")
+        L.append(f"- `{i.spec_id}` ({i.kind.value}) {i.title} -> spec file `specs/{i.spec_id}.md`")
     if punch_list:
         L += ["", "## Known gaps (punch list - resolve before assuming)", ""]
         for p in punch_list:
