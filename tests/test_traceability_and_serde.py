@@ -102,8 +102,9 @@ def test_items_validator_units():
     assert out[1]["depends_on"] == ["SPEC-1"] and out[0]["slug"] == "a"
     with pytest.raises(ModelStructureError, match="covered by no item spec: \\['R-2'\\]"):
         v(good[:1])
-    with pytest.raises(ModelStructureError, match="duplicate spec ids"):
-        v([good[0], dict(good[0], requirement_ids=["R-2"])])
+    healed = v([good[0], dict(good[0], requirement_ids=["R-2"])])
+    assert len({item["spec_id"] for item in healed}) == 2
+    assert len({item["slug"] for item in healed}) == 2
     with pytest.raises(ModelStructureError, match="depends on unknown specs"):
         v([good[0], dict(good[1], depends_on=["nope"])])
     with pytest.raises(ModelStructureError, match="claims unknown requirements \\['R-99'\\]"):

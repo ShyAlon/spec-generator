@@ -1372,49 +1372,65 @@ def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
 
 
 def _heal_slugs(entries: list) -> list:
-    """ADR-0022: punctuation drift in a model-proposed slug is not a semantic
-    failure - normalize before validation instead of burning a retry:
-    lowercase, whitespace/underscores/invalid runs -> single hyphens
-    ('user_capabilities' -> 'user-capabilities'). Every heal is printed;
-    depends_on references are remapped with the same table. Heals that would
-    come out empty are left untouched so validation still fails loudly on
-    REAL drift; collisions get deterministic -2/-3 suffixes in plan order."""
+    """Normalize slug shape and proven item echoes without inventing content.
+
+    Exact duplicate records collapse first. Slugs are assigned per entry, not
+    through a last-write-wins raw-slug map. Ambiguous dependency references
+    remain errors rather than silently selecting one of several items.
+    """
     import re as _re
+    from collections import Counter, defaultdict
 
-    def _heal(s: str) -> str:
-        h = _re.sub(r"[^a-z0-9]+", "-", s.strip().lower()).strip("-")
-        return _re.sub(r"-{2,}", "-", h)
+    def heal(value: str) -> str:
+        return _re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
 
-    mapping: dict[str, str] = {}
-    used: set[str] = set()
-    for e in entries:
-        if not isinstance(e, dict):
+    unique, seen = [], set()
+    for entry in entries:
+        if isinstance(entry, dict):
+            identity = json.dumps(entry, sort_keys=True, separators=(",", ":"))
+            if identity in seen:
+                model_config._console_line("     - item echo removed: exact duplicate record")
+                continue
+            seen.add(identity)
+        unique.append(entry)
+    counts = Counter(entry.get("slug") for entry in unique
+                     if isinstance(entry, dict) and isinstance(entry.get("slug"), str))
+    stage_names = {"needs", "srs", "architecture", "items", "tests", "review", "assemble"}
+    used, mapping, out = set(), defaultdict(list), []
+    for entry in unique:
+        if not isinstance(entry, dict):
+            out.append(entry)
             continue
-        raw = e.get("slug")
-        if not isinstance(raw, str) or not raw.strip():
+        entry = dict(entry)
+        raw = entry.get("slug")
+        missing = raw is None or (isinstance(raw, str) and not raw.strip())
+        echoed = isinstance(raw, str) and (counts[raw] > 1 or heal(raw) in stage_names)
+        if missing or echoed:
+            title = entry.get("title")
+            candidate = heal(title) if isinstance(title, str) else ""
+        else:
+            candidate = heal(raw) if isinstance(raw, str) else ""
+        if candidate:
+            base, suffix = candidate, 2
+            while candidate in used:
+                candidate, suffix = f"{base}-{suffix}", suffix + 1
+            used.add(candidate)
+            entry["slug"] = candidate
+            if isinstance(raw, str):
+                mapping[raw].append(candidate)
+            if candidate != raw:
+                model_config._console_line(f"     - slug healed: {raw!r} -> {candidate!r}")
+        out.append(entry)
+    for entry in out:
+        if not isinstance(entry, dict) or not isinstance(entry.get("depends_on"), list):
             continue
-        h = _heal(raw)
-        if h and _re.fullmatch(r"[a-z0-9][a-z0-9-]*", h):
-            base, n = h, 2
-            while h in used:
-                h, n = f"{base}-{n}", n + 1
-            used.add(h)
-            mapping[raw] = h
-    out = []
-    for e in entries:
-        if not isinstance(e, dict):
-            out.append(e)
-            continue
-        e = dict(e)
-        raw = e.get("slug")
-        healed = mapping.get(raw) if isinstance(raw, str) else None
-        if healed and healed != raw:
-            e["slug"] = healed
-            model_config._console_line(f"     - slug healed: {raw!r} -> {healed!r}")
-        deps = e.get("depends_on")
-        if isinstance(deps, list):
-            e["depends_on"] = [mapping.get(str(d), d) for d in deps]
-        out.append(e)
+        deps = []
+        for dependency in entry["depends_on"]:
+            choices = mapping.get(dependency, []) if isinstance(dependency, str) else []
+            if len(choices) > 1:
+                raise ModelStructureError(f"ambiguous dependency slug {dependency!r}: identifies multiple item specs")
+            deps.append(choices[0] if choices else dependency)
+        entry["depends_on"] = deps
     return out
 
 
