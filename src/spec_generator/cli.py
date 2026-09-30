@@ -191,6 +191,8 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
             needs = StakeholderNeedsSet.model_validate(normalize_enums(coerce_for_model(body, StakeholderNeedsSet), StakeholderNeedsSet))
             _atomic_write(outdir / "needs.md", render_needs(needs))
         elif stage == "srs":
+            semantic=(state.get('semantic_reviews') or {}).get('srs')
+            if semantic:_atomic_write(outdir/'srs.semantic-review.json',json.dumps(semantic,indent=2))
             doc = srs_document_data(intent, {**data, "session_id": sid, "intent_model_ref": sid})
             _atomic_write(outdir / "srs.json", json.dumps(doc, indent=2))
             srs = SRSDocument.model_validate(coerce_for_model(doc, SRSDocument))
@@ -700,6 +702,7 @@ def main() -> None:
                     help="versioned SystemBaseline JSON; existing repo manifest or explicit greenfield declaration")
     ap.add_argument("--conops", type=Path, default=None,
                     help="founder-confirmed conops.json from interview-engine; omit only for legacy sessions")
+    ap.add_argument("--export-handoff",action="store_true",help="zero-LLM validated coding-agent handoff from completed outputs")
     ap.add_argument("--preflight", action="store_true",
                     help="validate inputs and checkpoint compatibility without building a model or spending a call")
     args = ap.parse_args()
@@ -779,6 +782,10 @@ def main() -> None:
         _run_only_stage(args, intent, sid)
         return
     outdir = args.out if args.out is not None else _default_outdir(args.intent_model, sid)
+    if args.export_handoff:
+        from .handoff import build_handoff
+        handoff=build_handoff(args.intent_model.parent,outdir)
+        print(json.dumps(handoff));return
     if args.preflight:
         import sqlite3
         cp=outdir / "checkpoints.sqlite"
@@ -865,6 +872,17 @@ def main() -> None:
                 architecture_lifecycle.resume("gate_architecture" if args.review else "items")
             destination = f"the requested '{args.to_stage}' boundary" if args.to_stage else "the full pipeline"
             print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through {destination}.", file=sys.stderr)
+    if resume and (prior.get('semantic_reviews') or {}).get('srs'):
+        from .semantic_review import load_reviewed_srs
+        try:resolved=load_reviewed_srs(intent,outdir,prior)
+        except ValueError as exc:
+            raise UserFacingError('SRS candidate review is not ready.',str(exc),'Review every flagged SRS item with Remove, Replace, or Accept before continuing.') from exc
+        if resolved:
+            candidate,reviewed=resolved
+            reviews={**prior['semantic_reviews'],'srs':reviewed.model_dump(mode='json')}
+            graph.update_state(cfg,{'srs':candidate,'semantic_reviews':reviews},as_node=_predecessor('architecture',args.review))
+            prior={**prior,'srs':candidate,'semantic_reviews':reviews}
+            print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
     if resume:
         prior_conops = prior.get("conops")
         if prior_conops != conops:

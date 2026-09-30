@@ -57,6 +57,7 @@ class GenState(TypedDict, total=False):
     needs: dict
     srs: dict
     requirements: dict
+    semantic_reviews: dict
     guard_flags: list[str]
     architecture_advisories: list[dict]
     expert_opinions: list[dict]
@@ -286,6 +287,7 @@ def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
     # Keep the exact resolved questions as code-owned state, but never leak the
     # private marker into the SRSDocument contract.
     resolved = set(data.pop("_resolved_open_questions", []))
+    if intent.founder_register is not None:data["founder_register"]=intent.founder_register.model_dump(mode="json")
     data["definitions"] = intent.glossary
     data["constraints"] = intent.constraints
     constraint_turns = intent.source_turns.get("constraints", [])
@@ -1561,6 +1563,8 @@ def _slot_fill_validator(rid: str):
 
 def _items_plan_payload(state: GenState, req_ids: list[str]) -> str:
     return (STAGE_PROMPTS["items_plan"] + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+                   + "\n\nFOUNDER REGISTER (decided answers are binding; open/deferred inputs are not defaults):\n"
+                   + json.dumps(_prompt_view(((state.get("intent_model") or {}).get("founder_register") or {})))
             + "\n\nARCHITECTURE:\n" + json.dumps(_prompt_view(state["architecture"]))
             + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
               "return one STRICT JSON array of spec plans {slug, kind, title, requirement_ids, "
@@ -1629,6 +1633,8 @@ def _items_payload(state: GenState, req_ids: list[str]) -> str:
     last frame it read): the reference enum, the coverage rule, and the
     id-discipline frame are the final words."""
     return (STAGE_PROMPTS["items"] + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+                   + "\n\nFOUNDER REGISTER (decided answers are binding; open/deferred inputs are not defaults):\n"
+                   + json.dumps(_prompt_view(((state.get("intent_model") or {}).get("founder_register") or {})))
             + "\n\nARCHITECTURE:\n" + json.dumps(_prompt_view(state["architecture"]))
             + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
               "return one STRICT JSON array of spec objects {slug, kind, title, body_markdown, "
@@ -1944,58 +1950,46 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         data = _run_srs_fill_stage(state, feedback)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
-        # Mechanical pre-review pass: one targeted rewrite gets exact
-        # rule/location/span evidence before an expert ever sees the draft.
-        interview_corpus = json.dumps(state["intent_model"])
-        findings = text_qa.srs_draft_findings(data, interview_corpus)
-        if findings:
-            model_config._console_line(
-                f"     - boundary=srs-self-check findings={len(findings)} classes={sorted({f['rule'] for f in findings})} "
-                "decision=targeted-rewrite-before-expert")
-            for finding in findings:
-                model_config._console_line(
-                    f"       rule={finding['rule']} location={finding['location']} offending_span={finding['span']!r}")
-            data = _run_srs_fill_stage(
-                {**state, "srs": data},
-                "DETERMINISTIC SRS SELF-CHECK - fix every finding before review:\n" + json.dumps(findings))
-            data.setdefault("session_id", state["intent_model"]["session_id"])
-            data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
-            remaining = text_qa.srs_draft_findings(data, interview_corpus)
-            model_config._console_line(
-                f"     - boundary=srs-self-check-rewrite initial_findings={len(findings)} remaining_findings={len(remaining)} "
-                f"decision={'accept-cleaned-draft' if not remaining else 'preserve-findings-for-expert'}")
-        # mechanical guards: solution-agnostic + grounded (ADR-0015 doctrine)
-        founder_text = json.dumps({k: state["intent_model"].get(k) for k in
-                                   ("problem_statement", "core_value_proposition", "in_scope")})
-        needs_text = json.dumps(state["needs"])
-        flags = []
-        for section in ("functional", "non_functional"):
-            for req in data.get(section) or []:
-                for field in ("title", "statement"):
-                    if text_qa.is_solution_language(str(req.get(field, ""))):
-                        flags.append(f"{req.get('requirement_id', '?')}.{field}: solution language")
-                    if not text_qa.grounded_in(str(req.get(field, "")), [founder_text, needs_text]):
-                        flags.append(f"{req.get('requirement_id', '?')}.{field}: ungrounded (no founder vocabulary)")
-                kept = []
-                for ac in req.get("acceptance") or []:
-                    if text_qa.is_solution_language(str(ac.get("statement", ""))):
-                        flags.append(f"{ac.get('criterion_id', '?')}: solution-language criterion dropped")
-                        continue
-                    kept.append(ac)
-                if kept or not req.get("acceptance"):
-                    req["acceptance"] = kept
+        # Retain original candidates before any semantic rewrite or deletion.
+        # Schema validation still applies; accepting meaning is not permission
+        # to bypass missing IDs/types or traceability.
+        from vmodel_contracts.semantic_review import make_review
+        interview_corpus=json.dumps(state['intent_model'])
+        lint=text_qa.srs_draft_findings(data,interview_corpus)
+        findings=[]
+        for section in ('functional','non_functional'):
+            for index,req in enumerate(data.get(section) or []):
+                rid=req.get('requirement_id','?')
+                relevant=[f for f in lint if f['location'].startswith(str(rid)+' field ')]
+                for n,finding in enumerate(relevant):
+                    # Review the complete requirement so IDs and acceptance
+                    # relations are checked together after remove/replace.
+                    findings.append({'finding_id':f'{rid}:{n}','item_id':str(rid),'path':[section,index],
+                        'rule':finding['rule'],'reason':f"{finding['rule']}: {finding['span']}",'original':req})
+        review=make_review(state['intent_model']['session_id'],'srs',data,findings)
+        reviews={**(state.get('semantic_reviews') or {}),'srs':review.model_dump(mode='json')}
+        flags=[]
         revisions = dict(state.get("artifact_revisions") or {})
         prior_revision = revisions.get("srs") or {}
         revision = int(prior_revision.get("revision") or 0) + 1
         saved_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
         revisions["srs"] = {"saved_at": saved_at, "revision": revision}
         if persist:
-            persist("srs", data, {**state, "artifact_revisions": revisions})
-        return {"srs": data, "guard_flags": state.get("guard_flags", []) + flags,
+            persist("srs", data, {**state, "artifact_revisions": revisions,"semantic_reviews":reviews})
+        return {"srs": data,"semantic_reviews":reviews, "guard_flags": state.get("guard_flags", []) + flags,
                 "artifact_revisions": revisions,
                 "gate_feedback": _clear_feedback(state, "srs")}
 
     def node_architecture(state: GenState) -> dict:
+        pending=(state.get('semantic_reviews') or {}).get('srs')
+        if pending and pending.get('findings'):
+            from vmodel_contracts.semantic_review import SemanticReview
+            from .semantic_review import reviewed_srs
+            try:candidate,_=reviewed_srs(state['intent_model'],pending,pending)
+            except ValueError as exc:
+                from .errors import UserFacingError
+                raise UserFacingError('SRS candidate review is not ready.',str(exc),'Review every flagged SRS item with Remove, Replace, or Accept before continuing.') from exc
+            if candidate!=state['srs']:raise ValueError('reviewed SRS differs from the checkpoint')
         """0.13.0 micro-pipeline (ADR-0022 doctrine applied to the 2026-09-11
         phi4 failure): three tiny planning calls propose SLOTS (stack keys,
         component slots, ADR slots), one shallow call fills each slot, and
@@ -2034,6 +2028,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                    + "\n\nSYSTEM BASELINE (source of truth):\n" + json.dumps(_prompt_view(state["system_baseline"]))
                    + "\n\nVALID BASELINE REFS (use exact strings):\n" + json.dumps(valid_refs)
                    + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+                   + "\n\nFOUNDER REGISTER (decided answers are binding; open/deferred inputs are not defaults):\n"
+                   + json.dumps(_prompt_view(((state.get("intent_model") or {}).get("founder_register") or {})))
                    + _tech_constraint_block(state["intent_model"]))
         fb = _gate_feedback(state, "architecture")
         feedback = ""
@@ -2683,6 +2679,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 out = _call_json("tests",
                           STAGE_PROMPTS["tests"] + "\n\nTEST SLOTS (fill prose for each, keyed by test_id):\n"
                           + json.dumps(missing) + "\n\nSRS:\n" + json.dumps(_prompt_view(state["srs"]))
+                   + "\n\nFOUNDER REGISTER (decided answers are binding; open/deferred inputs are not defaults):\n"
+                   + json.dumps(_prompt_view(((state.get("intent_model") or {}).get("founder_register") or {})))
                           + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
                           + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                             "return one STRICT JSON object {fills: {...}} with EXACTLY these keys, one per slot: "
@@ -2814,6 +2812,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             data = _run_srs_fill_stage(state, "SCOPED REVIEW FIXES:\n" + json.dumps(fixes), only=req_targets)
         else:
             data = state["srs"]
+        reviewed=(state.get('semantic_reviews') or {}).get('srs')
+        if reviewed and reviewed.get('decisions'):
+            from vmodel_contracts.semantic_review import SemanticReview
+            record=SemanticReview.model_validate(reviewed)
+            accepted={d.item_id for d in record.decisions if d.action=='accept'}
+            originals={r['requirement_id']:r for section in ('functional','non_functional') for r in state['srs'].get(section) or []}
+            for section in ('functional','non_functional'):
+                data[section]=[originals[r['requirement_id']] if r.get('requirement_id') in accepted else r for r in data.get(section) or []]
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         if persist and data is not state["srs"]:

@@ -742,9 +742,9 @@ def test_dirty_srs_is_rewritten_before_expert_sees_it(monkeypatch, capsys):
     # Executable source-level contract: node calls the deterministic shared
     # linter, feeds exact findings into one rewrite, then gates the new data.
     source=__import__("inspect").getsource(build_graph)
-    assert "text_qa.srs_draft_findings(data, interview_corpus)" in source
-    assert "DETERMINISTIC SRS SELF-CHECK - fix every finding" in source
-    assert "decision=targeted-rewrite-before-expert" in source
+    assert "text_qa.srs_draft_findings(data,interview_corpus)" in source
+    assert "make_review(state['intent_model']['session_id'],'srs',data,findings)" in source
+    assert "decision=targeted-rewrite-before-expert" not in source
     findings=__import__("vmodel_contracts").text_qa.srs_draft_findings(dirty,json.dumps(INTENT))
     rules={f["rule"] for f in findings}
     assert {"named_technology","http_verb","http_status","url_path","json_shape","absent_from_interview"} <= rules

@@ -22,7 +22,7 @@ def _fills(srs_body):
                       for r in srs_body["functional"] + srs_body["non_functional"]]}
 
 
-def _run(monkeypatch, srs_body, thread="srs1"):
+def _run(monkeypatch, srs_body, thread="srs1",stop_after=None):
     payloads = dict(PAYLOADS, srs=_fills(srs_body))
     class FM(FakeModel):
         def invoke(self, messages):
@@ -31,7 +31,7 @@ def _run(monkeypatch, srs_body, thread="srs1"):
                 return AIMessage(content=json.dumps(self._architecture_answer("\n".join(str(m.content) for m in messages))))
             return AIMessage(content=json.dumps(payloads[self.stage]))
     monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: schema_routing_factory(stage, kw.get("schema"), lambda: FM(stage)))
-    g = build_graph(UsageLog("s"))
+    g = build_graph(UsageLog("s"),stop_after=stop_after)
     return g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": thread}})
 
 
@@ -75,14 +75,16 @@ def test_structure_carried_deterministically(monkeypatch):
     assert srs["open_questions"] == ["who owns the data?"]
 
 
-def test_solution_language_flagged_and_criterion_dropped(monkeypatch):
+def test_solution_language_candidate_retained_for_owner_review(monkeypatch):
     bad = dict(SRS, functional=[dict(SRS["functional"][0], acceptance=[
         {"criterion_id": "AC-1", "statement": "GET /spec returns 200"},
         {"criterion_id": "AC-2", "statement": "spec exists"}])])
-    r = _run(monkeypatch, bad, thread="guard")
-    func = r["bundle"]["_srs"]["functional"][0]
-    assert [a["criterion_id"] for a in func["acceptance"]] == ["AC-2"], "solution-language criterion dropped"
-    assert any("solution-language" in f or "solution language" in f for f in r["violations"])
+    r = _run(monkeypatch, bad, thread="guard",stop_after='srs')
+    func = r['srs']['functional'][0]
+    assert [a['criterion_id'] for a in func['acceptance']]==['AC-1','AC-2']
+    review=r['semantic_reviews']['srs']
+    assert review['candidate']['functional'][0]==func
+    assert review['findings'] and not review['decisions']
 
 
 def test_manifest_points_at_srs_and_bundle_version_bumped(monkeypatch):
