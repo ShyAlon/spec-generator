@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "corpus_id": "jev-d10-distance-v1",
+  "corpus_sha256": "2b20978f4d95f6ffc55e4be1454664ad36b41e5123290008dae0573e0294fb50",
+  "exported_at": "2026-10-01T17:08:58.117Z",
+  "labels": [
+    {
+      "case_id": "C-01",
+      "task": "echo",
+      "label": "yes",
+      "note": "It doesn't matter because this text shouldn't be sent either way. It means that we misinterpreted the error message."
+    },
+    {
+      "case_id": "C-02",
+      "task": "echo",
+      "label": "yes",
+      "note": "Same"
+    },
+    {
+      "case_id": "C-03",
+      "task": "echo",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-04",
+      "task": "echo",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-05",
+      "task": "echo",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-06",
+      "task": "echo",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-07",
+      "task": "echo",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-08",
+      "task": "echo",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-09",
+      "task": "echo",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-10",
+      "task": "echo",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-11",
+      "task": "echo",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-12",
+      "task": "echo",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-13",
+      "task": "echo",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-14",
+      "task": "duplicate",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-15",
+      "task": "duplicate",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-16",
+      "task": "duplicate",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-17",
+      "task": "duplicate",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-18",
+      "task": "duplicate",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-19",
+      "task": "duplicate",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-20",
+      "task": "duplicate",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-21",
+      "task": "duplicate",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-22",
+      "task": "duplicate",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-23",
+      "task": "duplicate",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-24",
+      "task": "duplicate",
+      "label": "no",
+      "note": ""
+    },
+    {
+      "case_id": "C-25",
+      "task": "duplicate",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-26",
+      "task": "duplicate",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-27",
+      "task": "duplicate",
+      "label": "yes",
+      "note": ""
+    },
+    {
+      "case_id": "C-28",
+      "task": "duplicate",
+      "label": "no",
+      "note": ""
+    }
+  ]
+}

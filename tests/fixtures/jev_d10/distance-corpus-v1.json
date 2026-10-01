@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "corpus_id": "jev-d10-distance-v1",
+  "cases": [
+    {
+      "id": "C-01",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Exact retry text",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-02",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "the prior call exceeded its runtime budget before completing. return the requested artifact now.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Case variant",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-03",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "  The  prior  call  exceeded  its  runtime  budget  before  completing.  Return  the  requested  artifact  now.  ",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Whitespace variant",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-04",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "The prior call exceeded its runtime budget before completing! Return the requested artifact now!",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Punctuation variant",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-05",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "The previous request exceeded its runtime budget before completing. Return the requested artifact now.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Small paraphrase",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-06",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "## Piano module\n\nThe prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Embedded in heading",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-07",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "Store note events locally.\n\nThe prior call exceeded its runtime budget before completing. Return the requested artifact now.\n\nReturn the grade.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Embedded in useful text",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-08",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "The prior call exceeded its runtime budget before completing. Ｒｅｔｕｒｎ the requested artifact now.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Full-width Unicode",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-09",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "The previous call hit its time limit. Produce the required output immediately.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Longer paraphrase",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-10",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "If an exercise exceeds its allotted time, end the attempt and show a grade.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Domain timing behavior",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-11",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "When a note is late, record its onset error and continue the lesson.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Distinct timing behavior",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-12",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "The prior call exceeded its runtime budget before completing.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Partial directive",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-13",
+      "task": "echo",
+      "a": "The prior call exceeded its runtime budget before completing. Return the requested artifact now.",
+      "b": "Return the requested artifact now.",
+      "source": "spec/SPEC-4 body; graph.py watchdog feedback. Variant: Short directive",
+      "context": "Is candidate B an echo of control instruction A, rather than product behavior?"
+    },
+    {
+      "id": "C-14",
+      "task": "duplicate",
+      "a": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "b": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "source": "Actual SPEC-1 versus SPEC-2 bodies",
+      "context": "Are these substantive bodies duplicates? Ignore titles outside the bodies."
+    },
+    {
+      "id": "C-15",
+      "task": "duplicate",
+      "a": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "b": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "source": "Actual SPEC-1 versus SPEC-3 bodies",
+      "context": "Are these substantive bodies duplicates? Ignore titles outside the bodies."
+    },
+    {
+      "id": "C-16",
+      "task": "duplicate",
+      "a": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "b": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "source": "Actual SPEC-1 versus SPEC-5 bodies",
+      "context": "Are these substantive bodies duplicates? Ignore titles outside the bodies."
+    },
+    {
+      "id": "C-17",
+      "task": "duplicate",
+      "a": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "b": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 120ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "source": "Synthetic change to actual SPEC-1: one number",
+      "context": ""
+    },
+    {
+      "id": "C-18",
+      "task": "duplicate",
+      "a": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "b": "| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n\n\n## Traceability Matrix\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n## Test Hierarchy\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n## Item-Level Specifications\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Architecture\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## System Requirements Specification (SRS)\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## Stakeholder Needs",
+      "source": "Synthetic reordered paragraphs of actual SPEC-1",
+      "context": ""
+    },
+    {
+      "id": "C-19",
+      "task": "duplicate",
+      "a": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "b": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encodes data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Creates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "source": "Synthetic wording changes to actual SPEC-1",
+      "context": ""
+    },
+    {
+      "id": "C-20",
+      "task": "duplicate",
+      "a": "## Interface\nhandleNote(noteId, pressedAt, releasedAt) emits keyboard events.\n## Behavior\nMap pointer contacts to visible keys. Support simultaneous touches. Emit one release per contact.\n## Errors\nCancel stuck notes when the view loses focus.",
+      "b": "## Interface\nevaluate(targetNotes, playedEvents) returns score and pitch/rhythm errors.\n## Behavior\nMatch events to targets, classify missing and extra notes, and compute timing deviations. Same inputs produce the same result.\n## Errors\nReject an invalid target sequence.",
+      "source": "Authored calibration fixture: Distinct music modules, shared headings",
+      "context": ""
+    },
+    {
+      "id": "C-21",
+      "task": "duplicate",
+      "a": "## Interface\nsaveProgress(record) writes a versioned anonymous progress record.\n## Behavior\nReload restores the lesson cursor and scores.\n## Errors\nReport storage unavailable without losing the in-memory attempt.",
+      "b": "## Interface\nplayTone(noteId, scheduledTime) produces a synthesized piano tone.\n## Behavior\nInitialize audio after a user gesture and schedule notes on the audio clock.\n## Errors\nShow audio unavailable when startup fails.",
+      "source": "Authored calibration fixture: Distinct modules with shared error style",
+      "context": ""
+    },
+    {
+      "id": "C-22",
+      "task": "duplicate",
+      "a": "## Interface\nhandleNote(noteId, pressedAt, releasedAt) emits keyboard events.\n## Behavior\nMap pointer contacts to visible keys. Support simultaneous touches. Emit one release per contact.\n## Errors\nCancel stuck notes when the view loses focus.",
+      "b": "## Interface\nhandleNote(noteId, pressedAt, releasedAt) emits note events.\n## Behavior\nMap pointer contacts to visible keys. Support simultaneous touches. Emit one release per contact.\n## Errors\nCancel stuck notes when the view loses focus.",
+      "source": "Authored calibration fixture: Near-equivalent music text",
+      "context": ""
+    },
+    {
+      "id": "C-23",
+      "task": "duplicate",
+      "a": "## Errors\nReject invalid input.",
+      "b": "## Errors\nReject invalid input.",
+      "source": "Authored calibration fixture: Short identical valid clauses",
+      "context": ""
+    },
+    {
+      "id": "C-24",
+      "task": "duplicate",
+      "a": "Return a numeric score.",
+      "b": "Return a note event.",
+      "source": "Authored calibration fixture: Short distinct valid contracts",
+      "context": ""
+    },
+    {
+      "id": "C-25",
+      "task": "duplicate",
+      "a": "## Interface\n## Behavior\n## Errors",
+      "b": "## Interface\n## Behavior\n## Errors",
+      "source": "Authored calibration fixture: Headings only, not substantive content",
+      "context": ""
+    },
+    {
+      "id": "C-26",
+      "task": "duplicate",
+      "a": "## Interface\nhandleNote(noteId, pressedAt, releasedAt) emits keyboard events.\n## Behavior\nMap pointer contacts to visible keys. Support simultaneous touches. Emit one release per contact.\n## Errors\nCancel stuck notes when the view loses focus.",
+      "b": "##  Interface\r\nhandleNote(noteId,  pressedAt,  releasedAt)  emits  keyboard  events.\r\n##  Behavior\r\nMap  pointer  contacts  to  visible  keys.  Support  simultaneous  touches.  Emit  one  release  per  contact.\r\n##  Errors\r\nCancel  stuck  notes  when  the  view  loses  focus.",
+      "source": "Authored calibration fixture: Whitespace-only body variant",
+      "context": ""
+    },
+    {
+      "id": "C-27",
+      "task": "duplicate",
+      "a": "## Interface\nsaveProgress(record) writes a versioned anonymous progress record.\n## Behavior\nReload restores the lesson cursor and scores.\n## Errors\nReport storage unavailable without losing the in-memory attempt.",
+      "b": "## Interface\nsaveProgress(record) writes a versioned anonymous ｐｒｏｇｒｅｓｓ record.\n## Behavior\nReload restores the lesson cursor and scores.\n## Errors\nReport storage unavailable without losing the in-memory attempt.",
+      "source": "Authored calibration fixture: Unicode body variant",
+      "context": ""
+    },
+    {
+      "id": "C-28",
+      "task": "duplicate",
+      "a": "## Stakeholder Needs\n\n- **Need 1**: Ensure user data is secure during transmission.\n- **Need 2**: Provide real-time alerts for any discrepancies detected.\n\n## System Requirements Specification (SRS)\n\n- **R-1**: User data shall be encrypted in transit.\n- **R-2**: A seeded disagreement shall produce exactly one alert.\n\n## Architecture\n\n- **Component A**: Handles data encryption.\n- **Component B**: Manages alert generation.\n\n## Item-Level Specifications\n\n- **Component A Specs**:\n  - Interface: `encryptData(data: string): string`\n  - Data Model: `EncryptedData`\n  - Behaviors: Encrypts data using a secure algorithm.\n  - Error Cases: Throws `EncryptionError` if encryption fails.\n  - Non-Functionals: Must complete encryption within 100ms.\n\n- **Component B Specs**:\n  - Interface: `generateAlert(discrepancy: Discrepancy): Alert`\n  - Data Model: `Alert`\n  - Behaviors: Generates an alert for each detected discrepancy.\n  - Error Cases: Throws `AlertGenerationError` if alert fails.\n  - Non-Functionals: Must generate alert within 50ms.\n\n## Test Hierarchy\n\n- **Unit Tests**:\n  - **Component A**: Test `encryptData` function.\n  - **Component B**: Test `generateAlert` function.\n\n- **Module Tests**:\n  - **Component A**: Test encryption module integration.\n  - **Component B**: Test alert generation module integration.\n\n- **System Tests**:\n  - Test end-to-end data encryption and alert generation.\n\n- **Acceptance Tests**:\n  - Verify user data is encrypted in transit.\n  - Verify a seeded disagreement produces exactly one alert.\n\n## Traceability Matrix\n\n| Requirement ID | Stakeholder Need | Component | Test Level   |\n|----------------|------------------|-----------|--------------|\n| R-1            | Need 1           | A         | Unit, System |\n| R-2            | Need 2           | B         | Unit, System |\n",
+      "b": "## Interface\nevaluate(targetNotes, playedEvents) returns score and pitch/rhythm errors.\n## Behavior\nMatch events to targets, classify missing and extra notes, and compute timing deviations. Same inputs produce the same result.\n## Errors\nReject an invalid target sequence.",
+      "source": "Authored calibration fixture: Wrong encryption template versus music evaluator",
+      "context": ""
+    }
+  ],
+  "corpus_sha256": "2b20978f4d95f6ffc55e4be1454664ad36b41e5123290008dae0573e0294fb50"
+}
