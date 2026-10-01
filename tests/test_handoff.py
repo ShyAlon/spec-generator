@@ -25,6 +25,7 @@ def outputs(tmp_path,monkeypatch):
  conops=ConOpsDocument.model_validate(conops);(interview/'conops.json').write_text(conops.model_dump_json())
  b=result['bundle'];persist=_make_persist(intent,spec)
  for stage,key in [('needs','_needs'),('srs','_srs'),('architecture','_architecture'),('items','items'),('tests','_tests')]:persist(stage,b[key],{})
+ (spec/'findings-ledger.json').write_text(json.dumps(__import__('spec_generator.findings_ledger',fromlist=['Ledger']).Ledger().to_dict()))  # reviewed, nothing open
  return interview,spec,intent
 
 def test_export_only_outputs_paths_and_no_silent_defaults(tmp_path,monkeypatch):
@@ -86,3 +87,13 @@ def test_override_evidence_is_in_export_digest(tmp_path,monkeypatch):
  h=build_handoff(interview,spec)
  assert 'spec/srs.semantic-review.json' in h['files']
  assert any(d['choice']=='accept' and d['why']=='Required product behavior' for d in json.loads(h['files']['decisions.json']))
+
+
+def test_handoff_blocks_on_missing_or_open_ledger(tmp_path,monkeypatch):
+ interview,spec,_=outputs(tmp_path,monkeypatch)
+ from spec_generator.findings_ledger import Ledger
+ (spec/'findings-ledger.json').unlink()
+ assert any('never content-reviewed' in r for r in build_handoff(interview,spec)['blocked_reasons'])
+ ledger=Ledger();ledger.add(rule_id='echo.directive',rule_version='1',source='rule',kind='semantic',targets=['SPEC-1'],artifact_revision='x',summary='gray')
+ (spec/'findings-ledger.json').write_text(json.dumps(ledger.to_dict()))
+ assert any('open finding' in r for r in build_handoff(interview,spec)['blocked_reasons'])

@@ -92,6 +92,13 @@ def build_handoff(interview:Path,spec:Path)->dict:
         raw=json.loads(baseline.read_text());check_compatible(raw)
         SystemBaseline.model_validate(raw);files['spec/system-baseline.json']=baseline.read_text()
     blockers=[f'{x.item_id}: {x.question}' for x in register.items if x.status!='decided' and x.blocks]
+    from .findings_ledger import Ledger,revision_of
+    ledger_path=spec/'findings-ledger.json'
+    if not ledger_path.is_file() or ledger_path.is_symlink():
+        blockers.append('findings ledger missing: this bundle was never content-reviewed (unreviewed, not clean)')
+    else:
+        gate=Ledger.from_dict(json.loads(ledger_path.read_text())).gate({i.spec_id:revision_of(i.body_markdown or '') for i in items})
+        blockers+=[f'open finding {fid}: blocks handoff' for fid in gate['open']]+[r for r in gate['reasons'] if 'open finding' not in r]
     from vmodel_contracts.handoff import CodingHandoff
     return CodingHandoff.model_validate({'version':1,'session_id':intent.session_id,'files':files,'blocked_reasons':blockers,
             'sha256':{name:hashlib.sha256(text.encode()).hexdigest() for name,text in files.items()}}).model_dump(mode='json')
