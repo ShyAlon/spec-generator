@@ -1893,10 +1893,32 @@ def _raise_assembly_boundary_error(stage: str, state: dict, exc: Exception):
         "The boundary evidence above is also in run.log.")
 
 
+def _ground_items(state, ledger, provider, persist) -> None:
+    """JEV-D10 rule 3 at the review boundary. Jev only; no provider means NOT CHECKED (recorded, never a pass)."""
+    from . import grounding as G
+    reqs = {r.get("requirement_id"): r for sec in ("functional", "non_functional")
+            for r in (state.get("srs") or {}).get(sec) or []}
+    excl = (state.get("srs") or {}).get("exclusions") or []
+    needs = ((state.get("needs") or {}).get("needs")) if isinstance(state.get("needs"), dict) else None
+    for item in state.get("items") or []:
+        bound = [reqs[r] for r in item.get("requirement_ids") or [] if r in reqs]
+        if not bound:
+            continue
+        env = G.ground_spec(item["spec_id"], item.get("body_markdown") or "", bound, provider, exclusions=excl, needs=needs)
+        G.record_grounding(ledger, env)
+        getattr(persist, "grounding", lambda *_: None)(item["spec_id"], env)
+    if provider is not None:
+        body = {i["spec_id"]: i.get("body_markdown") or "" for i in state.get("items") or []}
+        for f in ledger.open_findings():
+            if f["rule_id"] == "echo.directive" and f["targets"] and f["targets"][0] in body \
+                    and (f.get("detail") or {}).get("check", {}).get("status") == "gray":
+                f["detail"]["jev_gray_band"] = G.ask_gray_echo(provider, f, body[f["targets"][0]])
+
+
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
                 review: bool = False, persist=None, partials=None,
                 only_stage: str | None = None, stop_after: str | None = None,
-                expert_opinion: bool = False):
+                expert_opinion: bool = False, grounding=None):
     """persist(stage, data, state): optional side-effect hook fired after each
     authoring stage completes - the CLI uses it to write the bundle
     incrementally, so a late failure leaves all completed work on disk.
@@ -2870,6 +2892,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if state.get("findings_ledger") is None and state.get("items"):
             # A checkpoint that predates JEV-D10 has no ledger: it is UNREVIEWED, not clean.
             _accept_all(state["items"], ledger, _content_sink(persist))
+        _ground_items(state, ledger, grounding, persist)
         # One requirement per review call bounds output by construction. The
         # prior two-requirement batches could exceed 8192 completion tokens on
         # dense vertical slices. Requirement remains the semantic join key.
