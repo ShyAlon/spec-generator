@@ -48,23 +48,37 @@ def queue_models(monkeypatch):
     return box
 
 
+def _run_to_block(g, cfg):
+    from spec_generator.errors import AssemblyBlocked
+    with pytest.raises(AssemblyBlocked):
+        g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
+    return g.get_state(cfg).values
+
+
+def _request_repair(g, cfg, values):
+    from spec_generator.findings_ledger import Ledger
+    ids = [f["finding_id"] for f in Ledger.from_dict(values["findings_ledger"]).open_findings()
+           if f["rule_id"] == "review.llm"]
+    g.update_state(cfg, {"repair_request": {"finding_ids": ids, "requested_by": "founder"}}, as_node="review")
+    return ids
+
+
 def test_review_fixes_refire_the_fill_stage(queue_models):
+    """JEV-D10: review findings block assembly; repair runs only on an explicit scoped request."""
     QueueModel.QUEUES["review"] = [FIXES, []]  # round 1 flags, round 2 clean
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver())
-    r = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "rf1"}})
-    assert "bundle" in r
+    cfg = {"configurable": {"thread_id": "rf1"}}
+    values = _run_to_block(g, cfg)
+    assert queue_models["srs"].calls == 1  # no unattended replay
+    assert _request_repair(g, cfg, values)
+    from spec_generator.errors import AssemblyBlocked
+    with pytest.raises(AssemblyBlocked):   # repair never closes a semantic finding; only the founder does
+        g.invoke(None, cfg)
     srs = queue_models["srs"]
     assert srs.calls == 2  # initial author + one fix application
     apply_payload = srs.last_human
     assert "REVIEW FIXES" in apply_payload and FIXES[0]["fix"] in apply_payload
-    assert "REQUIREMENT SLOTS" in apply_payload  # fill shape, not the retired full-document ask
-    # the fix path went through the skeleton merge validator: downstream stages
-    # re-ran against the corrected SRS and the pipeline completed
-    assert queue_models["items"].calls == 2 and queue_models["tests"].calls == 2  # re-derived from the fixed SRS
-    assert queue_models["review"].calls == 2
-    assert all(isinstance(c["statement"], str)
-               for req in r["srs"]["functional"]
-               for c in req["acceptance"])
+    assert "REQUIREMENT SLOTS" in apply_payload
 
 
 def test_clean_review_never_pays_the_fix_stage(queue_models):
@@ -219,21 +233,21 @@ def test_checkpoint_resume_after_apply_fixes_failure_skips_upstream(monkeypatch)
     graph = build_graph(UsageLog("s"), checkpointer=MemorySaver())
     config = {"configurable": {"thread_id": "resume-apply-fixes"}}
 
+    values = _run_to_block(graph, config)
+    _request_repair(graph, config, values)
     with pytest.raises(RuntimeError, match="simulated apply_fixes crash"):
-        graph.invoke(
-            {"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE},
-            config)
+        graph.invoke(None, config)
 
     calls_at_crash = {stage: model.calls for stage, model in box.items()}
-    result = graph.invoke(None, config)
+    from spec_generator.errors import AssemblyBlocked
+    with pytest.raises(AssemblyBlocked):   # resume completes the repair; the open finding still blocks assembly
+        graph.invoke(None, config)
 
-    assert "bundle" in result
     assert box["architecture"].calls == calls_at_crash["architecture"]
     assert box["items"].calls == calls_at_crash["items"] + 1
     assert box["tests"].calls == calls_at_crash["tests"] + 1
     # Exactly one SRS call is added: the retried fix fill, not initial authoring.
     assert box["srs"].calls == calls_at_crash["srs"] + 1
-    assert box["review"].calls == calls_at_crash["review"] + 1
 
 
 def test_large_review_is_requirement_chunked_and_resumable(monkeypatch):
@@ -271,7 +285,7 @@ def test_review_batches_one_requirement_and_caps_finding_shape():
     findings = [{"scope": "requirement", "target_ids": [f"R-{j}" for j in range(12)],
                  "fix": "x" * 400} for _ in range(30)]
     normalized = _normalized_review_fixes(findings)
-    assert len(normalized) == 24
+    assert len(normalized) == 30  # never sliced; over-bound chunks are marked incomplete instead
     assert all(len(f["target_ids"]) == 8 for f in normalized)
     assert all(len(f["fix"]) == 320 and f["fix"].endswith("...") for f in normalized)
 

@@ -10,7 +10,7 @@ from conftest import SYSTEM_BASELINE
 from spec_generator import model_config
 from spec_generator.cli import _make_partials, _make_persist
 from spec_generator.content_acceptance import DIRECTIVE_CATALOGUE
-from spec_generator.errors import ContentRejected
+from spec_generator.errors import AssemblyBlocked, ContentRejected
 from spec_generator.findings_ledger import Ledger
 from spec_generator.graph import build_graph
 from spec_generator.telemetry import UsageLog
@@ -130,9 +130,14 @@ def test_gray_body_opens_a_finding_quarantines_the_spec_and_derives_no_tests(mon
     # a real section quoting the directive inside useful text: founder's C-07 shape
     quoting = ("Store note events locally.\n\n" + DIRECTIVE_CATALOGUE["watchdog-retry"] + "\n\nReturn the grade.")
     g, _ = _run(monkeypatch, tmp_path, [GOOD[0], quoting])
-    state = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "t"}})
+    cfg = {"configurable": {"thread_id": "t"}}
+    with pytest.raises(AssemblyBlocked) as blocked:        # the gate stops assembly while a finding is open
+        g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
+    assert "1 open finding" in blocked.value.reasons[0]
+    state = g.get_state(cfg).values
     ledger = Ledger.from_dict(state["findings_ledger"])
     opened = ledger.open_findings()
     assert len(opened) == 1 and opened[0]["targets"] == ["SPEC-2"] and opened[0]["rule_id"] == "echo.directive"
     assert all(t.get("spec_id") != "SPEC-2" for t in state["tests"])   # nothing derives from the quarantined spec
     assert json.loads((tmp_path / "findings-ledger.json").read_text())["findings"]
+    assert not (tmp_path / "manifest.json").exists()                   # nothing shipped

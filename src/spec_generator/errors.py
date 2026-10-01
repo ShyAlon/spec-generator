@@ -46,6 +46,19 @@ class ContentRejected(UserFacingError):
             "then rerun the items stage. Rejected evidence is preserved.")
 
 
+class AssemblyBlocked(UserFacingError):
+    """The findings ledger blocks assembly (JEV-D10): any open finding, incomplete
+    required check, stale closure, or an unreviewed (ledger-less) checkpoint."""
+
+    def __init__(self, reasons: list[str], open_ids: list[str]):
+        self.reasons, self.open_ids = reasons, open_ids
+        super().__init__(
+            "assembly is blocked: " + "; ".join(reasons) + ".",
+            ("open finding ids: " + ", ".join(open_ids[:30]) + (" ..." if len(open_ids) > 30 else "")) if open_ids else None,
+            "read findings-ledger.json, then record founder dispositions (--dispose <founder-script.json> or the "
+            "decision page) or request an explicit scoped repair (--repair <finding-id,...>). Nothing was shipped.")
+
+
 def _is_ollama_ctx(context: str) -> bool:
     return "ollama" in context.lower()
 

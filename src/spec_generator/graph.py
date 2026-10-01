@@ -47,10 +47,14 @@ from .assembly import build_traceability, order_milestones, validate_traceabilit
 from .prompts import METHODOLOGY, STAGE_PROMPTS
 from .telemetry import UsageLog
 from . import content_acceptance as _ca
-from .errors import ContentRejected
+from .errors import AssemblyBlocked, ContentRejected
 from .findings_ledger import Ledger, LedgerError, finding_from_check, revision_of
 
-REVIEW_PASSES = 2  # independent review rounds; fixes applied by re-running the flagged stage's prompt with the fix list
+# JEV-D10: review never triggers repair on its own. A scoped repair runs only on an explicit request
+# (state["repair_request"], set by --repair) and is bounded by this ceiling. PLACEHOLDER: the founder
+# left the number blank; reaching it leaves findings OPEN and assembly blocked, never "success".
+REPAIR_ATTEMPT_CEILING = 2
+REVIEW_CHUNK_MAX_FINDINGS = 24  # per-chunk bound by construction; overflow is recorded as incomplete
 
 
 class GenState(TypedDict, total=False):
@@ -1763,14 +1767,14 @@ def _clear_feedback(state: GenState, stage: str) -> dict:
     return {k: v for k, v in (state.get("gate_feedback") or {}).items() if k != stage}
 
 
-REVIEW_MAX_FINDINGS = 24
+REVIEW_MAX_FINDINGS = REVIEW_CHUNK_MAX_FINDINGS
 REVIEW_MAX_TARGET_IDS = 8
 REVIEW_MAX_FIX_CHARS = 320
 
 
 def _normalized_review_fixes(value) -> list[dict]:
     out = []
-    for fix in (value or [])[:REVIEW_MAX_FINDINGS]:
+    for fix in (value or []):  # no slice: every finding survives; per-chunk bounds are checked in node_review
         if isinstance(fix, str):
             out.append({"scope": "systemic", "target_ids": [], "fix": fix})
         elif isinstance(fix, dict) and str(fix.get("fix") or "").strip():
@@ -1783,6 +1787,33 @@ def _normalized_review_fixes(value) -> list[dict]:
                 fix_text = fix_text[:REVIEW_MAX_FIX_CHARS - 3].rstrip() + "..."
             out.append({"scope": scope, "target_ids": ids, "fix": fix_text})
     return out
+
+
+def _target_revision(state: GenState, fix: dict) -> str:
+    """Revision of exactly what a review finding points at (cleaned text hash)."""
+    ids = set(fix.get("target_ids") or [])
+    scope = fix.get("scope")
+    if scope == "spec":
+        text = "\n".join(i.get("body_markdown") or "" for i in state.get("items") or [] if i.get("spec_id") in ids)
+    elif scope == "requirement":
+        text = json.dumps([r for sec in ("functional", "non_functional") for r in (state.get("srs") or {}).get(sec) or []
+                           if r.get("requirement_id") in ids], sort_keys=True)
+    elif scope == "test":
+        text = json.dumps([t for t in state.get("tests") or [] if t.get("test_id") in ids], sort_keys=True)
+    else:
+        text = json.dumps([state.get("srs"), state.get("items")], sort_keys=True, default=str)
+    return revision_of(text)
+
+
+def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], round_n: int) -> None:
+    """Every LLM review finding becomes ledger data. Dedup precedes any limit and the
+    ledger is never sliced. These are semantic: they close only by founder disposition."""
+    for fix in fixes:
+        ledger.add(rule_id="review.llm", rule_version=f"review-round-{round_n}", source=f"review:round-{round_n}",
+                   kind="semantic", scope=fix["scope"], targets=fix["target_ids"] or ["systemic"],
+                   artifact_revision=_target_revision(state, fix), summary=fix["fix"],
+                   evidence=[{"id": "review:finding", "sha256": revision_of(fix["fix"]), "excerpt": fix["fix"][:320]}],
+                   detail={"scope": fix["scope"], "target_ids": fix["target_ids"], "fix": fix["fix"]})
 
 
 def _fix_targets(fixes: list[dict], scope: str) -> set[str] | None:
@@ -2835,6 +2866,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         from .schemas import for_stage as output_schema
 
         n = state.get("review_round", 0) + 1
+        ledger = Ledger.from_dict(state.get("findings_ledger"))
+        if state.get("findings_ledger") is None and state.get("items"):
+            # A checkpoint that predates JEV-D10 has no ledger: it is UNREVIEWED, not clean.
+            _accept_all(state["items"], ledger, _content_sink(persist))
         # One requirement per review call bounds output by construction. The
         # prior two-requirement batches could exceed 8192 completion tokens on
         # dense vertical slices. Requirement remains the semantic join key.
@@ -2873,7 +2908,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     item_label=f"review {index}/{len(chunks)} ({len(req_chunk)} requirements)")
                 if partials:
                     partials.save("review", saved)
-            findings.extend(saved[chunk_id])
+            chunk_findings = _normalized_review_fixes(saved[chunk_id])
+            if len(chunk_findings) > REVIEW_CHUNK_MAX_FINDINGS:
+                # Never silently drop: keep them all and mark the chunk as over its bound.
+                ledger.mark_incomplete(f"review:round-{n}-chunk-{index}",
+                                       f"chunk returned {len(chunk_findings)} findings (bound {REVIEW_CHUNK_MAX_FINDINGS})",
+                                       returned=len(chunk_findings))
+            findings.extend(chunk_findings)
         # Deterministic stable dedup: overlapping specs can appear in adjacent
         # requirement chunks, but one correction must be applied only once.
         fixes = []
@@ -2882,27 +2923,48 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             key = (fix["scope"], tuple(sorted(fix["target_ids"])), fix["fix"].strip().casefold())
             if key not in seen:
                 seen.add(key); fixes.append(fix)
-        # Archive every chunk before partial cleanup. Do not change routing or
-        # the existing aggregation policy in this documentation-only change.
+        _ledger_review_findings(ledger, state, fixes, n)
+        # Archive every chunk before partial cleanup.
         if persist and hasattr(persist, "review"):
             persist.review({"round": n, "chunks": {k: v for k, v in saved.items()
                            if k.startswith(f"round-{n}-chunk-")},
                            "all_chunk_findings": findings, "retained_fixes": fixes,
                            "aggregation_omitted_count": max(0, len(findings) - len(fixes)),
                            "disposition": "proposed; resolution not verified",
+                           "ledger": ledger.to_dict(),
                            "state": {**state, "review_round": n, "review_fixes": fixes}})
+        if persist is not None:
+            getattr(persist, "ledger", lambda *_: None)(ledger.to_dict())
         if partials:
             partials.clear("review")
-        return {"review_round": n, "review_fixes": fixes}
+        return {"review_round": n, "review_fixes": fixes, "findings_ledger": ledger.to_dict()}
 
     def route_review(state: GenState) -> str:
-        if state.get("review_round", 0) >= REVIEW_PASSES:
-            return "assemble"
-        if not state.get("review_fixes"):
-            return "assemble"  # clean review: stop early, save the pass
-        return "apply_fixes"
+        # JEV-D10: no unattended replay. Repair runs only when explicitly requested for
+        # named findings and only under the attempt ceiling. Otherwise assembly decides,
+        # and its gate blocks while anything is open.
+        request = state.get("repair_request") or {}
+        if request.get("finding_ids"):
+            ledger = Ledger.from_dict(state.get("findings_ledger"))
+            attempts = sum(1 for h in ledger.history if h.get("event") == "repair")
+            if attempts < REPAIR_ATTEMPT_CEILING:
+                return "apply_fixes"
+        return "assemble"
 
     def node_apply_fixes(state: GenState) -> dict:
+        request = state.get("repair_request") or {}
+        ledger = Ledger.from_dict(state.get("findings_ledger"))
+        chosen = [ledger.findings[f] for f in request.get("finding_ids") or []
+                  if f in ledger.findings and ledger.findings[f]["state"] == "OPEN"
+                  and ledger.findings[f]["rule_id"] == "review.llm"]
+        if not chosen:
+            raise AssemblyBlocked(["scoped repair requested for findings that are not open review findings"],
+                                  list(request.get("finding_ids") or []))
+        ledger.history.append({"event": "repair", "finding_ids": [f["finding_id"] for f in chosen],
+                               "requested_by": request.get("requested_by", "founder"),
+                               "before": {f["finding_id"]: f["artifact_revision"] for f in chosen}})
+        # Only the selected findings go to the author calls (never the whole review output).
+        state = {**state, "review_fixes": [f["detail"] for f in chosen], "findings_ledger": ledger.to_dict()}
         # ADR-0020 shape: re-fire the FILL stage with the review fixes - the
         # skeleton slots/ids are unchanged, the model revises prose per slot.
         fixes = _normalized_review_fixes(state["review_fixes"])
@@ -2925,10 +2987,18 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         if persist and data is not state["srs"]:
             persist("srs", data, state)
-        return {"srs": data, "review_fixes": fixes}
+        return {"srs": data, "review_fixes": fixes, "repair_request": None,
+                "findings_ledger": state["findings_ledger"]}
 
     def node_assemble(state: GenState) -> dict:
         """Deterministic tail. Validate hard; ship nothing with orphan traces."""
+        if state.get("findings_ledger") is None:
+            raise AssemblyBlocked(["no findings ledger: this checkpoint was never content-reviewed (unreviewed, not clean)"], [])
+        gate_ledger = Ledger.from_dict(state["findings_ledger"])
+        gate = gate_ledger.gate({i.get("spec_id"): revision_of(i.get("body_markdown") or "") for i in state.get("items") or []})
+        if gate["blocked"]:
+            getattr(persist, "ledger", lambda *_: None)(gate_ledger.to_dict())
+            raise AssemblyBlocked(gate["reasons"], gate["open"])
         sid = state["intent_model"]["session_id"]
         intent = IntentModel.model_validate(state["intent_model"])
         needs = StakeholderNeedsSet.model_validate(state["needs"])
