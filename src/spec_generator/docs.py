@@ -118,6 +118,11 @@ def render_docs(sources, status=None, history=None, changes=None, telemetry=None
         emit('review/round-%s.md'%n,'Review round %s'%n,content,'review','spec/review-history.json')
     for n in (1,2):
         if 'review/round-%s.md'%n not in files:emit('review/round-%s.md'%n,'Review round %s'%n,'Not recorded yet. Historical findings cannot be reconstructed from missing evidence.','review','spec/review-history.json')
+    led=sources.get('findings_ledger')
+    if led is not None:
+        rows=[(f['finding_id'],f['state'],f['rule_id'],f['kind'],', '.join(f['targets']),f['summary']) for f in (led.get('findings') or {}).values()]
+        open_n=sum(1 for r in rows if r[1]=='OPEN')
+        emit('findings.md','Findings ledger',('Assembly and handoff are BLOCKED while any finding is OPEN. ' if open_n else 'No open findings. ')+'Semantic findings close only by founder disposition; absence of a finding is not proof of absence of a defect.\n\n'+_table(['Finding','State','Rule','Kind','Targets','Summary'],rows)+'\n\n'+_md({'incomplete_checks':led.get('incomplete') or []}),'review','spec/findings-ledger.json')
     emit('changes.md','Artifact changes',_md(changes) if changes else 'No comparisons recorded yet. Existing files are not historical snapshots.','review','spec/docs-state.json')
     emit('run.md','Run diagnostics',_md(telemetry)+'\n\n## Open issues\n\n'+_md(sources.get('violations',[])),'assemble','spec/usage.jsonl, llm-calls.jsonl, run.log')
     index+=['','## Open findings / warnings',_md(sources.get('violations',[])), '', 'Read review rounds and run diagnostics before treating the bundle as build-ready.']
@@ -133,6 +138,7 @@ def refresh_docs(spec, intent=None, conops=None, event=None, state=None, invalid
     spec=Path(spec); root=_root(spec); docs=root/'docs'; ledger=_read(spec/'docs-state.json',{})
     stages=ledger.setdefault('status',{}); snapshots=ledger.setdefault('snapshots',{}); changes=ledger.setdefault('changes',[])
     sources={s:_read(spec/(s+'.json')) for s in ('needs','srs','architecture','items','tests','traceability')}
+    sources['findings_ledger']=_read(spec/'findings-ledger.json')
     sources['intent']=intent or _read(root/'interview/intent_model.json');sources['conops']=conops or _read(root/'interview/conops.json') or _read(spec/'conops.json')
     if state is not None:
         for s in ('needs','srs','architecture','items','tests'):

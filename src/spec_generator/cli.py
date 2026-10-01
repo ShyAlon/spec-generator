@@ -175,6 +175,35 @@ _PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fill
                       "review": ("review",)}
 
 
+def _apply_ledger_actions(graph, cfg, prior, args):
+    """JEV-D10: founder dispositions and explicit repair requests go through the checkpoint, never free text."""
+    import json as _json
+    from .findings_ledger import Ledger, LedgerError, revision_of
+    if not prior or prior.get("findings_ledger") is None:
+        raise UserFacingError("there is no findings ledger in this checkpoint.",
+                              "--dispose and --repair act on findings recorded by a reviewed run.",
+                              "run the review stage first, then retry.")
+    ledger = Ledger.from_dict(prior["findings_ledger"])
+    update: dict = {}
+    try:
+        if args.dispose:
+            script = _json.loads(args.dispose.read_text())
+            current = {i.get("spec_id"): revision_of(i.get("body_markdown") or "") for i in prior.get("items") or []}
+            ledger.apply_script(script, current)
+            update["findings_ledger"] = ledger.to_dict()
+        if args.repair:
+            ids = [x.strip() for x in args.repair.split(",") if x.strip()]
+            unknown = [i for i in ids if i not in ledger.findings]
+            if unknown:
+                raise LedgerError(f"unknown finding id(s): {', '.join(unknown)}")
+            update["repair_request"] = {"finding_ids": ids, "requested_by": "founder"}
+    except (LedgerError, OSError, ValueError) as exc:
+        raise UserFacingError(f"ledger action refused: {exc}", "nothing was changed.",
+                              "fix the script or ids and rerun.") from exc
+    graph.update_state(cfg, update, as_node="review")
+    return graph.get_state(cfg).values
+
+
 def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
                   conops_present: bool = True, architecture_lifecycle=None):
     """The incremental bundle writer (his ask 2026-09-09: 'persist them
@@ -217,6 +246,24 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
         refresh_docs(outdir, intent=intent, event=stage, state={**state, stage: data})
 
     _persist.review = lambda record: archive_review(outdir, record, intent=intent)
+
+    def _content_evidence(record: dict) -> None:
+        """Rejected candidates are evidence: kept verbatim, never deleted by a rerun."""
+        path = outdir / "content-rejections.json"
+        prior = json.loads(path.read_text()) if path.exists() else []
+        _atomic_write(path, json.dumps(prior + [record], indent=2))
+
+    _persist.content_evidence = _content_evidence
+    def _grounding(spec_id: str, envelope: dict) -> None:
+        path = outdir / "grounding-evidence.json"
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            data = {}
+        data[spec_id] = envelope
+        _atomic_write(path, json.dumps(data, indent=2))
+    _persist.grounding = _grounding
+    _persist.ledger = lambda data: _atomic_write(outdir / "findings-ledger.json", json.dumps(data, indent=2))
     return _persist
 
 
@@ -723,6 +770,12 @@ def main() -> None:
                     help="versioned SystemBaseline JSON; existing repo manifest or explicit greenfield declaration")
     ap.add_argument("--conops", type=Path, default=None,
                     help="founder-confirmed conops.json from interview-engine; omit only for legacy sessions")
+    ap.add_argument("--grounding", choices=("off", "jev"), default="off",
+                    help="JEV-D10 rule 3: Jev grounding check at review (needs TYPESAFE_API_KEY and typesafe-sdk; no fallback; off = NOT CHECKED)")
+    ap.add_argument("--dispose", type=Path, default=None, metavar="FOUNDER_SCRIPT.json",
+                    help="JEV-D10: apply a founder-authored disposition script (exact selectors, hash-bound) to the findings ledger")
+    ap.add_argument("--repair", default=None, metavar="FINDING_ID[,FINDING_ID]",
+                    help="JEV-D10: explicit scoped repair of the named open review findings (bounded attempts; never closes a finding)")
     ap.add_argument("--export-handoff",action="store_true",help="zero-LLM validated coding-agent handoff from completed outputs")
     ap.add_argument("--preflight", action="store_true",
                     help="validate inputs and checkpoint compatibility without building a model or spending a call")
@@ -867,7 +920,15 @@ def main() -> None:
     from .artifact_lifecycle import ArchitectureLifecycle, stable_hash
     architecture_lifecycle = ArchitectureLifecycle(outdir, sid, baseline)
     partials = _make_partials(outdir, architecture_lifecycle)
-    graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion,
+    grounding = None
+    if args.grounding == "jev":
+        from .grounding import ProviderUnavailable, TypeSafeGroundingProvider
+        try:
+            grounding = TypeSafeGroundingProvider(api_key=os.environ.get("TYPESAFE_API_KEY"))
+        except ProviderUnavailable as exc:
+            raise UserFacingError(f"Jev grounding is unavailable: {exc}", "no fallback provider is used.",
+                                  "install typesafe-sdk and set TYPESAFE_API_KEY, or run with --grounding off (recorded as NOT CHECKED).") from exc
+    graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding,
                         persist=_make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
                                               conops_present=conops is not None,
                                               architecture_lifecycle=architecture_lifecycle),
@@ -883,6 +944,8 @@ def main() -> None:
           "as each stage completes)\n", file=sys.stderr)
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
+    if args.dispose or args.repair:
+        prior = _apply_ledger_actions(graph, cfg, prior, args)
     resume = bool(prior)
     if resume:
         prior_conops = prior.get("conops")

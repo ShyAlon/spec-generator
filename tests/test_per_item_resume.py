@@ -27,6 +27,15 @@ PLAN = [{"slug": "api", "kind": "api_surface", "title": "API",
 
 
 
+_BODY_SEQ = __import__("itertools").count(1)
+
+
+def _distinct_body():
+    """Content acceptance (JEV-D10) rejects repeated bodies, so the fake model never repeats one."""
+    n = next(_BODY_SEQ)
+    return f"# body {n}\n\nModule {n} owns its own distinct contract: input shape {n * 7}, error case {n * 13}."
+
+
 def _arch_answer(schema):
     """0.13.0 micro-pipeline: answer the one small call this schema shapes."""
     props = set(schema.get("properties", {}))
@@ -71,7 +80,7 @@ def _routing(calls, fail_after_bodies=None, bus_events=None):
                 else:
                     if fail_after_bodies is not None and bodies >= fail_after_bodies:
                         raise RuntimeError("simulated crash mid-stage")
-                    out = {"body_markdown": "# body"}
+                    out = {"body_markdown": _distinct_body()}
             elif self.stage == "tests":
                 wanted = self.schema["properties"]["fills"]["required"]
                 out = {"fills": {tid: PAYLOADS["tests"]["fills"].get(

@@ -27,6 +27,38 @@ class UserFacingError(Exception):
         return "\n".join(parts)
 
 
+class ContentRejected(UserFacingError):
+    """A schema-valid candidate failed content acceptance (JEV-D10). Not retried:
+    repeated semantic generation is not self-heal. The candidate and its evidence
+    are kept for review; nothing derives from it."""
+
+    def __init__(self, spec_id: str, results: list[dict]):
+        self.spec_id, self.results = spec_id, results
+        lines = "; ".join(f"{r['rule']}:{r['status']} ({r['reason']}"
+                          + (f"; score={r['score']:.4f}" if r.get('score') is not None else "")
+                          + (f"; sibling={r['sibling_id']}" if r.get('sibling_id') else "")
+                          + (f"; directive={r['catalogue_id']}" if r.get('catalogue_id') else "") + ")"
+                          for r in results)
+        super().__init__(
+            f"content acceptance rejected {spec_id}: the body is not accepted product content.",
+            lines,
+            "inspect content-rejections.json in the output directory; change the cause (do not re-roll), "
+            "then rerun the items stage. Rejected evidence is preserved.")
+
+
+class AssemblyBlocked(UserFacingError):
+    """The findings ledger blocks assembly (JEV-D10): any open finding, incomplete
+    required check, stale closure, or an unreviewed (ledger-less) checkpoint."""
+
+    def __init__(self, reasons: list[str], open_ids: list[str]):
+        self.reasons, self.open_ids = reasons, open_ids
+        super().__init__(
+            "assembly is blocked: " + "; ".join(reasons) + ".",
+            ("open finding ids: " + ", ".join(open_ids[:30]) + (" ..." if len(open_ids) > 30 else "")) if open_ids else None,
+            "read findings-ledger.json, then record founder dispositions (--dispose <founder-script.json> or the "
+            "decision page) or request an explicit scoped repair (--repair <finding-id,...>). Nothing was shipped.")
+
+
 def _is_ollama_ctx(context: str) -> bool:
     return "ollama" in context.lower()
 
