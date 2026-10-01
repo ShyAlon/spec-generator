@@ -145,6 +145,15 @@ class Ledger:
                         "before_revision": before_revision, "after_revision": after_revision, "result": "pass"}
         self.history.append({"event": "addressed", "finding_id": fid})
 
+    def supersede_open(self, fid: str, new_id: str) -> None:
+        """An OPEN finding whose target was re-authored and re-raised under a new
+        revision: keep the history, point at the new record."""
+        f = self._get(fid)
+        if f["state"] == OPEN and fid != new_id:
+            f["state"] = SUPERSEDED
+            f["superseded_by"] = new_id
+            self.findings[new_id]["supersedes"] = fid
+
     def refresh(self, current: dict[str, str]) -> list[str]:
         """current: target id -> current artifact revision. A closed finding whose
         target moved on is SUPERSEDED and re-raised OPEN (history is kept)."""

@@ -27,6 +27,25 @@ class UserFacingError(Exception):
         return "\n".join(parts)
 
 
+class ContentRejected(UserFacingError):
+    """A schema-valid candidate failed content acceptance (JEV-D10). Not retried:
+    repeated semantic generation is not self-heal. The candidate and its evidence
+    are kept for review; nothing derives from it."""
+
+    def __init__(self, spec_id: str, results: list[dict]):
+        self.spec_id, self.results = spec_id, results
+        lines = "; ".join(f"{r['rule']}:{r['status']} ({r['reason']}"
+                          + (f"; score={r['score']:.4f}" if r.get('score') is not None else "")
+                          + (f"; sibling={r['sibling_id']}" if r.get('sibling_id') else "")
+                          + (f"; directive={r['catalogue_id']}" if r.get('catalogue_id') else "") + ")"
+                          for r in results)
+        super().__init__(
+            f"content acceptance rejected {spec_id}: the body is not accepted product content.",
+            lines,
+            "inspect content-rejections.json in the output directory; change the cause (do not re-roll), "
+            "then rerun the items stage. Rejected evidence is preserved.")
+
+
 def _is_ollama_ctx(context: str) -> bool:
     return "ollama" in context.lower()
 

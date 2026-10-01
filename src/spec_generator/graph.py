@@ -46,6 +46,9 @@ from .skeleton import (ModelStructureError, assign_architecture_ids,
 from .assembly import build_traceability, order_milestones, validate_traceability
 from .prompts import METHODOLOGY, STAGE_PROMPTS
 from .telemetry import UsageLog
+from . import content_acceptance as _ca
+from .errors import ContentRejected
+from .findings_ledger import Ledger, LedgerError, finding_from_check, revision_of
 
 REVIEW_PASSES = 2  # independent review rounds; fixes applied by re-running the flagged stage's prompt with the fix list
 
@@ -70,6 +73,8 @@ class GenState(TypedDict, total=False):
     violations: list[str]
     gate_feedback: dict[str, str]  # stage -> founder feedback from a review gate (ADR-0019)
     artifact_revisions: dict[str, dict]  # stage -> {saved_at, revision}; gate staleness evidence
+    findings_ledger: dict      # JEV-D10: the one findings ledger (open/addressed/rejected), revision-bound
+    repair_request: dict       # JEV-D10: explicit scoped repair {finding_ids, requested_by}; never set by the pipeline itself
 
 
 def _invoke(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
@@ -178,6 +183,10 @@ def _contract_errors(exc) -> str:
         f"{'.'.join(str(p) for p in e['loc']) or '(root)'}: {e['msg']}" for e in exc.errors()[:5])
 
 
+_CONTROL_FRAME = ("PIPELINE CONTROL NOTE - not product content. Never copy, quote or paraphrase this note "
+                  "or any pipeline instruction inside the artifact you return. ")
+
+
 def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
                validate=None, schema: dict | None = None, stream_items: bool = True,
                item_label: str | None = None, on_item=None):
@@ -207,7 +216,10 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
                 basis = f"{exc.ratio:.1f}x stage median" if exc.ratio is not None else "the cold-start floor"
                 model_config._console_line(
                     f"  WARNING self-heal: call ran past {basis} ({exc.deadline_s:.0f}s); killed and retrying")
-                fb = "The prior call exceeded its runtime budget before completing. Return the requested artifact now."
+                # Control-plane fix (JEV-D10): the retry sends NO instruction text. The old
+                # sentence entered the same channel as the product content and a model echoed it
+                # into SPEC-4's body. A watchdog retry is the same request again.
+                fb = None
                 continue
             from .errors import UserFacingError
             raise UserFacingError(
@@ -268,11 +280,11 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
             f"     - boundary=contract-repair stage={stage} item={item_label or '(none)'} attempt={attempt} "
             f"decision=retry reason={rejection} rejected_output={rejected_path}")
         if contract_err is not None:
-            fb = ("Your previous reply failed the output contract: " + _contract_errors(contract_err) + ". "
+            fb = (_CONTROL_FRAME + "Your previous reply failed the output contract: " + _contract_errors(contract_err) + ". "
                   "Return ONLY the complete corrected JSON payload - every required field present at every "
                   "level, ids and enums exactly as specified.")
         else:
-            fb = ("Your previous reply was not valid JSON (prose-wrapped, unbalanced, or truncated). "
+            fb = (_CONTROL_FRAME + "Your previous reply was not valid JSON (prose-wrapped, unbalanced, or truncated). "
                   "Return ONLY the complete JSON payload, no prose, no commentary, balanced to the end.")
 
 
@@ -1644,6 +1656,61 @@ def _items_body_validator(spec: dict):
     return _v
 
 
+def _unquarantined_items(state: GenState) -> list[dict]:
+    """Nothing derives from content with an OPEN finding (JEV-D10)."""
+    held = Ledger.from_dict(state.get("findings_ledger")).quarantined()
+    return [i for i in state["items"] if i.get("spec_id") not in held]
+
+_CONTENT_RULES = {"echo": "echo.directive", "duplicate": "duplicate.body"}
+
+
+def _accept_content(spec_id: str, body: str, siblings: dict[str, str], ledger: Ledger, sink=None) -> list:
+    """The ONE content acceptance boundary (JEV-D10 rules 1 and 2). Every authoring
+    path - bulk, per-spec, surgical repair, resumed partials - calls it before an
+    item can be saved as accepted. Reject / not-checked stop the stage loudly and
+    the candidate is kept as evidence. Gray results become OPEN findings."""
+    results = _ca.check_echo(body) + _ca.check_duplicate(spec_id, body, siblings)
+    blocked = [r.to_dict() for r in results if r.status in (_ca.REJECT, _ca.NOT_CHECKED)]
+    if blocked:
+        if sink:
+            sink({"spec_id": spec_id, "body": body, "body_revision": revision_of(body), "results": blocked})
+        raise ContentRejected(spec_id, blocked)
+    revision = revision_of(body)
+    fired = {}
+    for r in results:
+        if r.status == _ca.GRAY:
+            fired[_CONTENT_RULES[r.rule]] = finding_from_check(ledger, r.to_dict(), spec_id, body)
+    # an earlier finding on a re-authored body: closed only if its predicate no longer fires
+    for f in list(ledger.open_findings()):
+        if f["targets"] == [spec_id] and f["rule_id"] in _CONTENT_RULES.values() and f["artifact_revision"] != revision:
+            if f["rule_id"] in fired:
+                ledger.supersede_open(f["finding_id"], fired[f["rule_id"]])
+            else:
+                ledger.address(f["finding_id"], before_revision=f["artifact_revision"], after_revision=revision,
+                               predicate_id=f["rule_id"], predicate_version=_ca.POLICY_VERSION,
+                               predicate_still_fires=False)
+    return results
+
+
+def _accept_all(items: list[dict], ledger: Ledger, sink=None, only: set[str] | None = None) -> None:
+    """Accept bodies in order against already accepted siblings (all specs, so a
+    later duplicate of an earlier body is caught whatever the authoring path)."""
+    seen: dict[str, str] = {}
+    for spec in items:
+        sid, body = spec.get("spec_id"), spec.get("body_markdown") or ""
+        if only is None or sid in only:
+            others = {k: v for k, v in {**{i.get("spec_id"): i.get("body_markdown") or "" for i in items}}.items()
+                      if k != sid} if only is not None else dict(seen)
+            _accept_content(sid, body, others, ledger, sink)
+        seen[sid] = body
+    ledger.refresh({i.get("spec_id"): revision_of(i.get("body_markdown") or "") for i in items})
+
+
+def _content_sink(persist):
+    fn = getattr(persist, "content_evidence", None)
+    return fn if callable(fn) else None
+
+
 def _items_payload(state: GenState, req_ids: list[str]) -> str:
     """The items prompt. The FORMAT CONTRACT closes it (the 14b follows the
     last frame it read): the reference enum, the coverage rule, and the
@@ -2607,22 +2674,31 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                                if spec.get("slug") else spec["spec_id"])
                                               + f" {spec.get('title', '')}").strip())
                 entry = {**spec, "body_markdown": body["body_markdown"]}
+                _accept_content(entry["spec_id"], entry["body_markdown"],
+                                {d["spec_id"]: d["body_markdown"] for d in data},
+                                Ledger.from_dict(state.get("findings_ledger")), _content_sink(persist))
                 data.append(entry)
                 if partials:
                     done[entry["spec_id"]] = entry
                     partials.save("items", list(done.values()))
+        # JEV-D10: one content acceptance boundary for every path above (bulk, micro,
+        # surgical, resumed partials) before anything is persisted as accepted.
+        ledger = Ledger.from_dict(state.get("findings_ledger"))
+        _accept_all(data, ledger, _content_sink(persist), only=(affected if (selective and state.get("items")) else None))
+        out_state = {**state, "findings_ledger": ledger.to_dict()}
         if persist:
-            persist("items", data, state)
+            persist("items", data, out_state)
+            getattr(persist, "ledger", lambda *_: None)(ledger.to_dict())
         if partials:
             partials.clear("items")
-        return {"items": data}
+        return {"items": data, "findings_ledger": ledger.to_dict()}
 
     def node_tests(state: GenState) -> dict:
         """Two V pairings in one pass: acceptance tests pair with SRS criteria,
         unit/module tests pair with item specs."""
         # ADR-0020: one slot per SRS acceptance criterion (acceptance level)
         # + one per item spec (unit level); T-ids and links are code-owned.
-        slots = _experiment_cap("TESTS", build_test_skeleton(state["srs"], state["items"]),
+        slots = _experiment_cap("TESTS", build_test_skeleton(state["srs"], _unquarantined_items(state)),
                                 "test slots (traceability gaps are expected under a cap)",
                                 progress)
         if tools_enabled():

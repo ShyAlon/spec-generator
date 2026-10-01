@@ -217,6 +217,15 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
         refresh_docs(outdir, intent=intent, event=stage, state={**state, stage: data})
 
     _persist.review = lambda record: archive_review(outdir, record, intent=intent)
+
+    def _content_evidence(record: dict) -> None:
+        """Rejected candidates are evidence: kept verbatim, never deleted by a rerun."""
+        path = outdir / "content-rejections.json"
+        prior = json.loads(path.read_text()) if path.exists() else []
+        _atomic_write(path, json.dumps(prior + [record], indent=2))
+
+    _persist.content_evidence = _content_evidence
+    _persist.ledger = lambda data: _atomic_write(outdir / "findings-ledger.json", json.dumps(data, indent=2))
     return _persist
 
 
