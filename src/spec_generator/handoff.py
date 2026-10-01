@@ -69,6 +69,20 @@ def build_handoff(interview:Path,spec:Path)->dict:
         files[name]=path.read_text()
         sibling=path.with_suffix('.md')
         if sibling.is_file() and not sibling.is_symlink() and sibling.stat().st_size<=2_000_000 and str(PurePosixPath(name).with_suffix('.md')) not in files:files[str(PurePosixPath(name).with_suffix('.md'))]=sibling.read_text()
+    from .docs import render_docs
+    sources={'intent':intent.model_dump(mode='json'),'conops':conops.model_dump(mode='json'),
+        'needs':needs.model_dump(mode='json'),'srs':srs.model_dump(mode='json'),
+        'architecture':arch.model_dump(mode='json'),'items':[i.model_dump(mode='json') for i in items],
+        'tests':[t.model_dump(mode='json') for t in tests],'traceability':trace}
+    history_path=spec/'review-history.json'
+    history=json.loads(history_path.read_text()) if history_path.is_file() and not history_path.is_symlink() and history_path.stat().st_size<=2_000_000 else []
+    # Export documentation without logs/checkpoints/private diagnostic payloads.
+    history=[{k:v for k,v in r.items() if k!='state'} for r in history]
+    docs_state_path=spec/'docs-state.json'
+    docs_state=json.loads(docs_state_path.read_text()) if docs_state_path.is_file() and not docs_state_path.is_symlink() and docs_state_path.stat().st_size<=2_000_000 else {}
+    docs=render_docs(sources,{s:'available (not quality-approved)' for s in ('needs','srs','architecture','items','tests','review','assemble')},history,docs_state.get('changes',[]))
+    files.update({'docs/'+name:text for name,text in docs.items()})
+    files['README.md']+='\nReadable views: [docs/README.md](docs/README.md).\n'
     for name,text in files.items():
         if len(text.encode())>2_000_000:raise ValueError('Handoff file exceeds limit: '+name)
     baseline=spec/'system-baseline.json'

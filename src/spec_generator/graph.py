@@ -2806,6 +2806,15 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             key = (fix["scope"], tuple(sorted(fix["target_ids"])), fix["fix"].strip().casefold())
             if key not in seen:
                 seen.add(key); fixes.append(fix)
+        # Archive every chunk before partial cleanup. Do not change routing or
+        # the existing aggregation policy in this documentation-only change.
+        if persist and hasattr(persist, "review"):
+            persist.review({"round": n, "chunks": {k: v for k, v in saved.items()
+                           if k.startswith(f"round-{n}-chunk-")},
+                           "all_chunk_findings": findings, "retained_fixes": fixes,
+                           "aggregation_omitted_count": max(0, len(findings) - len(fixes)),
+                           "disposition": "proposed; resolution not verified",
+                           "state": {**state, "review_round": n, "review_fixes": fixes}})
         if partials:
             partials.clear("review")
         return {"review_round": n, "review_fixes": fixes}
