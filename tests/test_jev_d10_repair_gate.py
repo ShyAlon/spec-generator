@@ -86,3 +86,12 @@ def test_cli_repair_rejects_unknown_ids(queue_models):
     g, cfg, values = _blocked(queue_models, "g6")
     with pytest.raises(UserFacingError):
         _apply_ledger_actions(g, cfg, values, Namespace(dispose=None, repair="F-nope"))
+
+
+def test_docs_show_the_findings_ledger():
+    from spec_generator.docs import render_docs
+    ledger = Ledger()
+    ledger.add(rule_id="echo.directive", rule_version="1", source="rule", kind="semantic", targets=["SPEC-1"],
+               artifact_revision="x", summary="gray echo")
+    files = render_docs({"findings_ledger": ledger.to_dict()})
+    assert "BLOCKED" in files["findings.md"] and "SPEC-1" in files["findings.md"]
