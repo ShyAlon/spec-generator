@@ -276,3 +276,24 @@ The contracts README is the canonical transition and guard reference.
 Run `./scripts/test-local.sh` from any directory. It creates a reusable `.venv`, installs the development dependencies and runs the same tests as the PR workflow using Python 3.12. Install Python 3.12 first, and make sure your Git authentication can read private `ShyAlon/vmodel-contracts` where it is a dependency.
 
 For a standalone wheel build of this repository, run `./scripts/build-local.sh` (requires Python 3.12 and pip). This writes to `dist/` and does not publish or deploy anything.
+
+### Readable run documents
+
+Each session includes `docs/README.md` as the human entry point. With the default
+layout, this is alongside `interview/` and `spec/`; for a custom `--out` directory,
+it lives inside that output directory. A new run gets an index immediately,
+updated after stage persistence and final assembly. Existing canonical JSON,
+Markdown, logs, checkpoints and resume paths are unchanged.
+
+The docs include intent, ConOps, needs, anchored requirements/acceptance criteria,
+architecture, every item spec, a test index and full test procedures, clickable
+traceability, review rounds, artifact changes and run diagnostics. These are
+rendered views, not manual-edit inputs. They preserve bad generated prose rather
+than repairing it. "Generated" and "assembled" never mean quality-approved or
+that tests have passed. Pending and invalidated/stale artifacts remain explicit.
+
+Review history is archived before partial cleanup, including every chunk finding
+and the retained aggregate. This visibility does not change the current review
+cap, correction logic or assembly gate. Older runs without recorded history
+cannot recover missing rounds automatically. Deterministic handoff exports include
+the same docs view without private logs/checkpoint payloads.

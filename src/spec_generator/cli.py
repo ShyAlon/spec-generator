@@ -14,6 +14,7 @@ tmp+rename - a late failure leaves all completed work on disk):
   usage.jsonl / checkpoints.sqlite                run bookkeeping
 """
 from __future__ import annotations
+from .docs import refresh_docs, archive_review
 
 import argparse
 import hashlib
@@ -213,6 +214,9 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
         elif stage == "tests":
             _atomic_write(outdir / "tests.json", json.dumps(data, indent=2))
 
+        refresh_docs(outdir, intent=intent, event=stage, state={**state, stage: data})
+
+    _persist.review = lambda record: archive_review(outdir, record, intent=intent)
     return _persist
 
 
@@ -556,6 +560,7 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     print(f"Recomputing ONLY: {args.only_stage}; downstream artifacts are copied for comparison, not regenerated.",
           file=sys.stderr)
     print(f"New output: {outdir} (source will not be modified)", file=sys.stderr)
+    refresh_docs(outdir, intent=intent, conops=state.get("conops"), start=True, invalidate=args.only_stage)
     log = UsageLog(sid, sink=jsonl_sink(outdir / "usage.jsonl"))
     bus = ProgressBus(); bus.subscribe(stderr_printer())
     from .structured_progress import StructuredProgress
@@ -569,6 +574,7 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     result = graph.invoke(state, {"configurable": {"thread_id": sid + "-" + args.only_stage}})
     if args.only_stage == "review":
         _atomic_write(outdir / "review-fixes.json", json.dumps(result.get("review_fixes") or [], indent=2))
+    refresh_docs(outdir, intent=intent, event=args.only_stage, state=result)
     print(f"Stage '{args.only_stage}' written to {outdir}. Source unchanged.")
 
 
@@ -684,6 +690,7 @@ def _reconcile_artifacts(intent: dict, baseline: dict, source: Path,
              "downstream": "stale" if changed else "valid"}
     with (destination / "audit.jsonl").open("a") as fh:
         fh.write(json.dumps(audit, sort_keys=True) + "\n")
+    refresh_docs(destination, intent=intent, invalidate="items" if changed else None)
     return audit
 
 def main() -> None:
@@ -829,6 +836,7 @@ def main() -> None:
         print(f"Downstream: {audit['downstream']} ({audit['destination']})", file=sys.stderr)
         return
     outdir.mkdir(parents=True, exist_ok=True)
+    refresh_docs(outdir, intent=intent, conops=conops, start=True)
     from vmodel_contracts.runtime import install_plain_log
     run_log = outdir / "run.log"
     sys.stderr = install_plain_log(run_log, sys.stderr)
@@ -1001,6 +1009,7 @@ def main() -> None:
                 print(f"warning: --from {args.from_stage} discards {len(saved)} preserved item(s) "
                       f"({key}) - they will be regenerated.", file=sys.stderr)
             partials.clear(key)
+        refresh_docs(outdir, intent=intent, conops=conops, invalidate=args.from_stage)
         resume = args.from_stage != "needs"
         if resume:
             kept = [s for s in STAGE_ORDER[:STAGE_ORDER.index(args.from_stage)] if prior.get(s)]
@@ -1020,6 +1029,7 @@ def main() -> None:
         result = graph.invoke(None, cfg) if resume else graph.invoke(
             {"intent_model": intent, "system_baseline": baseline, "conops": conops}, cfg)
 
+    refresh_docs(outdir, intent=intent, conops=conops, state=result)
     if args.to_stage:
         print(f"Stopped after stage '{args.to_stage}' as requested. Checkpoint and stage artifacts are resumable in {outdir}.")
         return
@@ -1077,6 +1087,7 @@ def main() -> None:
     (outdir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
     (outdir / "tests.json").write_text(json.dumps(b["_tests"], indent=2))
 
+    refresh_docs(outdir, intent=intent, conops=conops, event="assemble", state=result)
     if result.get("violations"):
         print("WARNING - traceability violations (in punch list):")
         for v in result["violations"]:
