@@ -253,7 +253,7 @@ def ground_spec(spec_id: str, body: str, requirements: list[dict], provider: Gro
             answers_out.append(hit)
             continue
         if not b_spans:       # nothing substantive to describe behavior: deterministic NO, scanned basis recorded
-            ans = {"requirement_id": rid, "q1": "no", "q2": "no", "q3": "no" if excl else "not_asked",
+            ans = {"requirement_id": rid, "q1": "no", "q2": "no", "q3": "no" if excl else "unknown",
                    "body_evidence_ids": [], "basis_evidence_ids": [], "body_quote": None, "basis_quote": None,
                    "scanned_spans": [], "confidence": None, "source": "code:no-substantive-body"}
             answers_out.append(ans)
@@ -298,7 +298,7 @@ def ground_spec(spec_id: str, body: str, requirements: list[dict], provider: Gro
                 if sid in basis_by_id:
                     basis_ids[q].append(sid)
         q1 = "yes" if "yes" in per["q1"] else "no"
-        q2 = _worst_yn(per["q2"], "yes"); q3 = _worst_yn(per["q3"], "yes") if per["q3"] else "not_asked"
+        q2 = _worst_yn(per["q2"], "yes"); q3 = _worst_yn(per["q3"], "yes") if per["q3"] else "unknown"   # no supplied exclusion: UNKNOWN, never a pass
         pick = "q1" if q1 == "yes" else ("q2" if q2 == "yes" else ("q3" if q3 == "yes" else "q1"))
         bids = sorted(set(body_ids[pick])); sids = sorted(set(basis_ids["q2" if q2 == "yes" else "q3" if q3 == "yes" else "q1"]))
         ans = {"requirement_id": rid, "q1": q1, "q2": q2, "q3": q3, "body_evidence_ids": bids, "basis_evidence_ids": sids,
@@ -333,9 +333,11 @@ def record_grounding(ledger: Ledger, envelope: dict) -> list[str]:
             and "exceeds" not in envelope["reason"]:
         ledger.history.append({"event": "grounding", "spec_id": spec_id, "status": NOT_CHECKED, "reason": envelope["reason"]})
         return ids
-    if envelope["status"] in (UNAVAILABLE, UNVERIFIED, STALE, NOT_CHECKED):
+    if envelope["status"] != ELIGIBLE:
         ledger.mark_incomplete(scope, f"grounding {envelope['status']}: {envelope['reason']}", status=envelope["status"])
-        return ids
+        if not envelope.get("check_complete"):
+            return ids
+        # Valid answers with an UNKNOWN: definite findings are still raised below.
     for a in envelope["per_requirement"]:
         rid = a["requirement_id"]
         for q, label, bad in (("q1", "Q1 no explicit behavior for the requirement", "no"),

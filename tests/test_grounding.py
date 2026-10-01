@@ -168,3 +168,11 @@ def test_pipeline_runs_grounding_and_blocks_assembly_on_q1_no(tmp_path):
         assert any(f["rule_id"] == "grounding.jev" for f in ledger.open_findings())
     finally:
         mp.undo()
+
+
+def test_missing_exclusions_make_q3_unknown_not_a_pass():
+    env = run(Mock(), exclusions=[])
+    assert env["per_requirement"][0]["q3"] == "unknown"
+    assert env["status"] == g.UNVERIFIED and not env["eligible"]
+    ledger = Ledger(); g.record_grounding(ledger, env)
+    assert ledger.gate()["blocked"]
