@@ -990,7 +990,8 @@ def main() -> None:
                     compatible_anchor_hashes=(stable_hash(baseline),))
             destination = f"the requested '{args.to_stage}' boundary" if args.to_stage else "the full pipeline"
             print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through {destination}.", file=sys.stderr)
-    if resume and (prior.get('semantic_reviews') or {}).get('srs'):
+    # --from needs/srs regenerates the SRS and its review, so an unresolved old review must not stop the rewind.
+    if resume and args.from_stage not in ('needs','srs') and (prior.get('semantic_reviews') or {}).get('srs'):
         from .semantic_review import load_reviewed_srs
         try:resolved=load_reviewed_srs(intent,outdir,prior)
         except ValueError as exc:
