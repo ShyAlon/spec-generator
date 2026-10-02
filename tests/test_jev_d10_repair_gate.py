@@ -52,12 +52,25 @@ def test_more_than_24_findings_survive(queue_models):
     assert any("30 findings" in i["reason"] for i in ledger.incomplete)
 
 
+def _run_repair_and_approve(g, cfg):
+    """A repair now stops at a proposal; approve it like --approve-repair does, then the run continues to the gate."""
+    from spec_generator.errors import AssemblyBlocked
+    try:
+        g.invoke(None, cfg)
+    except AssemblyBlocked:
+        return                                   # ceiling reached: refused, no proposal
+    proposal = g.get_state(cfg).values.get("repair_proposal")
+    assert proposal, "repair neither blocked nor proposed"
+    g.update_state(cfg, {"srs": proposal["srs"], "repair_proposal": None}, as_node="apply_fixes")
+    with pytest.raises(AssemblyBlocked):         # repair never closes a semantic finding; only the founder does
+        g.invoke(None, cfg)
+
+
 def test_repair_does_not_close_and_ceiling_holds(queue_models):
     g, cfg, values = _blocked(queue_models, "g4")
     for attempt in range(REPAIR_ATTEMPT_CEILING + 1):
         ids = _request_repair(g, cfg, g.get_state(cfg).values)
-        with pytest.raises(AssemblyBlocked):
-            g.invoke(None, cfg)
+        _run_repair_and_approve(g, cfg)
     final = Ledger.from_dict(g.get_state(cfg).values["findings_ledger"])
     repairs = [h for h in final.history if h.get("event") == "repair"]
     assert len(repairs) <= REPAIR_ATTEMPT_CEILING          # the extra request was refused, not replayed
@@ -95,3 +108,59 @@ def test_docs_show_the_findings_ledger():
                artifact_revision="x", summary="gray echo")
     files = render_docs({"findings_ledger": ledger.to_dict()})
     assert "BLOCKED" in files["findings.md"] and "SPEC-1" in files["findings.md"]
+
+
+# ---- repair proposal: nothing is applied until the founder approves ----
+from spec_generator.cli import _resolve_repair_proposal
+from spec_generator.graph import render_repair_proposal
+
+
+def _proposal_state(queue_models, tid):
+    g, cfg, values = _blocked(queue_models, tid)
+    _request_repair(g, cfg, values)
+    g.invoke(None, cfg)                                   # stops at the proposal (no AssemblyBlocked)
+    return g, cfg, g.get_state(cfg).values
+
+
+def test_repair_stops_with_a_proposal_and_does_not_apply_it(queue_models):
+    g, cfg, before = _blocked(queue_models, "p1")
+    old_srs = json.dumps(before["srs"], sort_keys=True)
+    _request_repair(g, cfg, before)
+    g.invoke(None, cfg)
+    st = g.get_state(cfg).values
+    assert st["repair_proposal"] and json.dumps(st["srs"], sort_keys=True) == old_srs   # SRS untouched
+    assert st["repair_proposal"]["finding_ids"] and "srs" in st["repair_proposal"]
+    assert not g.get_state(cfg).next or "items" not in g.get_state(cfg).next
+    text = render_repair_proposal(st["repair_proposal"])
+    assert "not applied" in text and "--approve-repair" in text
+
+
+def test_approve_applies_the_srs_and_continues_then_the_gate_still_blocks(queue_models, tmp_path):
+    g, cfg, st = _proposal_state(queue_models, "p2")
+    wrote = []
+    new = _resolve_repair_proposal(g, cfg, st, Namespace(approve_repair=True, reject_repair=False),
+                                   lambda stage, data, state: wrote.append(stage))
+    assert wrote == ["srs"] and new["repair_proposal"] is None
+    assert new["srs"] == st["repair_proposal"]["srs"]
+    assert any(h["event"] == "repair_approved" for h in Ledger.from_dict(new["findings_ledger"]).history)
+    with pytest.raises(AssemblyBlocked):                  # approval never closes a finding
+        g.invoke(None, cfg)
+
+
+def test_reject_drops_the_proposal_and_keeps_the_srs(queue_models):
+    g, cfg, st = _proposal_state(queue_models, "p3")
+    old = json.dumps(st["srs"], sort_keys=True)
+    new = _resolve_repair_proposal(g, cfg, st, Namespace(approve_repair=False, reject_repair=True), lambda *a: None)
+    assert new["repair_proposal"] is None and json.dumps(new["srs"], sort_keys=True) == old
+    assert any(h["event"] == "repair_rejected" for h in Ledger.from_dict(new["findings_ledger"]).history)
+    with pytest.raises(AssemblyBlocked):
+        g.invoke(None, cfg)
+
+
+def test_resolve_refuses_without_a_pending_proposal_or_with_both_flags(queue_models):
+    g, cfg, values = _blocked(queue_models, "p4")
+    with pytest.raises(UserFacingError):
+        _resolve_repair_proposal(g, cfg, values, Namespace(approve_repair=True, reject_repair=False), lambda *a: None)
+    g2, cfg2, st = _proposal_state(queue_models, "p5")
+    with pytest.raises(UserFacingError):
+        _resolve_repair_proposal(g2, cfg2, st, Namespace(approve_repair=True, reject_repair=True), lambda *a: None)

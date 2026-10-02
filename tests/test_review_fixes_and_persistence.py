@@ -63,6 +63,20 @@ def _request_repair(g, cfg, values):
     return ids
 
 
+def _run_repair_and_approve(g, cfg):
+    """A repair now stops at a proposal; approve it like --approve-repair does, then the run continues to the gate."""
+    from spec_generator.errors import AssemblyBlocked
+    try:
+        g.invoke(None, cfg)
+    except AssemblyBlocked:
+        return                                   # ceiling reached: refused, no proposal
+    proposal = g.get_state(cfg).values.get("repair_proposal")
+    assert proposal, "repair neither blocked nor proposed"
+    g.update_state(cfg, {"srs": proposal["srs"], "repair_proposal": None}, as_node="apply_fixes")
+    with pytest.raises(AssemblyBlocked):         # repair never closes a semantic finding; only the founder does
+        g.invoke(None, cfg)
+
+
 def test_review_fixes_refire_the_fill_stage(queue_models):
     """JEV-D10: review findings block assembly; repair runs only on an explicit scoped request."""
     QueueModel.QUEUES["review"] = [FIXES, []]  # round 1 flags, round 2 clean
@@ -71,9 +85,7 @@ def test_review_fixes_refire_the_fill_stage(queue_models):
     values = _run_to_block(g, cfg)
     assert queue_models["srs"].calls == 1  # no unattended replay
     assert _request_repair(g, cfg, values)
-    from spec_generator.errors import AssemblyBlocked
-    with pytest.raises(AssemblyBlocked):   # repair never closes a semantic finding; only the founder does
-        g.invoke(None, cfg)
+    _run_repair_and_approve(g, cfg)
     srs = queue_models["srs"]
     assert srs.calls == 2  # initial author + one fix application
     apply_payload = srs.last_human
@@ -239,9 +251,7 @@ def test_checkpoint_resume_after_apply_fixes_failure_skips_upstream(monkeypatch)
         graph.invoke(None, config)
 
     calls_at_crash = {stage: model.calls for stage, model in box.items()}
-    from spec_generator.errors import AssemblyBlocked
-    with pytest.raises(AssemblyBlocked):   # resume completes the repair; the open finding still blocks assembly
-        graph.invoke(None, config)
+    _run_repair_and_approve(graph, config)   # resume completes the repair proposal; approval continues to the gate
 
     assert box["architecture"].calls == calls_at_crash["architecture"]
     assert box["items"].calls == calls_at_crash["items"] + 1
