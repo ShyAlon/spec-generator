@@ -79,6 +79,7 @@ class GenState(TypedDict, total=False):
     gate_feedback: dict[str, str]  # stage -> founder feedback from a review gate (ADR-0019)
     artifact_revisions: dict[str, dict]  # stage -> {saved_at, revision}; gate staleness evidence
     findings_ledger: dict      # JEV-D10: the one findings ledger (open/addressed/rejected), revision-bound
+    repair_scope: list         # requirement ids the next review round re-checks after a scoped repair; absent = all
     repair_request: dict       # JEV-D10: explicit scoped repair {finding_ids, requested_by}; never set by the pipeline itself
 
 
@@ -1872,6 +1873,49 @@ def _filter_decided_stack_findings(fixes: list[dict], state: GenState) -> tuple[
     return kept, filtered
 
 
+# Review-noise classes (measured on the 2026-10-02 ledger, 96 spec/test findings the founder rejected, 0 of them
+# kept by these rules; requirement and systemic findings are never touched). Each class is a deterministic phrase
+# pattern; a finding that states a contradiction, an absence or an orphan is rescued and stays open.
+_NOISE_RESCUE = _re.compile(
+    r"contradict|conflict|inconsisten|mismatch|does not match|doesn't match|\bbut the (architecture|srs|requirement)|"
+    r"\binstead of\b|\b(missing|omits?|omitted|absent|lacks?|no mention|not mentioned|never (states|mentions))\b|"
+    r"\borphan|untraced|unreferenced|restat\w+ (the )?requirement", _re.I)
+_NOISE_CLASSES = (
+    ("A:anti-technology-doctrine", _re.compile(
+        r"solution[- ]agnostic|technology[- ]agnostic|"
+        r"(do not|don't|not|avoid|without)\s+(\w+\s+){0,2}(imply\w*|prescrib\w*|specif\w*|nam\w+|referenc\w*|mention\w*)"
+        r"\s+(\w+\s+){0,3}(specific |particular )?(technolog|implementation|design solution|frameworks?\b)", _re.I)),
+    ("E:solution-detail-in-spec-or-test", _re.compile(
+        r"(does not|do not|not)\s+specify\b.{0,80}(UI elements|UI interactions|selectors?|solution details?|"
+        r"performance metrics|GitHub)|"
+        r"(remove|avoid)\b.{0,60}\b(solution[- ]specific|solution detail|solution language|implies? (a )?(solution|implementation)|"
+        r"prescribes? a design)", _re.I)),
+    ("F:cites-decided-architecture", _re.compile(
+        r"(as per|aligning with|consistent with|per) the decided (architecture|storage|programming language|stack)", _re.I)),
+)
+
+
+def _noise_class(fix: dict) -> str | None:
+    if fix.get("scope") not in ("spec", "test"):
+        return None
+    text = fix.get("fix") or ""
+    if _NOISE_RESCUE.search(text):
+        return None
+    return next((name for name, pat in _NOISE_CLASSES if pat.search(text)), None)
+
+
+def _filter_review_noise(fixes: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Archive (never open) spec/test findings in the measured noise classes. Auditable: the caller records them."""
+    kept, filtered = [], []
+    for fix in fixes:
+        cls = _noise_class(fix)
+        if cls:
+            filtered.append({**fix, "filtered": f"filtered: noise-class {cls}", "noise_class": cls})
+        else:
+            kept.append(fix)
+    return kept, filtered
+
+
 def _normalized_review_fixes(value) -> list[dict]:
     out = []
     for fix in (value or []):  # no slice: every finding survives; per-chunk bounds are checked in node_review
@@ -1905,7 +1949,8 @@ def _target_revision(state: GenState, fix: dict) -> str:
     return revision_of(text)
 
 
-def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], round_n: int) -> list[str]:
+def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], round_n: int,
+                            raised_out: set | None = None) -> list[str]:
     """Every LLM review finding becomes ledger data. Dedup precedes any limit and the
     ledger is never sliced. These are semantic: they close only by founder disposition."""
     raised = set()
@@ -1915,8 +1960,56 @@ def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], 
                    artifact_revision=_target_revision(state, fix), summary=fix["fix"],
                    evidence=[{"id": "review:finding", "sha256": revision_of(fix["fix"]), "excerpt": fix["fix"][:320]}],
                    detail={"scope": fix["scope"], "target_ids": fix["target_ids"], "fix": fix["fix"]}))
+    if raised_out is not None:
+        raised_out.update(raised)
     # a re-run of this round replaces its earlier output (not the founder's decisions, not other rounds)
     return ledger.retire_review_round(f"review:round-{round_n}", raised)
+
+
+def _review_scope_requirements(state: GenState, fixes: list[dict]) -> list[str] | None:
+    """After a scoped repair, the requirements whose review chunk must be re-run: the repaired requirements plus the
+    requirements linked to repaired specs and tests. None = a systemic or unresolvable repair, review everything."""
+    fixes = _normalized_review_fixes(fixes)
+    if not fixes or any(f["scope"] == "systemic" for f in fixes):
+        return None
+    reqs = {x for f in fixes if f["scope"] == "requirement" for x in f["target_ids"]}
+    spec_ids = {x for f in fixes if f["scope"] == "spec" for x in f["target_ids"]}
+    test_ids = {x for f in fixes if f["scope"] == "test" for x in f["target_ids"]}
+    for spec in state.get("items") or []:
+        if spec.get("spec_id") in spec_ids:
+            reqs |= set(spec.get("requirement_ids") or [])
+    if test_ids:
+        crit = {c.get("criterion_id"): r.get("requirement_id") for sec in ("functional", "non_functional")
+                for r in (state.get("srs") or {}).get(sec) or [] for c in r.get("acceptance") or []}
+        spec_req = {i.get("spec_id"): i.get("requirement_ids") or [] for i in state.get("items") or []}
+        for t in state.get("tests") or []:
+            if t.get("test_id") in test_ids:
+                if t.get("criterion_id") in crit:
+                    reqs.add(crit[t["criterion_id"]])
+                reqs |= set(spec_req.get(t.get("spec_id"), []))
+    return sorted(reqs) or None
+
+
+def _check_ac_ids_stable(before: dict, after: dict) -> None:
+    """Acceptance-criterion ids are numbered sequentially across the whole SRS. A repair that adds or removes a
+    criterion shifts every later AC id, and tests are linked by criterion_id: they would silently point at the wrong
+    criterion. Refuse such a repair before anything is persisted."""
+    from .errors import UserFacingError
+
+    def ids(srs):
+        return {r.get("requirement_id"): [c.get("criterion_id") for c in r.get("acceptance") or []]
+                for sec in ("functional", "non_functional") for r in (srs or {}).get(sec) or []}
+    old, new = ids(before), ids(after)
+    changed = sorted(r for r in set(old) | set(new) if old.get(r) != new.get(r))
+    if changed:
+        detail = "; ".join(f"{r}: {len(old.get(r) or [])} -> {len(new.get(r) or [])} criteria "
+                           f"({(old.get(r) or ['-'])[0]}.. vs {(new.get(r) or ['-'])[0]}..)" for r in changed[:6])
+        raise UserFacingError(
+            "scoped repair refused: it would renumber acceptance criteria.",
+            f"checked the criterion ids of every requirement before and after the repair; found changes in "
+            f"{', '.join(changed)} ({detail}). Tests link by criterion id, so a shift would mis-link them. Nothing was applied.",
+            "rerun the repair; keep the number of acceptance criteria per requirement unchanged, or rerun from 'srs' "
+            "to regenerate tests with the new numbering.")
 
 
 def _fix_targets(fixes: list[dict], scope: str) -> set[str] | None:
@@ -3044,6 +3137,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         requirements = [r for sec in ("functional", "non_functional")
                         for r in state["srs"].get(sec) or []]
         chunks = [[requirement] for requirement in requirements] or [[]]
+        scope_reqs = state.get("repair_scope")
+        if scope_reqs:
+            # after a scoped repair only the repaired requirements' clusters are re-reviewed (cheap, same prompt)
+            chunks = [c for c in chunks if c and c[0].get("requirement_id") in set(scope_reqs)] or chunks
+            model_config._console_line(
+                f"     - boundary=review-scope round={n} requirements={sorted(scope_reqs)} chunks={len(chunks)} "
+                "decision=re-review-repaired-requirements-only")
         saved = (partials.load("review") if partials else None) or {}
         findings = []
         for index, req_chunk in enumerate(chunks, 1):
@@ -3093,18 +3193,34 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             if key not in seen:
                 seen.add(key); fixes.append(fix)
         fixes, filtered = _filter_decided_stack_findings(fixes, state)
+        fixes, noise_filtered = _filter_review_noise(fixes)
+        if noise_filtered:
+            by_class = {}
+            for f in noise_filtered:
+                by_class[f["noise_class"]] = by_class.get(f["noise_class"], 0) + 1
+            ledger.history.append({"event": "review_filtered", "round": n, "reason": "filtered: noise-class",
+                                   "classes": by_class, "count": len(noise_filtered),
+                                   "fixes": [f["fix"][:200] for f in noise_filtered]})
+            model_config._console_line(
+                f"     - boundary=review-filter round={n} filtered={len(noise_filtered)} reason=noise-class "
+                f"classes={by_class} decision=archived-not-opened (spec/test only; contradiction/absence findings are kept)")
         if filtered:
             ledger.history.append({"event": "review_filtered", "round": n, "reason": "filtered: decided-stack",
                                    "count": len(filtered), "fixes": [f["fix"][:200] for f in filtered]})
             model_config._console_line(
                 f"     - boundary=review-filter round={n} filtered={len(filtered)} reason=decided-stack "
                 "decision=archived-not-opened (spec/test findings asking to remove a technology the architecture decided)")
-        _ledger_review_findings(ledger, state, fixes, n)
+        raised_now = set()
+        _ledger_review_findings(ledger, state, fixes, n, raised_out=raised_now)
+        ledger.close_repaired(
+            f"review:round-{n}", raised_now,
+            lambda f: _target_revision(state, {"scope": f["scope"], "target_ids": f["detail"].get("target_ids") or f["targets"]}),
+            [(fx["target_ids"], fx["fix"]) for fx in fixes])
         # Archive every chunk before partial cleanup.
         if persist and hasattr(persist, "review"):
             persist.review({"round": n, "chunks": {k: v for k, v in saved.items()
                            if k.startswith(f"round-{n}-chunk-")},
-                           "all_chunk_findings": findings, "retained_fixes": fixes, "filtered_decided_stack": filtered,
+                           "all_chunk_findings": findings, "retained_fixes": fixes, "filtered_decided_stack": filtered, "filtered_noise_class": noise_filtered,
                            "aggregation_omitted_count": max(0, len(findings) - len(fixes)),
                            "disposition": "proposed; resolution not verified",
                            "ledger": ledger.to_dict(),
@@ -3113,7 +3229,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             getattr(persist, "ledger", lambda *_: None)(ledger.to_dict())
         if partials:
             partials.clear("review")
-        return {"review_round": n, "review_fixes": fixes, "findings_ledger": ledger.to_dict()}
+        return {"review_round": n, "review_fixes": fixes, "findings_ledger": ledger.to_dict(), "repair_scope": None}
 
     def route_review(state: GenState) -> str:
         # JEV-D10: no unattended replay. Repair runs only when explicitly requested for
@@ -3161,9 +3277,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 data[section]=[originals[r['requirement_id']] if r.get('requirement_id') in accepted else r for r in data.get(section) or []]
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
+        _check_ac_ids_stable(state["srs"], data)
         if persist and data is not state["srs"]:
             persist("srs", data, state)
         return {"srs": data, "review_fixes": fixes, "repair_request": None,
+                "repair_scope": _review_scope_requirements({**state, "srs": data}, fixes),
                 "findings_ledger": state["findings_ledger"]}
 
     def node_assemble(state: GenState) -> dict:

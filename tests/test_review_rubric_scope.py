@@ -73,3 +73,46 @@ def test_review_rerun_replaces_only_its_own_rounds_open_output():
     retired = _ledger_review_findings(ledger, st, [fix("requirement", "R-2 is vague.", ("R-2",))], 1)
     assert len(retired) == 1 and ledger.findings[retired[0]]["state"] == "SUPERSEDED"
     assert ledger.history[-1]["event"] == "review_round_replaced"
+
+
+# ---- measured noise classes (2026-10-02 ledger) ----
+from spec_generator.graph import _filter_review_noise, _noise_class
+
+
+def test_noise_classes_archive_the_measured_phrasings():
+    cases = [
+        ("test", "Ensure test steps do not imply specific technologies; focus on verifying offline functionality.", "A"),
+        ("spec", "Replace 'Service Workers' with a requirement for offline functionality without naming specific technologies.", "A"),
+        ("spec", "Remove 'hardware-accelerated CSS animations' from SPEC-11 to avoid solution language.", "E"),
+        ("test", "Ensure the test does not specify UI elements like 'selector': '#song-list' in the 'execution' section.", "E"),
+        ("test", "Ensure the test definition does not specify 'GitHub Actions' or 'GitHub Pages' as these are solution details.", "E"),
+        ("spec", "Ensure the Feedback Display Component is specified to use React, as per the decided architecture.", "F"),
+        ("test", "Specify that the test runner uses JavaScript, consistent with the decided architecture.", "F"),
+    ]
+    for scope, text, cls in cases:
+        assert (_noise_class(fix(scope, text)) or "").startswith(cls), text
+
+
+def test_noise_filter_keeps_real_findings_and_other_scopes():
+    keep = [
+        ("spec", "SPEC-2 never states what happens when the sync fails."),
+        ("test", "Add a test case for quota exceeded errors in setItem."),
+        ("spec", "SPEC-1 uses Firebase but the architecture decided GitHub Pages; remove the contradiction."),
+        ("test", "T-4 is not traceable to any acceptance criterion (orphan)."),
+        ("spec", "SPEC-3 omits the decided storage technology SQLite per the decided architecture."),
+        ("test", "Quantify 'immediately' in the test case to ensure consistent timing for feedback delivery."),
+        ("spec", "The spec contradicts R-4 and is not solution-agnostic about the decided architecture."),
+    ]
+    for scope, text in keep:
+        assert _noise_class(fix(scope, text)) is None, text
+    # requirement / systemic scopes are never filtered, even with a noise phrase
+    for scope in ("requirement", "systemic"):
+        assert _noise_class(fix(scope, "Ensure R-7 is solution-agnostic without specifying technologies.")) is None
+
+
+def test_filter_review_noise_records_class_and_returns_the_rest():
+    fixes = [fix("test", "Ensure test steps do not imply specific technologies.", ("T-1",)),
+             fix("spec", "SPEC-2 never states what happens when the sync fails.", ("SPEC-2",))]
+    kept, filtered = _filter_review_noise(fixes)
+    assert len(kept) == 1 and "never states" in kept[0]["fix"]
+    assert filtered[0]["noise_class"].startswith("A") and filtered[0]["filtered"].startswith("filtered: noise-class")

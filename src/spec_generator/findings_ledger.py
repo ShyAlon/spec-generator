@@ -171,6 +171,39 @@ class Ledger:
                                  "finding_ids": retired})
         return retired
 
+    def close_repaired(self, round_source: str, raised_ids: set[str], revision_now, raised_texts: list[tuple[list[str], str]],
+                       overlap: float = 0.5) -> list[str]:
+        """A finding the founder explicitly sent to --repair closes (SUPERSEDED, history kept) when the review
+        round that re-checked it (a) sees its target at a different revision and (b) did not raise it again:
+        neither the same finding id nor a finding on the same targets whose wording overlaps (word Jaccard >= overlap).
+        Only findings named in a 'repair' history event qualify. Founder dispositions are never touched.
+        revision_now(finding) -> the current revision of what the finding points at."""
+        repaired = {fid for h in self.history if h.get("event") == "repair" for fid in h.get("finding_ids") or []}
+
+        def words(t: str) -> set[str]:
+            return set(re.findall(r"[a-z0-9']+", t.lower()))
+
+        closed = []
+        for fid in sorted(repaired):
+            f = self.findings.get(fid)
+            if not f or f["state"] != OPEN or fid in raised_ids:
+                continue
+            if revision_now(f) == f["artifact_revision"]:
+                continue                                    # the repair changed nothing it points at: stays open
+            old = words(f["summary"])
+            reraised = any(set(tg) & set(f["targets"]) and old and
+                           len(old & words(tx)) / len(old | words(tx)) >= overlap for tg, tx in raised_texts)
+            if reraised:
+                continue
+            f["state"] = SUPERSEDED
+            f["closure"] = {"reason": "repaired: target changed and the re-review did not raise it again",
+                            "round_source": round_source, "before_revision": f["artifact_revision"],
+                            "after_revision": revision_now(f)}
+            closed.append(fid)
+        if closed:
+            self.history.append({"event": "repair_closed", "source": round_source, "finding_ids": closed})
+        return closed
+
     def refresh(self, current: dict[str, str]) -> list[str]:
         """current: target id -> current artifact revision. A closed finding whose
         target moved on is SUPERSEDED and re-raised OPEN (history is kept)."""
