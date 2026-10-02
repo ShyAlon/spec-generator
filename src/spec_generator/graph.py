@@ -2090,18 +2090,20 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # Schema validation still applies; accepting meaning is not permission
         # to bypass missing IDs/types or traceability.
         from vmodel_contracts.semantic_review import make_review
-        interview_corpus=json.dumps(state['intent_model'])
+        # Every source of the founder's meaning: the interview, the needs derived from it, and the concept of operations.
+        interview_corpus=json.dumps([state['intent_model'],state.get('needs'),state.get('conops')])
         lint=text_qa.srs_draft_findings(data,interview_corpus)
         findings=[]
         for section in ('functional','non_functional'):
             for index,req in enumerate(data.get(section) or []):
                 rid=req.get('requirement_id','?')
-                relevant=[f for f in lint if f['location'].startswith(str(rid)+' field ')]
-                for n,finding in enumerate(relevant):
+                from .lint_reasons import describe,group_findings
+                for n,group in enumerate(group_findings(lint,str(rid))):
+                    # One finding per requirement field and span; every rule that fired is named in its reason.
                     # Review the complete requirement so IDs and acceptance
                     # relations are checked together after remove/replace.
                     findings.append({'finding_id':f'{rid}:{n}','item_id':str(rid),'path':[section,index],
-                        'rule':finding['rule'],'reason':f"{finding['rule']}: {finding['span']}",'original':req})
+                        'rule':'+'.join(dict.fromkeys(g['rule'] for g in group)),'reason':describe(str(rid),group),'original':req})
         review=make_review(state['intent_model']['session_id'],'srs',data,findings)
         reviews={**(state.get('semantic_reviews') or {}),'srs':review.model_dump(mode='json')}
         flags=[]
