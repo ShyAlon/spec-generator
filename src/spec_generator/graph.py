@@ -7,6 +7,7 @@ request), and a deterministic assembly tail that no LLM touches.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re as _re
 from typing import TypedDict
@@ -924,6 +925,30 @@ def _merge_duplicate_adr_pair(slots: list[dict], bodies: dict, left_id: str, rig
     for slot in slots:
         old=slot["decision_id"]; slot["decision_id"]=old_to_new[old]; rebuilt[slot["decision_id"]]=bodies[old]
     bodies.clear(); bodies.update(rebuilt)
+
+
+def _merge_duplicate_adrs_one_at_a_time(slots: list[dict], bodies: dict, pairs: list, assemble, label: str) -> int:
+    """Merge proven duplicate ADR pairs losslessly, ONE pair per scan. A merge renumbers every later ADR id,
+    so ids from the first scan are stale after it: re-assemble and re-scan before each merge.
+    `assemble()` returns the current ArchitectureOverview. Returns how many merges ran."""
+    done = 0
+    for _ in range(len(slots)):
+        if not pairs:
+            break
+        left_id, right_id, subject_score, alternatives_score = pairs[0]
+        if left_id not in bodies or right_id not in bodies:
+            break
+        _merge_duplicate_adr_pair(slots, bodies, left_id, right_id)
+        done += 1
+        model_config._console_line(
+            f"     - boundary={label} compared={left_id},{right_id} subject_overlap={subject_score:.2f} "
+            f"alternatives_overlap={alternatives_score:.2f} "
+            f"decision=merge-drop-{right_id}-retain-{left_id}-renumber reason=proven-duplicate-no-replan")
+        try:
+            pairs = _duplicate_adr_pairs(assemble())
+        except (ValidationError, ModelStructureError, ValueError, KeyError):
+            break
+    return done
 
 
 def _check_adr_substance(arch: ArchitectureOverview) -> None:
@@ -2637,6 +2662,40 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 _check_adr_substance(arch)
             except ModelStructureError as e:
                 gate_failures.append(("ADR-substance", str(e)))
+            if gate_failures and _adr_attempt == 1 and all(name == "ADR-substance" for name, _ in gate_failures):
+                # Duplicate-only failure: the deterministic, lossless merge fixes it without throwing away every
+                # ADR body (a full re-plan cost ~10-15 min and produced NEW duplicates in the 2026-10-02 run).
+                # Anything the merge leaves, or any other gate it disturbs, falls through to the full re-plan.
+                pairs = _duplicate_adr_pairs(arch)
+                if pairs:
+                    snapshot = (copy.deepcopy(part["adr_slots"]), copy.deepcopy(adr_bodies))
+                    _merge_duplicate_adrs_one_at_a_time(
+                        part["adr_slots"], adr_bodies, pairs,
+                        lambda: ArchitectureOverview.model_validate(_assemble_architecture(
+                            session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
+                            comp_slots=part["component_slots"], comp_bodies=comp_bodies,
+                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)),
+                        label="adr-duplicate-merge-first")
+                    try:
+                        merged_try = _assemble_architecture(
+                            session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
+                            comp_slots=part["component_slots"], comp_bodies=comp_bodies,
+                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
+                        arch_try = ArchitectureOverview.model_validate(merged_try)
+                        _check_decision_drivers(arch_try, state["intent_model"], state.get("conops"))
+                        _check_baseline_reconciliation(arch_try, baseline)
+                        _check_conops_execution(arch_try, state.get("conops"))
+                        _check_candidate_grounding(arch_try, state["intent_model"], contested=part.get("contested"))
+                        _check_adr_substance(arch_try)
+                    except (ValidationError, ModelStructureError, ValueError, KeyError) as exc:
+                        part["adr_slots"][:] = snapshot[0]
+                        adr_bodies.clear(); adr_bodies.update(snapshot[1])
+                        model_config._console_line(
+                            f"     - boundary=adr-duplicate-merge-first decision=fall-back-to-replan reason={str(exc)[:200]!r}")
+                    else:
+                        _save()
+                        merged, arch = merged_try, arch_try
+                        gate_failures = []
             if gate_failures:
                 trace="; ".join(f"{name}: {detail}" for name,detail in gate_failures)
                 if _adr_attempt == 1:
