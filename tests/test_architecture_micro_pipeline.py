@@ -973,3 +973,24 @@ def test_assembly_keeps_research_unresolved_and_materializes_every_nfr():
     assert merged["stack_entry_dispositions"] == [{"key":"hosting","status":"research_required","research_brief":"Compare current regional terms"}]
     assert merged["decisions"][0]["technology_selections"][0]["display_name"] == "Python"
     assert merged["non_functionals"] == {"R-NF-1":"p95 latency is measured and held under 300 ms"}
+
+
+def test_greenfield_adr_slots_are_labelled_decide_not_migrate():
+    # 2026-10-02 greenfield run: "migrate-*" slugs on migration=False slots made the model
+    # fill migration-only fields; ~8 repair retries and a full ADR re-plan.
+    from spec_generator.graph import _normalize_adr_slots
+    slots = _required_adr_slots(["stack:language", "stack:deployment_platform"], set())
+    assert [s["slug"] for s in slots] == ["decide-stack-language", "decide-stack-deployment-platform"]
+    assert not any(s["migration"] for s in slots)
+    # existing baseline: only real departures are migrations
+    mixed = _required_adr_slots(["stack:ci_tool", "stack:language"], {"stack:ci_tool"})
+    assert [(s["slug"], s["migration"]) for s in mixed] == [("migrate-stack-ci-tool", True),
+                                                            ("decide-stack-language", False)]
+    # resume: persisted greenfield slots from the old planner are re-derived in place
+    old = [{"slug": "migrate-stack-language", "migration": True, "authorizes": ["stack:language"], "decision_id": "ADR-1"},
+           {"slug": "design-x", "migration": False, "authorizes": [], "decision_id": "ADR-2"}]
+    _normalize_adr_slots(old, existing=False)
+    assert [(s["slug"], s["migration"]) for s in old] == [("decide-stack-language", False), ("design-x", False)]
+    keep = [{"slug": "migrate-stack-ci-tool", "migration": True, "authorizes": ["stack:ci_tool"], "decision_id": "ADR-1"}]
+    _normalize_adr_slots(keep, existing=True)
+    assert keep[0]["slug"] == "migrate-stack-ci-tool" and keep[0]["migration"] is True

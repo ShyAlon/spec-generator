@@ -1115,24 +1115,44 @@ def _validate_component_plan(d, req_ids: list[str], existing: bool = True) -> li
     return slots
 
 
-def _required_adr_slots(authorizable: list[str]) -> list[dict]:
-    """Required migration ADR slots are pipeline-GENERATED, one per declared
-    departure (the 2026-09-12 live phi4 failure: the model planned a
-    ci_tool-absence slot with migration:false and left stack:ci_tool
-    unauthorized - a mechanical obligation the model forgot). Stable
-    human-readable slugs derive from the departure target; the model only
-    adds optional design ADRs and authors the prose."""
+def _required_adr_slots(authorizable: list[str], migrating: set[str] | None = None) -> list[dict]:
+    """Required ADR slots are pipeline-GENERATED, one per authorizable target
+    (the 2026-09-12 live phi4 failure: the model planned a ci_tool-absence slot
+    with migration:false and left stack:ci_tool unauthorized - a mechanical
+    obligation the model forgot). Stable human-readable slugs derive from the
+    target; the model only adds optional design ADRs and authors the prose.
+
+    `migrating` = targets that really depart from an existing baseline. Only
+    those get migration=True and a "migrate-" slug; every other target (all of
+    them in a greenfield session) is an initial decision, slug "decide-". The
+    slug is a label the model reads, so it must never contradict the
+    code-owned flag (2026-10-02 greenfield run: "migrate-*" slugs on
+    migration=False slots made the model fill migration-only fields).
+    None = legacy behaviour, every target is a migration."""
     import re as _re
 
     slots, used = [], set()
     for target in authorizable:
-        base = "migrate-" + _re.sub(r"[^a-z0-9]+", "-", target.lower()).strip("-")
+        is_migration = True if migrating is None else target in migrating
+        base = ("migrate-" if is_migration else "decide-") + _re.sub(r"[^a-z0-9]+", "-", target.lower()).strip("-")
         slug, n = base, 2
         while slug in used:
             slug, n = f"{base}-{n}", n + 1
         used.add(slug)
-        slots.append({"slug": slug, "migration": True, "authorizes": [target]})
+        slots.append({"slug": slug, "migration": is_migration, "authorizes": [target]})
     return slots
+
+
+def _normalize_adr_slots(slots: list[dict], existing: bool) -> None:
+    """Persisted ADR slots must satisfy the current mode's semantics on resume.
+    Greenfield: nothing to migrate FROM, the flag is code-owned (forced False).
+    A non-migration slot never carries a "migrate-" label (renamed "decide-")."""
+    for slot in slots:
+        if not existing:
+            slot["migration"] = False
+        slug = str(slot.get("slug", ""))
+        if not slot.get("migration") and slug.startswith("migrate-"):
+            slot["slug"] = "decide-" + slug.removeprefix("migrate-")
 
 
 def _selected_concept(state_conops: dict | None) -> tuple[str, str] | None:
@@ -2414,9 +2434,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             migrating = [c["name"] for c in part["component_slots"] if c["migration"]] if existing else []
             authorizable = [f"stack:{k}" for k, e in entries.items() if not e.get("status")] + [f"component:{n}" for n in migrating]
             if "adr_slots" not in part:
-                required = _required_adr_slots(authorizable) + _required_concept_adr_slots(state.get("conops"))
-                for slot in required:
-                    slot["migration"] = any(t.removeprefix("stack:") in departures for t in slot["authorizes"]) or any(t.removeprefix("component:") in migrating for t in slot["authorizes"])
+                migrating_targets = {t for t in authorizable
+                                     if (t.startswith("stack:") and t.removeprefix("stack:") in departures)
+                                     or (t.startswith("component:") and t.removeprefix("component:") in migrating)}
+                required = (_required_adr_slots(authorizable, migrating_targets)
+                            + _required_concept_adr_slots(state.get("conops")))
                 req_block = ("\n\nPIPELINE-REQUIRED ADRS (already planned - do not re-propose them; "
                              "these include migration obligations and the founder-confirmed CONOPS "
                              "execution obligation; author their bodies against these fixed slots):\n"
@@ -2434,6 +2456,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     stream_items=False, item_label="plan: decision slots")
                 part["adr_slots"] = _merge_adr_slots(required, optional)
                 _save()
+
+            _normalize_adr_slots(part["adr_slots"], existing)  # resumed sessions: flag + label are code-owned
+            _save()
 
             # 6. One micro-call per ADR: the decision substance.
             adr_bodies = part.setdefault("adr_bodies", {})
@@ -2456,8 +2481,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "options_considered": d.get("options_considered") or [],
                             "baseline_refs": [str(r) for r in d.get("baseline_refs") or []],
                             "migration": slot["migration"],
-                            "evidence": [str(x) for x in d.get("evidence") or []],
-                            "affected_repositories": [str(x) for x in d.get("affected_repositories") or []],
+                            # code owns the migration flag: a non-migration ADR carries neither
+                            # field, whatever the model wrote (never a retry over it)
+                            "evidence": [str(x) for x in d.get("evidence") or []] if slot["migration"] else [],
+                            "affected_repositories": ([str(x) for x in d.get("affected_repositories") or []]
+                                                      if slot["migration"] else []),
                             "executes_concept_ids": [str(x) for x in d.get("executes_concept_ids") or []],
                             "technology_selections": [],
                             "rejected": []}
@@ -2534,8 +2562,6 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             raise ModelStructureError(f"{slot['decision_id']} {body['title']}: migration requires evidence")
                         if not body["affected_repositories"]:
                             raise ModelStructureError(f"{slot['decision_id']} {body['title']}: migration requires affected_repositories")
-                    elif body["evidence"] or body["affected_repositories"]:
-                        raise ModelStructureError(f"{slot['decision_id']} {body['title']}: evidence/affected_repositories only belong on migration ADRs")
                     return body
                 adr_bodies[did] = _call_json(
                     "architecture",
