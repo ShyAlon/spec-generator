@@ -79,6 +79,7 @@ class GenState(TypedDict, total=False):
     gate_feedback: dict[str, str]  # stage -> founder feedback from a review gate (ADR-0019)
     artifact_revisions: dict[str, dict]  # stage -> {saved_at, revision}; gate staleness evidence
     findings_ledger: dict      # JEV-D10: the one findings ledger (open/addressed/rejected), revision-bound
+    repair_scope: list         # requirement ids the next review round re-checks after a scoped repair; absent = all
     repair_request: dict       # JEV-D10: explicit scoped repair {finding_ids, requested_by}; never set by the pipeline itself
 
 
@@ -1965,6 +1966,30 @@ def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], 
     return ledger.retire_review_round(f"review:round-{round_n}", raised)
 
 
+def _review_scope_requirements(state: GenState, fixes: list[dict]) -> list[str] | None:
+    """After a scoped repair, the requirements whose review chunk must be re-run: the repaired requirements plus the
+    requirements linked to repaired specs and tests. None = a systemic or unresolvable repair, review everything."""
+    fixes = _normalized_review_fixes(fixes)
+    if not fixes or any(f["scope"] == "systemic" for f in fixes):
+        return None
+    reqs = {x for f in fixes if f["scope"] == "requirement" for x in f["target_ids"]}
+    spec_ids = {x for f in fixes if f["scope"] == "spec" for x in f["target_ids"]}
+    test_ids = {x for f in fixes if f["scope"] == "test" for x in f["target_ids"]}
+    for spec in state.get("items") or []:
+        if spec.get("spec_id") in spec_ids:
+            reqs |= set(spec.get("requirement_ids") or [])
+    if test_ids:
+        crit = {c.get("criterion_id"): r.get("requirement_id") for sec in ("functional", "non_functional")
+                for r in (state.get("srs") or {}).get(sec) or [] for c in r.get("acceptance") or []}
+        spec_req = {i.get("spec_id"): i.get("requirement_ids") or [] for i in state.get("items") or []}
+        for t in state.get("tests") or []:
+            if t.get("test_id") in test_ids:
+                if t.get("criterion_id") in crit:
+                    reqs.add(crit[t["criterion_id"]])
+                reqs |= set(spec_req.get(t.get("spec_id"), []))
+    return sorted(reqs) or None
+
+
 def _fix_targets(fixes: list[dict], scope: str) -> set[str] | None:
     fixes = _normalized_review_fixes(fixes)
     if any(f["scope"] == "systemic" for f in fixes):
@@ -3090,6 +3115,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         requirements = [r for sec in ("functional", "non_functional")
                         for r in state["srs"].get(sec) or []]
         chunks = [[requirement] for requirement in requirements] or [[]]
+        scope_reqs = state.get("repair_scope")
+        if scope_reqs:
+            # after a scoped repair only the repaired requirements' clusters are re-reviewed (cheap, same prompt)
+            chunks = [c for c in chunks if c and c[0].get("requirement_id") in set(scope_reqs)] or chunks
+            model_config._console_line(
+                f"     - boundary=review-scope round={n} requirements={sorted(scope_reqs)} chunks={len(chunks)} "
+                "decision=re-review-repaired-requirements-only")
         saved = (partials.load("review") if partials else None) or {}
         findings = []
         for index, req_chunk in enumerate(chunks, 1):
@@ -3175,7 +3207,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             getattr(persist, "ledger", lambda *_: None)(ledger.to_dict())
         if partials:
             partials.clear("review")
-        return {"review_round": n, "review_fixes": fixes, "findings_ledger": ledger.to_dict()}
+        return {"review_round": n, "review_fixes": fixes, "findings_ledger": ledger.to_dict(), "repair_scope": None}
 
     def route_review(state: GenState) -> str:
         # JEV-D10: no unattended replay. Repair runs only when explicitly requested for
@@ -3226,6 +3258,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if persist and data is not state["srs"]:
             persist("srs", data, state)
         return {"srs": data, "review_fixes": fixes, "repair_request": None,
+                "repair_scope": _review_scope_requirements({**state, "srs": data}, fixes),
                 "findings_ledger": state["findings_ledger"]}
 
     def node_assemble(state: GenState) -> dict:
