@@ -204,6 +204,31 @@ def _apply_ledger_actions(graph, cfg, prior, args):
     return graph.get_state(cfg).values
 
 
+def _resolve_repair_proposal(graph, cfg, prior, args, persist):
+    """Founder decision on a pending repair proposal. Approve applies the proposed SRS and continues at items;
+    reject drops it and ends at assembly (the findings stay open)."""
+    from .findings_ledger import Ledger
+    proposal = (prior or {}).get("repair_proposal")
+    if not proposal:
+        raise UserFacingError("there is no pending repair proposal.", "nothing was changed.",
+                              "run --repair first; it stops with a proposal for you to read.")
+    if args.approve_repair and args.reject_repair:
+        raise UserFacingError("--approve-repair and --reject-repair are mutually exclusive.", "nothing was changed.", "pick one.")
+    ledger = Ledger.from_dict(prior.get("findings_ledger"))
+    verdict = "approved" if args.approve_repair else "rejected"
+    ledger.history.append({"event": f"repair_{verdict}", "finding_ids": proposal.get("finding_ids") or [],
+                           "changed": sorted(proposal.get("changed") or {}), "actor": "founder"})
+    if args.approve_repair:
+        state = {**prior, "srs": proposal["srs"], "repair_proposal": None, "findings_ledger": ledger.to_dict()}
+        persist("srs", proposal["srs"], state)
+        graph.update_state(cfg, {"srs": proposal["srs"], "repair_proposal": None,
+                                 "findings_ledger": ledger.to_dict()}, as_node="apply_fixes")
+    else:
+        graph.update_state(cfg, {"repair_proposal": None, "repair_scope": None, "findings_ledger": ledger.to_dict()},
+                           as_node="review")
+    return graph.get_state(cfg).values
+
+
 def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
                   conops_present: bool = True, architecture_lifecycle=None):
     """The incremental bundle writer (his ask 2026-09-09: 'persist them
@@ -263,6 +288,10 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
         data[spec_id] = envelope
         _atomic_write(path, json.dumps(data, indent=2))
     _persist.grounding = _grounding
+    def _repair_proposal_files(proposal: dict, text: str) -> None:
+        _atomic_write(outdir / "repair-proposal.json", json.dumps(proposal, indent=2))
+        _atomic_write(outdir / "repair-proposal.md", text)
+    _persist.repair_proposal = _repair_proposal_files
     _persist.ledger = lambda data: _atomic_write(outdir / "findings-ledger.json", json.dumps(data, indent=2))
     return _persist
 
@@ -794,6 +823,10 @@ def main() -> None:
                     help="JEV-D10: apply a founder-authored disposition script (exact selectors, hash-bound) to the findings ledger")
     ap.add_argument("--repair", default=None, metavar="FINDING_ID[,FINDING_ID]",
                     help="JEV-D10: explicit scoped repair of the named open review findings (bounded attempts; never closes a finding)")
+    ap.add_argument("--approve-repair", action="store_true",
+                    help="apply the pending repair proposal (repair-proposal.md) and continue to items, tests, review")
+    ap.add_argument("--reject-repair", action="store_true",
+                    help="drop the pending repair proposal; the SRS stays as it was and findings stay open")
     ap.add_argument("--export-handoff",action="store_true",help="zero-LLM validated coding-agent handoff from completed outputs")
     ap.add_argument("--preflight", action="store_true",
                     help="validate inputs and checkpoint compatibility without building a model or spending a call")
@@ -946,10 +979,11 @@ def main() -> None:
         except ProviderUnavailable as exc:
             raise UserFacingError(f"Jev grounding is unavailable: {exc}", "no fallback provider is used.",
                                   "install typesafe-sdk and set TYPESAFE_API_KEY, or run with --grounding off (recorded as NOT CHECKED).") from exc
+    persist_fn = _make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
+                               conops_present=conops is not None,
+                               architecture_lifecycle=architecture_lifecycle)
     graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding,
-                        persist=_make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
-                                              conops_present=conops is not None,
-                                              architecture_lifecycle=architecture_lifecycle),
+                        persist=persist_fn,
                         partials=partials, stop_after=args.to_stage)
     from . import model_config as _mc
 
@@ -962,6 +996,12 @@ def main() -> None:
           "as each stage completes)\n", file=sys.stderr)
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
+    if prior and prior.get("repair_proposal") and not (args.approve_repair or args.reject_repair):
+        raise UserFacingError("a repair proposal is waiting for your decision.",
+                              f"the repaired requirements are in {outdir / 'repair-proposal.md'} and are NOT applied.",
+                              "read it, then rerun with --approve-repair (apply and continue) or --reject-repair (drop it).")
+    if args.approve_repair or args.reject_repair:
+        prior = _resolve_repair_proposal(graph, cfg, prior, args, persist_fn)
     if args.dispose or args.repair:
         prior = _apply_ledger_actions(graph, cfg, prior, args)
     resume = bool(prior)

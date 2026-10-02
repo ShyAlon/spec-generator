@@ -79,6 +79,7 @@ class GenState(TypedDict, total=False):
     gate_feedback: dict[str, str]  # stage -> founder feedback from a review gate (ADR-0019)
     artifact_revisions: dict[str, dict]  # stage -> {saved_at, revision}; gate staleness evidence
     findings_ledger: dict      # JEV-D10: the one findings ledger (open/addressed/rejected), revision-bound
+    repair_proposal: dict      # repaired SRS awaiting founder approval {finding_ids, changed, unchanged_targets, srs}; applied only by --approve-repair
     repair_scope: list         # requirement ids the next review round re-checks after a scoped repair; absent = all
     repair_request: dict       # JEV-D10: explicit scoped repair {finding_ids, requested_by}; never set by the pipeline itself
 
@@ -1990,6 +1991,39 @@ def _review_scope_requirements(state: GenState, fixes: list[dict]) -> list[str] 
     return sorted(reqs) or None
 
 
+def _repair_proposal(state: GenState, data: dict, fixes: list[dict], finding_ids: list[str]) -> dict:
+    """Before/after of exactly the requirements the repair touched. Nothing is applied: the founder reads this,
+    then --approve-repair applies it or --reject-repair drops it. `unchanged_targets` are repair targets whose text
+    came back identical (the model changed nothing, or a reviewed-SRS decision restored the accepted text)."""
+    def by_id(srs):
+        return {r.get("requirement_id"): r for sec in ("functional", "non_functional")
+                for r in (srs or {}).get(sec) or []}
+    old, new = by_id(state.get("srs")), by_id(data)
+    changed = {rid: {"before": old.get(rid), "after": new.get(rid)} for rid in sorted(new) if old.get(rid) != new.get(rid)}
+    targets = _fix_targets(fixes, "requirement")
+    unchanged = sorted(t for t in (targets or set()) if t in new and t not in changed)
+    return {"finding_ids": list(finding_ids), "changed": changed, "unchanged_targets": unchanged, "srs": data}
+
+
+def render_repair_proposal(proposal: dict) -> str:
+    lines = ["# Repair proposal (not applied)", "",
+             f"Findings: {', '.join(proposal.get('finding_ids') or [])}", ""]
+    for rid, pair in (proposal.get("changed") or {}).items():
+        for label in ("before", "after"):
+            req = pair.get(label) or {}
+            lines.append(f"## {rid} {label}")
+            lines.append(str(req.get("statement") or "(none)"))
+            for c in req.get("acceptance") or []:
+                lines.append(f"- {c.get('criterion_id')}: {c.get('statement')}")
+            lines.append("")
+    if proposal.get("unchanged_targets"):
+        lines += ["## Targets that came back unchanged",
+                  ", ".join(proposal["unchanged_targets"]),
+                  "(the model changed nothing, or a reviewed-SRS decision restored the accepted text)", ""]
+    lines += ["Apply with --approve-repair, drop with --reject-repair."]
+    return "\n".join(lines) + "\n"
+
+
 def _check_ac_ids_stable(before: dict, after: dict) -> None:
     """Acceptance-criterion ids are numbered sequentially across the whole SRS. A repair that adds or removes a
     criterion shifts every later AC id, and tests are linked by criterion_id: they would silently point at the wrong
@@ -3278,9 +3312,20 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
         _check_ac_ids_stable(state["srs"], data)
-        if persist and data is not state["srs"]:
-            persist("srs", data, state)
-        return {"srs": data, "review_fixes": fixes, "repair_request": None,
+        if data is state["srs"]:
+            # spec/test-only repair: no SRS text changes, so there is nothing to approve - continue to items
+            return {"review_fixes": fixes, "repair_request": None,
+                    "repair_scope": _review_scope_requirements(state, fixes),
+                    "findings_ledger": state["findings_ledger"]}
+        proposal = _repair_proposal(state, data, fixes, [f["finding_id"] for f in chosen])
+        if persist is not None:
+            getattr(persist, "repair_proposal", lambda *_: None)(proposal, render_repair_proposal(proposal))
+        model_config._console_line(
+            f"     - boundary=repair-proposal changed={sorted(proposal['changed'])} "
+            f"unchanged_targets={proposal['unchanged_targets']} decision=stopped-for-founder-approval "
+            "(--approve-repair applies it, --reject-repair drops it)")
+        # the repaired SRS is NOT applied here: the founder approves the before/after first
+        return {"repair_proposal": proposal, "review_fixes": fixes, "repair_request": None,
                 "repair_scope": _review_scope_requirements({**state, "srs": data}, fixes),
                 "findings_ledger": state["findings_ledger"]}
 
@@ -3565,7 +3610,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     edge("items", "tests")
     edge("tests", "review")
     g.add_conditional_edges("review", route_review, {"apply_fixes": "apply_fixes", "assemble": "assemble"})
-    g.add_edge("apply_fixes", "items")
+    g.add_conditional_edges("apply_fixes", lambda st: "stop" if st.get("repair_proposal") else "items",
+                            {"stop": END, "items": "items"})
     g.add_edge("assemble", END)
     return g.compile(checkpointer=checkpointer or MemorySaver(serde=checkpoint_serde()))
 
