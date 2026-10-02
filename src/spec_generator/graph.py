@@ -2774,14 +2774,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         json.dumps({"adr_slots": part.get("adr_slots"), "adr_bodies": adr_bodies}, indent=2), detail)
                 duplicate_pairs = _duplicate_adr_pairs(arch)
                 if gate_failures and all(name == "ADR-substance" for name, _ in gate_failures) and duplicate_pairs:
-                    for left_id, right_id, subject_score, alternatives_score in duplicate_pairs:
-                        if left_id in adr_bodies and right_id in adr_bodies:
-                            _merge_duplicate_adr_pair(part["adr_slots"], adr_bodies, left_id, right_id)
-                            model_config._console_line(
-                                f"     - boundary=adr-duplicate-fallback compared={left_id},{right_id} "
-                                f"subject_overlap={subject_score:.2f} subject_threshold=0.30 "
-                                f"alternatives_overlap={alternatives_score:.2f} alternatives_threshold=0.65 "
-                                f"decision=merge-drop-{right_id}-retain-{left_id}-renumber reason=repair-exhausted-proven-duplicate")
+                    # One pair per scan: each merge renumbers ADR ids, so the first scan's pairs go stale.
+                    _merge_duplicate_adrs_one_at_a_time(
+                        part["adr_slots"], adr_bodies, duplicate_pairs,
+                        lambda: ArchitectureOverview.model_validate(_assemble_architecture(
+                            session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
+                            comp_slots=part["component_slots"], comp_bodies=comp_bodies,
+                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)),
+                        label="adr-duplicate-fallback")
                     _save()
                     merged = _assemble_architecture(
                         session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
