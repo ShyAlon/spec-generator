@@ -66,3 +66,21 @@ def test_founder_answers_reach_architecture_prompts(monkeypatch):
  monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**kw:ArchModel(stage,kw.get('schema')) if stage=='architecture' else FakeModel(stage))
  result=build_graph(UsageLog('s'),stop_after='architecture').invoke({'intent_model':{**INTENT,'founder_register':register.model_dump()},'system_baseline':SYSTEM_BASELINE},{'configurable':{'thread_id':'founder-answer'}})
  assert result['architecture'];assert any('Use restrained navy typography' in p and 'decided answers are binding' in p for p in prompts)
+
+
+def test_reviewed_srs_is_not_reapplied_on_a_second_resume():
+ # a re-apply writes the checkpoint AS the node before architecture, which re-queues a finished architecture
+ from spec_generator.cli import _srs_review_already_applied,_srs_candidate_digest,SRS_APPLIED_KEY
+ r=review();cand=r.candidate
+ first={'srs':r.candidate,'semantic_reviews':{'srs':r.model_dump()}}
+ # legacy checkpoint (no marker) whose requirements already equal the candidate: skip
+ assert _srs_review_already_applied(first,cand)
+ # checkpoint still holding the pre-review SRS: apply
+ edited={**cand,'functional':[{**cand['functional'][0],'statement':'The system shall show a widget.'}]}
+ assert not _srs_review_already_applied({'srs':edited,'semantic_reviews':{'srs':r.model_dump()}},cand)
+ # marker written by the first apply wins even if later stages changed the SRS
+ marked={'srs':edited,'semantic_reviews':{'srs':r.model_dump(),SRS_APPLIED_KEY:_srs_candidate_digest(cand)}}
+ assert _srs_review_already_applied(marked,cand)
+ # a different reviewed candidate (new decisions) is applied again
+ other={**cand,'functional':[{**cand['functional'][0],'statement':'The system shall show status.'}]}
+ assert not _srs_review_already_applied(marked,other)
