@@ -86,9 +86,17 @@ STAGE_PROMPTS = {
     "items_body": "Write the body of ONE item spec, for a coding agent to execute against: interface, "
                   "data model, behaviors, error cases, non-functionals. Markdown. No marketing "
                   "language. Reference requirements by id; never restate their text.",
-    "review": "Review pass {n}: find gaps, contradictions, orphan requirements, uncheckable criteria, "
-              "solution language in the SRS, downstream text that restates requirements. "
-              "Return a JSON list of typed fixes {{scope, target_ids, fix}}, or []. scope is requirement|spec|test|systemic. Use exact R-/SPEC-/T- ids for a scoped fix; use systemic with [] only when no safe target exists.",
+    "review": "Review pass {n}: find gaps, contradictions, orphan requirements, uncheckable criteria, and downstream "
+              "text that restates requirements. Rules depend on the artifact's scope. "
+              "requirement (the SRS): flag solution language - named technologies, UI widgets, APIs - because requirements stay "
+              "solution-agnostic. "
+              "spec and test: the architecture has ALREADY DECIDED the stack (the DECIDED ARCHITECTURE block is binding). "
+              "Naming the decided technologies, APIs, selectors and HTTP methods in a spec or a test is REQUIRED. Never flag it "
+              "and never ask to remove, replace, abstract or avoid it. For spec and test flag ONLY: missing behavior, "
+              "contradictions with the SRS or with the decided architecture, orphan items, uncheckable items, and restated "
+              "requirement text. A technology that is NOT in the decided architecture may be flagged as a contradiction. "
+              "Return a JSON list of typed fixes {{scope, target_ids, fix}}, or []. scope is requirement|spec|test|systemic. "
+              "Use exact R-/SPEC-/T- ids for a scoped fix; use systemic with [] only when no safe target exists.",
 }
 
 
