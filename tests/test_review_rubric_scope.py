@@ -50,3 +50,26 @@ def test_requirement_and_systemic_findings_are_never_filtered_and_filtered_ones_
     ledger = Ledger()
     _ledger_review_findings(ledger, {"srs": {}, "items": [], "tests": []}, kept, 1)
     assert len(ledger.open_findings()) == 2 and not any("T-1" in f["targets"] for f in ledger.open_findings())
+
+
+def test_review_rerun_replaces_only_its_own_rounds_open_output():
+    st = {"srs": {}, "items": [], "tests": []}
+    ledger = Ledger()
+    old = [fix("requirement", "R-1 is vague.", ("R-1",)), fix("requirement", "R-2 is vague.", ("R-2",))]
+    _ledger_review_findings(ledger, st, old, 1)
+    r2 = _ledger_review_findings(ledger, st, [fix("requirement", "R-9 is vague.", ("R-9",))], 2)   # other round: kept
+    ids1 = [f["finding_id"] for f in ledger.open_findings() if f["sources"] == ["review:round-1"]]
+    assert len(ids1) == 2 and r2 == []
+    # founder already rejected one of round 1's findings: that decision is not touched
+    ledger.founder_dispose(ids1[0], actor="founder", source="founder-script", rationale="ok",
+                           artifact_revision=ledger.findings[ids1[0]]["artifact_revision"])
+    # the re-run raises R-2 again plus a new one; R-1 is no longer raised
+    retired = _ledger_review_findings(ledger, st, [fix("requirement", "R-2 is vague.", ("R-2",)),
+                                                   fix("requirement", "R-3 is vague.", ("R-3",))], 1)
+    states = {f["summary"]: f["state"] for f in ledger.findings.values()}
+    assert states["R-1 is vague."] == "REJECTED" and states["R-2 is vague."] == "OPEN"
+    assert states["R-3 is vague."] == "OPEN" and states["R-9 is vague."] == "OPEN" and retired == []
+    # now a finding that is only open and not re-raised is replaced, with history
+    retired = _ledger_review_findings(ledger, st, [fix("requirement", "R-2 is vague.", ("R-2",))], 1)
+    assert len(retired) == 1 and ledger.findings[retired[0]]["state"] == "SUPERSEDED"
+    assert ledger.history[-1]["event"] == "review_round_replaced"

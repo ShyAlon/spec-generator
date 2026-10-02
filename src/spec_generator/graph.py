@@ -1905,15 +1905,18 @@ def _target_revision(state: GenState, fix: dict) -> str:
     return revision_of(text)
 
 
-def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], round_n: int) -> None:
+def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], round_n: int) -> list[str]:
     """Every LLM review finding becomes ledger data. Dedup precedes any limit and the
     ledger is never sliced. These are semantic: they close only by founder disposition."""
+    raised = set()
     for fix in fixes:
-        ledger.add(rule_id="review.llm", rule_version=f"review-round-{round_n}", source=f"review:round-{round_n}",
+        raised.add(ledger.add(rule_id="review.llm", rule_version=f"review-round-{round_n}", source=f"review:round-{round_n}",
                    kind="semantic", scope=fix["scope"], targets=fix["target_ids"] or ["systemic"],
                    artifact_revision=_target_revision(state, fix), summary=fix["fix"],
                    evidence=[{"id": "review:finding", "sha256": revision_of(fix["fix"]), "excerpt": fix["fix"][:320]}],
-                   detail={"scope": fix["scope"], "target_ids": fix["target_ids"], "fix": fix["fix"]})
+                   detail={"scope": fix["scope"], "target_ids": fix["target_ids"], "fix": fix["fix"]}))
+    # a re-run of this round replaces its earlier output (not the founder's decisions, not other rounds)
+    return ledger.retire_review_round(f"review:round-{round_n}", raised)
 
 
 def _fix_targets(fixes: list[dict], scope: str) -> set[str] | None:

@@ -155,6 +155,22 @@ class Ledger:
             f["superseded_by"] = new_id
             self.findings[new_id]["supersedes"] = fid
 
+    def retire_review_round(self, source: str, keep: set[str]) -> list[str]:
+        """A re-run of review round N replaces that round's own output. OPEN review.llm findings that came
+        ONLY from this round's source and were not raised again are SUPERSEDED (history kept, never deleted).
+        Findings from other rounds, other rules, or with another source are untouched."""
+        retired = []
+        for fid, f in self.findings.items():
+            if (f["state"] == OPEN and f["rule_id"] == "review.llm" and f.get("sources") == [source]
+                    and fid not in keep):
+                f["state"] = SUPERSEDED
+                f["closure"] = {"reason": "review round re-run replaced this output", "round_source": source}
+                retired.append(fid)
+        if retired:
+            self.history.append({"event": "review_round_replaced", "source": source, "count": len(retired),
+                                 "finding_ids": retired})
+        return retired
+
     def refresh(self, current: dict[str, str]) -> list[str]:
         """current: target id -> current artifact revision. A closed finding whose
         target moved on is SUPERSEDED and re-raised OPEN (history is kept)."""
