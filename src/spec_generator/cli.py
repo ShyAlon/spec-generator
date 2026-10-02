@@ -197,11 +197,38 @@ def _apply_ledger_actions(graph, cfg, prior, args):
             if unknown:
                 raise LedgerError(f"unknown finding id(s): {', '.join(unknown)}")
             update["repair_request"] = {"finding_ids": ids, "requested_by": "founder"}
+            update["repair_quick"] = bool(getattr(args, "quick", False))
+            update["quick_stop"] = False
     except (LedgerError, OSError, ValueError) as exc:
         raise UserFacingError(f"ledger action refused: {exc}", "nothing was changed.",
                               "fix the script or ids and rerun.") from exc
     graph.update_state(cfg, update, as_node="review")
     return graph.get_state(cfg).values
+
+
+def _quick_summary(before: dict | None, after: dict, outdir) -> str:
+    """What a quick repair run leaves behind: what closed, what is still open. Printed and saved."""
+    from collections import Counter
+    from .findings_ledger import Ledger
+    new = Ledger.from_dict(after)
+    old_open = {f["finding_id"] for f in Ledger.from_dict(before).open_findings()} if before else set()
+    closed = [f for f in new.findings.values()
+              if f["state"] == "SUPERSEDED" and (f.get("closure") or {}).get("reason", "").startswith("repaired")]
+    opened = [f for f in new.open_findings()]
+    fresh = [f for f in opened if f["finding_id"] not in old_open]
+    by = Counter((f["scope"]) for f in opened)
+    lines = ["QUICK REPAIR RESULT (evidence run: items and tests were NOT regenerated; no bundle assembled)", "",
+             f"Closed by repair (target changed, not raised again): {len(closed)}"]
+    lines += [f"  - {f['finding_id']} {f['scope']} {','.join(f['targets'])}: {f['summary'][:110]}" for f in closed]
+    lines += ["", f"Still OPEN: {len(opened)}  by scope: {dict(by)}  (new this run: {len(fresh)})"]
+    lines += [f"  - {f['finding_id']} {f['scope']} {','.join(f['targets'])}: {f['summary'][:110]}"
+              for f in sorted(opened, key=lambda x: (x['scope'], x['targets']))]
+    last = [h for h in new.history if h.get("event") == "repair_auto_approved"]
+    if last and last[-1].get("unchanged_targets"):
+        lines += ["", "Repair targets that came back UNCHANGED (model changed nothing, or an accepted SRS decision restored "
+                      f"the text): {', '.join(last[-1]['unchanged_targets'])}"]
+    lines += ["", f"Before/after of the SRS fix: {outdir / 'repair-proposal.md'}"]
+    return "\n".join(lines) + "\n"
 
 
 def _resolve_repair_proposal(graph, cfg, prior, args, persist):
@@ -823,6 +850,10 @@ def main() -> None:
                     help="JEV-D10: apply a founder-authored disposition script (exact selectors, hash-bound) to the findings ledger")
     ap.add_argument("--repair", default=None, metavar="FINDING_ID[,FINDING_ID]",
                     help="JEV-D10: explicit scoped repair of the named open review findings (bounded attempts; never closes a finding)")
+    ap.add_argument("--quick", action="store_true",
+                    help="with --repair: no stops. Auto-apply the SRS fix (before/after saved as evidence), skip items and tests, "
+                         "re-review only the repaired requirements, then stop and print what closed and what is still open. "
+                         "Evidence run: the bundle is NOT assembled and items/tests are stale until a full run")
     ap.add_argument("--approve-repair", action="store_true",
                     help="apply the pending repair proposal (repair-proposal.md) and continue to items, tests, review")
     ap.add_argument("--reject-repair", action="store_true",
@@ -1002,6 +1033,14 @@ def main() -> None:
                               "read it, then rerun with --approve-repair (apply and continue) or --reject-repair (drop it).")
     if args.approve_repair or args.reject_repair:
         prior = _resolve_repair_proposal(graph, cfg, prior, args, persist_fn)
+    if args.quick and not args.repair:
+        raise UserFacingError("--quick only applies to --repair.", "nothing was changed.",
+                              "use --repair <finding ids> --quick, or drop --quick.")
+    if prior and prior.get("quick_stop") and not args.quick:
+        # a finished quick run ends the graph at its review; any later run starts clean
+        graph.update_state(cfg, {"quick_stop": False, "repair_quick": False}, as_node="apply_fixes")  # resume at items: regenerate what the quick run skipped
+        prior = graph.get_state(cfg).values
+    prior_ledger_before_run = (prior or {}).get("findings_ledger")
     if args.dispose or args.repair:
         prior = _apply_ledger_actions(graph, cfg, prior, args)
     resume = bool(prior)
@@ -1158,6 +1197,11 @@ def main() -> None:
             {"intent_model": intent, "system_baseline": baseline, "conops": conops}, cfg)
 
     refresh_docs(outdir, intent=intent, conops=conops, state=result)
+    if result.get("quick_stop"):
+        text = _quick_summary(prior_ledger_before_run, result.get("findings_ledger"), outdir)
+        _atomic_write(outdir / "quick-repair-summary.md", text)
+        print(text)
+        return
     if args.to_stage:
         print(f"Stopped after stage '{args.to_stage}' as requested. Checkpoint and stage artifacts are resumable in {outdir}.")
         return

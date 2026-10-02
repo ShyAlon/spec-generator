@@ -79,6 +79,8 @@ class GenState(TypedDict, total=False):
     gate_feedback: dict[str, str]  # stage -> founder feedback from a review gate (ADR-0019)
     artifact_revisions: dict[str, dict]  # stage -> {saved_at, revision}; gate staleness evidence
     findings_ledger: dict      # JEV-D10: the one findings ledger (open/addressed/rejected), revision-bound
+    repair_quick: bool         # --quick repair: auto-approve the SRS fix, skip items/tests, re-review the repaired requirements, stop
+    quick_stop: bool           # a quick repair finished its review: end here (no assembly) until the founder decides
     repair_proposal: dict      # repaired SRS awaiting founder approval {finding_ids, changed, unchanged_targets, srs}; applied only by --approve-repair
     repair_scope: list         # requirement ids the next review round re-checks after a scoped repair; absent = all
     repair_request: dict       # JEV-D10: explicit scoped repair {finding_ids, requested_by}; never set by the pipeline itself
@@ -3164,7 +3166,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if state.get("findings_ledger") is None and state.get("items"):
             # A checkpoint that predates JEV-D10 has no ledger: it is UNREVIEWED, not clean.
             _accept_all(state["items"], ledger, _content_sink(persist))
-        _ground_items(state, ledger, grounding, persist)
+        if state.get("repair_quick"):
+            model_config._console_line("     - boundary=grounding decision=skipped-quick-repair (specs and tests unchanged by an SRS-only repair)")
+        else:
+            _ground_items(state, ledger, grounding, persist)
         # One requirement per review call bounds output by construction. The
         # prior two-requirement batches could exceed 8192 completion tokens on
         # dense vertical slices. Requirement remains the semantic join key.
@@ -3263,7 +3268,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             getattr(persist, "ledger", lambda *_: None)(ledger.to_dict())
         if partials:
             partials.clear("review")
-        return {"review_round": n, "review_fixes": fixes, "findings_ledger": ledger.to_dict(), "repair_scope": None}
+        return {"review_round": n, "review_fixes": fixes, "findings_ledger": ledger.to_dict(), "repair_scope": None,
+                "quick_stop": bool(state.get("repair_quick")), "repair_quick": False}
 
     def route_review(state: GenState) -> str:
         # JEV-D10: no unattended replay. Repair runs only when explicitly requested for
@@ -3275,6 +3281,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             attempts = sum(1 for h in ledger.history if h.get("event") == "repair")
             if attempts < REPAIR_ATTEMPT_CEILING:
                 return "apply_fixes"
+        if state.get("quick_stop"):
+            return "stop"          # a quick repair ends at its review evidence; assembly is a separate, later run
         return "assemble"
 
     def node_apply_fixes(state: GenState) -> dict:
@@ -3318,6 +3326,22 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     "repair_scope": _review_scope_requirements(state, fixes),
                     "findings_ledger": state["findings_ledger"]}
         proposal = _repair_proposal(state, data, fixes, [f["finding_id"] for f in chosen])
+        if state.get("repair_quick"):
+            # --quick: the founder asked for no stops. Apply the SRS fix, keep the before/after on disk as evidence
+            # (never a gate), skip items/tests, and let the scoped review re-check the repaired requirements.
+            ledger.history.append({"event": "repair_auto_approved", "finding_ids": proposal["finding_ids"],
+                                   "changed": sorted(proposal["changed"]), "unchanged_targets": proposal["unchanged_targets"],
+                                   "mode": "quick"})
+            if persist is not None:
+                getattr(persist, "repair_proposal", lambda *_: None)(proposal, render_repair_proposal(proposal))
+                persist("srs", data, state)
+            model_config._console_line(
+                f"     - boundary=repair-quick changed={sorted(proposal['changed'])} "
+                f"unchanged_targets={proposal['unchanged_targets']} decision=auto-approved-no-stop "
+                "(items and tests NOT regenerated; this run ends at the scoped review)")
+            return {"srs": data, "review_fixes": fixes, "repair_request": None,
+                    "repair_scope": _review_scope_requirements({**state, "srs": data}, fixes),
+                    "findings_ledger": ledger.to_dict()}
         if persist is not None:
             getattr(persist, "repair_proposal", lambda *_: None)(proposal, render_repair_proposal(proposal))
         model_config._console_line(
@@ -3609,9 +3633,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         edge("architecture", "items")
     edge("items", "tests")
     edge("tests", "review")
-    g.add_conditional_edges("review", route_review, {"apply_fixes": "apply_fixes", "assemble": "assemble"})
-    g.add_conditional_edges("apply_fixes", lambda st: "stop" if st.get("repair_proposal") else "items",
-                            {"stop": END, "items": "items"})
+    g.add_conditional_edges("review", route_review, {"apply_fixes": "apply_fixes", "assemble": "assemble", "stop": END})
+    g.add_conditional_edges(
+        "apply_fixes",
+        lambda st: "stop" if st.get("repair_proposal") else ("review" if st.get("repair_quick") else "items"),
+        {"stop": END, "items": "items", "review": "review"})
     g.add_edge("assemble", END)
     return g.compile(checkpointer=checkpointer or MemorySaver(serde=checkpoint_serde()))
 
