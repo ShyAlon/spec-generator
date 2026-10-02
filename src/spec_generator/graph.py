@@ -7,6 +7,7 @@ request), and a deterministic assembly tail that no LLM touches.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re as _re
 from typing import TypedDict
@@ -926,6 +927,30 @@ def _merge_duplicate_adr_pair(slots: list[dict], bodies: dict, left_id: str, rig
     bodies.clear(); bodies.update(rebuilt)
 
 
+def _merge_duplicate_adrs_one_at_a_time(slots: list[dict], bodies: dict, pairs: list, assemble, label: str) -> int:
+    """Merge proven duplicate ADR pairs losslessly, ONE pair per scan. A merge renumbers every later ADR id,
+    so ids from the first scan are stale after it: re-assemble and re-scan before each merge.
+    `assemble()` returns the current ArchitectureOverview. Returns how many merges ran."""
+    done = 0
+    for _ in range(len(slots)):
+        if not pairs:
+            break
+        left_id, right_id, subject_score, alternatives_score = pairs[0]
+        if left_id not in bodies or right_id not in bodies:
+            break
+        _merge_duplicate_adr_pair(slots, bodies, left_id, right_id)
+        done += 1
+        model_config._console_line(
+            f"     - boundary={label} compared={left_id},{right_id} subject_overlap={subject_score:.2f} "
+            f"alternatives_overlap={alternatives_score:.2f} "
+            f"decision=merge-drop-{right_id}-retain-{left_id}-renumber reason=proven-duplicate-no-replan")
+        try:
+            pairs = _duplicate_adr_pairs(assemble())
+        except (ValidationError, ModelStructureError, ValueError, KeyError):
+            break
+    return done
+
+
 def _check_adr_substance(arch: ArchitectureOverview) -> None:
     """Selections and distinct ADR records must agree with their prose.
 
@@ -1792,6 +1817,61 @@ REVIEW_MAX_TARGET_IDS = 8
 REVIEW_MAX_FIX_CHARS = 320
 
 
+_REMOVAL_INTENT = _re.compile(
+    r"\b(remove|replace|avoid|drop|eliminate|omit|delete|abstract|generali[sz]e|(?:do not|don't|should not|must not|never) "
+    r"(?:name|mention|reference|specify|prescribe|use|include)|without (?:naming|mentioning|referencing)|instead of|"
+    r"solution[- ]agnostic|implementation[- ]agnostic|technology[- ]neutral|vendor[- ]neutral)\b", _re.I)
+
+
+def _decided_technologies(state: GenState) -> list[str]:
+    """Names the architecture decided: stack values and the technologies its ADRs selected."""
+    arch = state.get("architecture") or {}
+    names: list[str] = []
+    for e in arch.get("stack_entries") or []:
+        v = str((e or {}).get("value") or "").strip()
+        if len(v) >= 3:
+            names.append(v)
+    for d in arch.get("decisions") or []:
+        for sel in (d or {}).get("technology_selections") or []:
+            v = str((sel or {}).get("display_name") or "").strip()
+            if len(v) >= 3:
+                names.append(v)
+    return list(dict.fromkeys(names))
+
+
+def _decided_architecture_block(state: GenState) -> str:
+    arch = state.get("architecture") or {}
+    stack = {str((e or {}).get("key")): (e or {}).get("value") for e in arch.get("stack_entries") or []}
+    titles = [str((d or {}).get("title") or "") for d in arch.get("decisions") or []]
+    return ("\n\nDECIDED ARCHITECTURE (binding - already decided by the architecture stage; specs and tests MUST name these, "
+            "never flag them):\n" + json.dumps({"stack": stack, "decisions": titles, "technologies": _decided_technologies(state)}))
+
+
+def _filter_decided_stack_findings(fixes: list[dict], state: GenState) -> tuple[list[dict], list[dict]]:
+    """Deterministic backstop for the review rubric: a spec/test finding that asks to remove, replace or
+    avoid a technology the architecture DECIDED is not a defect. It is recorded (auditable), not opened."""
+    techs = _decided_technologies(state)
+
+    def _asks_to_drop(tech: str, text: str) -> bool:
+        # the removal verb must govern the technology (within 60 chars before it), so "uses Firebase but the
+        # architecture decided GitHub Pages; remove the contradiction" stays a real finding
+        for m in _re.finditer(rf"(?<![\w+.#]){_re.escape(tech.lower())}(?![\w])", text.lower()):
+            if _REMOVAL_INTENT.search(text[max(0, m.start() - 60):m.start()]):
+                return True
+        return False
+
+    kept, filtered = [], []
+    for fix in fixes:
+        text = fix.get("fix") or ""
+        hit = (next((t for t in techs if _asks_to_drop(t, text)), None)
+               if fix.get("scope") in ("spec", "test") else None)
+        if hit:
+            filtered.append({**fix, "filtered": "filtered: decided-stack", "matched_technology": hit})
+        else:
+            kept.append(fix)
+    return kept, filtered
+
+
 def _normalized_review_fixes(value) -> list[dict]:
     out = []
     for fix in (value or []):  # no slice: every finding survives; per-chunk bounds are checked in node_review
@@ -1825,15 +1905,18 @@ def _target_revision(state: GenState, fix: dict) -> str:
     return revision_of(text)
 
 
-def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], round_n: int) -> None:
+def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], round_n: int) -> list[str]:
     """Every LLM review finding becomes ledger data. Dedup precedes any limit and the
     ledger is never sliced. These are semantic: they close only by founder disposition."""
+    raised = set()
     for fix in fixes:
-        ledger.add(rule_id="review.llm", rule_version=f"review-round-{round_n}", source=f"review:round-{round_n}",
+        raised.add(ledger.add(rule_id="review.llm", rule_version=f"review-round-{round_n}", source=f"review:round-{round_n}",
                    kind="semantic", scope=fix["scope"], targets=fix["target_ids"] or ["systemic"],
                    artifact_revision=_target_revision(state, fix), summary=fix["fix"],
                    evidence=[{"id": "review:finding", "sha256": revision_of(fix["fix"]), "excerpt": fix["fix"][:320]}],
-                   detail={"scope": fix["scope"], "target_ids": fix["target_ids"], "fix": fix["fix"]})
+                   detail={"scope": fix["scope"], "target_ids": fix["target_ids"], "fix": fix["fix"]}))
+    # a re-run of this round replaces its earlier output (not the founder's decisions, not other rounds)
+    return ledger.retire_review_round(f"review:round-{round_n}", raised)
 
 
 def _fix_targets(fixes: list[dict], scope: str) -> set[str] | None:
@@ -1918,7 +2001,7 @@ def _ground_items(state, ledger, provider, persist) -> None:
     from . import grounding as G
     reqs = {r.get("requirement_id"): r for sec in ("functional", "non_functional")
             for r in (state.get("srs") or {}).get(sec) or []}
-    excl = (state.get("srs") or {}).get("exclusions") or []
+    excl = G.scope_exclusions(state.get("intent_model"))   # the SRS document has no "exclusions" field
     needs = ((state.get("needs") or {}).get("needs")) if isinstance(state.get("needs"), dict) else None
     for item in state.get("items") or []:
         bound = [reqs[r] for r in item.get("requirement_ids") or [] if r in reqs]
@@ -2637,6 +2720,40 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 _check_adr_substance(arch)
             except ModelStructureError as e:
                 gate_failures.append(("ADR-substance", str(e)))
+            if gate_failures and _adr_attempt == 1 and all(name == "ADR-substance" for name, _ in gate_failures):
+                # Duplicate-only failure: the deterministic, lossless merge fixes it without throwing away every
+                # ADR body (a full re-plan cost ~10-15 min and produced NEW duplicates in the 2026-10-02 run).
+                # Anything the merge leaves, or any other gate it disturbs, falls through to the full re-plan.
+                pairs = _duplicate_adr_pairs(arch)
+                if pairs:
+                    snapshot = (copy.deepcopy(part["adr_slots"]), copy.deepcopy(adr_bodies))
+                    _merge_duplicate_adrs_one_at_a_time(
+                        part["adr_slots"], adr_bodies, pairs,
+                        lambda: ArchitectureOverview.model_validate(_assemble_architecture(
+                            session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
+                            comp_slots=part["component_slots"], comp_bodies=comp_bodies,
+                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)),
+                        label="adr-duplicate-merge-first")
+                    try:
+                        merged_try = _assemble_architecture(
+                            session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
+                            comp_slots=part["component_slots"], comp_bodies=comp_bodies,
+                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
+                        arch_try = ArchitectureOverview.model_validate(merged_try)
+                        _check_decision_drivers(arch_try, state["intent_model"], state.get("conops"))
+                        _check_baseline_reconciliation(arch_try, baseline)
+                        _check_conops_execution(arch_try, state.get("conops"))
+                        _check_candidate_grounding(arch_try, state["intent_model"], contested=part.get("contested"))
+                        _check_adr_substance(arch_try)
+                    except (ValidationError, ModelStructureError, ValueError, KeyError) as exc:
+                        part["adr_slots"][:] = snapshot[0]
+                        adr_bodies.clear(); adr_bodies.update(snapshot[1])
+                        model_config._console_line(
+                            f"     - boundary=adr-duplicate-merge-first decision=fall-back-to-replan reason={str(exc)[:200]!r}")
+                    else:
+                        _save()
+                        merged, arch = merged_try, arch_try
+                        gate_failures = []
             if gate_failures:
                 trace="; ".join(f"{name}: {detail}" for name,detail in gate_failures)
                 if _adr_attempt == 1:
@@ -2657,14 +2774,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         json.dumps({"adr_slots": part.get("adr_slots"), "adr_bodies": adr_bodies}, indent=2), detail)
                 duplicate_pairs = _duplicate_adr_pairs(arch)
                 if gate_failures and all(name == "ADR-substance" for name, _ in gate_failures) and duplicate_pairs:
-                    for left_id, right_id, subject_score, alternatives_score in duplicate_pairs:
-                        if left_id in adr_bodies and right_id in adr_bodies:
-                            _merge_duplicate_adr_pair(part["adr_slots"], adr_bodies, left_id, right_id)
-                            model_config._console_line(
-                                f"     - boundary=adr-duplicate-fallback compared={left_id},{right_id} "
-                                f"subject_overlap={subject_score:.2f} subject_threshold=0.30 "
-                                f"alternatives_overlap={alternatives_score:.2f} alternatives_threshold=0.65 "
-                                f"decision=merge-drop-{right_id}-retain-{left_id}-renumber reason=repair-exhausted-proven-duplicate")
+                    # One pair per scan: each merge renumbers ADR ids, so the first scan's pairs go stale.
+                    _merge_duplicate_adrs_one_at_a_time(
+                        part["adr_slots"], adr_bodies, duplicate_pairs,
+                        lambda: ArchitectureOverview.model_validate(_assemble_architecture(
+                            session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
+                            comp_slots=part["component_slots"], comp_bodies=comp_bodies,
+                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)),
+                        label="adr-duplicate-fallback")
                     _save()
                     merged = _assemble_architecture(
                         session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
@@ -2951,6 +3068,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                       "is in this one-requirement cluster. Never restate requirements, specs, tests, or rationale. "
                       "At most 24 findings. Each fix is one imperative sentence, at most 320 characters. "
                       "Cross-chunk consistency is checked deterministically after aggregation."
+                    + _decided_architecture_block(state)
                     + "\n\nSRS REQUIREMENTS:\n" + json.dumps(_prompt_view(req_chunk))
                     + "\n\nLINKED ITEMS:\n" + json.dumps(_prompt_view(chunk_items))
                     + "\n\nLINKED TESTS:\n" + json.dumps(_prompt_view(chunk_tests)),
@@ -2974,12 +3092,19 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             key = (fix["scope"], tuple(sorted(fix["target_ids"])), fix["fix"].strip().casefold())
             if key not in seen:
                 seen.add(key); fixes.append(fix)
+        fixes, filtered = _filter_decided_stack_findings(fixes, state)
+        if filtered:
+            ledger.history.append({"event": "review_filtered", "round": n, "reason": "filtered: decided-stack",
+                                   "count": len(filtered), "fixes": [f["fix"][:200] for f in filtered]})
+            model_config._console_line(
+                f"     - boundary=review-filter round={n} filtered={len(filtered)} reason=decided-stack "
+                "decision=archived-not-opened (spec/test findings asking to remove a technology the architecture decided)")
         _ledger_review_findings(ledger, state, fixes, n)
         # Archive every chunk before partial cleanup.
         if persist and hasattr(persist, "review"):
             persist.review({"round": n, "chunks": {k: v for k, v in saved.items()
                            if k.startswith(f"round-{n}-chunk-")},
-                           "all_chunk_findings": findings, "retained_fixes": fixes,
+                           "all_chunk_findings": findings, "retained_fixes": fixes, "filtered_decided_stack": filtered,
                            "aggregation_omitted_count": max(0, len(findings) - len(fixes)),
                            "disposition": "proposed; resolution not verified",
                            "ledger": ledger.to_dict(),

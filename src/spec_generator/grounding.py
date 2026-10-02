@@ -29,7 +29,7 @@ from typing import Any, Mapping, Protocol
 from .content_acceptance import sha256
 from .findings_ledger import SEMANTIC, Ledger, revision_of
 
-RUBRIC_VERSION = "jev-grounding-1"
+RUBRIC_VERSION = "jev-grounding-2"
 ADAPTER_VERSION = "grounding-adapter-1"
 RULE_ID = "grounding.jev"
 
@@ -50,8 +50,14 @@ SHARED_INSTRUCTION = (
 Q1_TEXT = "Does the candidate body explicitly describe product behavior relevant to the supplied requirement {rid}? Thin, empty or off-topic text is NO."
 Q2_TEXT = "Does the candidate body explicitly assign {rid} a meaning that conflicts with the supplied requirement statement? Answer unknown when the binding or evidence is ambiguous."
 Q3_TEXT = "Does the candidate body explicitly require a capability forbidden by a supplied exclusion relevant to {rid}? Answer unknown when evidence is ambiguous."
-Q4_TEXT = "Which supplied body span best supports this answer? Select NONE when absence is the evidence, and UNKNOWN when the evidence cannot be identified."
-Q5_TEXT = "Which supplied requirement or exclusion span is the comparison basis? Select the exact provided evidence ID, or UNKNOWN if it cannot be identified."
+Q4_TEXT = ("For {key} ({what}): which supplied body span best supports YOUR ANSWER to {key}? "
+           "Pick the span that makes that answer true. Select NONE only when the answer is no (absence is the evidence), "
+           "and UNKNOWN only when the evidence cannot be identified.")
+Q5_TEXT = ("For {key} ({what}): which supplied requirement or exclusion span is the comparison basis for your answer to {key}? "
+           "Select the exact provided evidence ID, or UNKNOWN if it cannot be identified.")
+_Q_WHAT = {"q1": "does the body describe behavior for the requirement",
+           "q2": "does the body redefine the requirement",
+           "q3": "does the body require a forbidden capability"}
 
 
 class ProviderUnavailable(RuntimeError):
@@ -140,6 +146,16 @@ def exclusion_spans(exclusions) -> list[dict]:
     return out
 
 
+def scope_exclusions(intent_model: dict | None) -> list[dict]:
+    """Exclusion evidence for the Q3 check: the founder's EXPLICIT scope exclusions from the intent model
+    (key "item"), ids E1... Inferred ones are not binding. None supplied -> Q3 is UNKNOWN, never a pass."""
+    out = []
+    for e in (intent_model or {}).get("scope_exclusions") or []:
+        if isinstance(e, dict) and e.get("explicit") is not False and str(e.get("item") or "").strip():
+            out.append({"id": f"E{len(out) + 1}", "text": str(e["item"]).strip()})
+    return out
+
+
 def lineage_context(needs: list[dict] | None, req: dict) -> str:
     """Need -> requirement lineage, two levels up, size limited. Context only; never evidence."""
     ids = set(req.get("need_ids") or [])
@@ -170,13 +186,27 @@ def _questions(rid, req_spans, excl, chunk, with_q3):
         qs[f"{rid}.q3"] = (Q3_TEXT.format(rid=rid), yn3)
     for q in ("q1", "q2", "q3"):
         if f"{rid}.{q}" in qs:
-            qs[f"{rid}.{q}.body"] = (Q4_TEXT, body_choices)
-            qs[f"{rid}.{q}.basis"] = (Q5_TEXT, basis_choices)
+            qs[f"{rid}.{q}.body"] = (Q4_TEXT.format(key=f"{rid}.{q}", what=_Q_WHAT[q]), body_choices)
+            qs[f"{rid}.{q}.basis"] = (Q5_TEXT.format(key=f"{rid}.{q}", what=_Q_WHAT[q]), basis_choices)
     return qs
 
 
 class _Invalid(Exception):
     pass
+
+
+def _span_problem(rid, questions, resp, chunk_ids, basis_by_id) -> str | None:
+    """A YES must name the evidence it rests on. None = fine."""
+    for q in ("q1", "q2", "q3"):
+        if f"{rid}.{q}" not in questions:
+            continue
+        value = resp.answers[f"{rid}.{q}"]
+        bid, sid = resp.answers[f"{rid}.{q}.body"], resp.answers[f"{rid}.{q}.basis"]
+        if value == "yes" and (bid in ("NONE", "UNKNOWN") or bid not in chunk_ids):
+            return f"{rid}.{q}: yes without a body evidence span"
+        if q in ("q2", "q3") and value == "yes" and sid == "UNKNOWN":
+            return f"{rid}.{q}: yes without a basis span"
+    return None
 
 
 def _validate(rid, questions, response: ProviderResponse):
@@ -243,6 +273,7 @@ def ground_spec(spec_id: str, body: str, requirements: list[dict], provider: Gro
         return {**env, "reason": f"body/requirement size exceeds the grounding limits ({len(chunks)} chunks x {len(requirements)} requirements); incomplete, not a pass"}
     span_by_id = {s["id"]: s for s in b_spans}
     answers_out = []
+    failed: list[dict] = []
     for req in requirements:
         rid = req["requirement_id"]
         req_spans = requirement_spans(req)
@@ -261,42 +292,46 @@ def ground_spec(spec_id: str, body: str, requirements: list[dict], provider: Gro
         per = {"q1": [], "q2": [], "q3": []}
         body_ids, basis_ids = {"q1": [], "q2": [], "q3": []}, {"q1": [], "q2": [], "q3": []}
         conf = None
+        problem = None
         for chunk in chunks:
             qs = _questions(rid, req_spans, excl, chunk, bool(excl))
-            try:
-                resp = provider.classify(_state(req_spans, excl, chunk, lineage_context(needs, req)), qs, model)
-            except ProviderUnavailable as exc:
-                return {**env, "status": UNAVAILABLE, "reason": str(exc), "per_requirement": answers_out}
-            except Exception as exc:
-                return {**env, "status": UNAVAILABLE, "reason": f"{type(exc).__name__}: {exc}", "per_requirement": answers_out}
-            env["usage"]["calls"] += 1
-            env["usage"]["input_tokens"] += resp.input_tokens; env["usage"]["output_tokens"] += resp.output_tokens
-            env["usage"]["latency_s"] += resp.latency_s or 0.0
-            env["returned_model"], env["provider"] = resp.model, resp.provider
-            try:
-                _validate(rid, qs, resp)
-            except _Invalid as exc:
-                return {**env, "status": UNVERIFIED, "reason": str(exc), "returned_payload": dict(resp.answers),
-                        "per_requirement": answers_out}
-            conf = (resp.confidences or {}).get(f"{rid}.q1", conf)
             chunk_ids = {s["id"] for s in chunk}
+            resp = None
+            for ask in (1, 2):    # one automatic re-ask when a YES comes back without its evidence span
+                try:
+                    resp = provider.classify(_state(req_spans, excl, chunk, lineage_context(needs, req)), qs, model)
+                except ProviderUnavailable as exc:
+                    return {**env, "status": UNAVAILABLE, "reason": str(exc), "per_requirement": answers_out}
+                except Exception as exc:
+                    return {**env, "status": UNAVAILABLE, "reason": f"{type(exc).__name__}: {exc}", "per_requirement": answers_out}
+                env["usage"]["calls"] += 1
+                env["usage"]["input_tokens"] += resp.input_tokens; env["usage"]["output_tokens"] += resp.output_tokens
+                env["usage"]["latency_s"] += resp.latency_s or 0.0
+                env["returned_model"], env["provider"] = resp.model, resp.provider
+                try:
+                    _validate(rid, qs, resp)
+                except _Invalid as exc:
+                    return {**env, "status": UNVERIFIED, "reason": str(exc), "returned_payload": dict(resp.answers),
+                            "per_requirement": answers_out}
+                problem = _span_problem(rid, qs, resp, chunk_ids, basis_by_id)
+                if problem is None:
+                    break
+            if problem is not None:
+                failed.append({"requirement_id": rid, "reason": problem, "returned_payload": dict(resp.answers)})
+                break
+            conf = (resp.confidences or {}).get(f"{rid}.q1", conf)
             for q in ("q1", "q2", "q3"):
                 if f"{rid}.{q}" not in qs:
                     continue
                 value = resp.answers[f"{rid}.{q}"]
                 bid, sid = resp.answers[f"{rid}.{q}.body"], resp.answers[f"{rid}.{q}.basis"]
-                # Positive support names a body span; Q2/Q3 YES names both conflict and basis.
-                if value == "yes" and (bid in ("NONE", "UNKNOWN") or bid not in chunk_ids):
-                    return {**env, "status": UNVERIFIED, "reason": f"{rid}.{q}: yes without a body evidence span",
-                            "returned_payload": dict(resp.answers), "per_requirement": answers_out}
-                if q in ("q2", "q3") and value == "yes" and sid == "UNKNOWN":
-                    return {**env, "status": UNVERIFIED, "reason": f"{rid}.{q}: yes without a basis span",
-                            "returned_payload": dict(resp.answers), "per_requirement": answers_out}
                 per[q].append(value)
                 if bid in span_by_id:
                     body_ids[q].append(bid)
                 if sid in basis_by_id:
                     basis_ids[q].append(sid)
+        if problem is not None:
+            continue    # this requirement stays unchecked (incomplete); the rest of the spec is still checked
         q1 = "yes" if "yes" in per["q1"] else "no"
         q2 = _worst_yn(per["q2"], "yes"); q3 = _worst_yn(per["q3"], "yes") if per["q3"] else "unknown"   # no supplied exclusion: UNKNOWN, never a pass
         pick = "q1" if q1 == "yes" else ("q2" if q2 == "yes" else ("q3" if q3 == "yes" else "q1"))
@@ -312,6 +347,10 @@ def ground_spec(spec_id: str, body: str, requirements: list[dict], provider: Gro
         if cache:
             cache.put(key, ans)
     env["per_requirement"] = answers_out
+    if failed:
+        return {**env, "status": UNVERIFIED, "check_complete": False,
+                "reason": "; ".join(f["reason"] for f in failed) + " (re-asked once; unchecked requirement(s) stay incomplete)",
+                "returned_payload": failed[0]["returned_payload"], "failed_requirements": failed}
     env["check_complete"] = True
     if any(a["q3"] == "unknown" or a["q2"] == "unknown" for a in answers_out):
         env["status"], env["reason"] = UNVERIFIED, "an answer was UNKNOWN; never a pass"
@@ -335,9 +374,8 @@ def record_grounding(ledger: Ledger, envelope: dict) -> list[str]:
         return ids
     if envelope["status"] != ELIGIBLE:
         ledger.mark_incomplete(scope, f"grounding {envelope['status']}: {envelope['reason']}", status=envelope["status"])
-        if not envelope.get("check_complete"):
-            return ids
-        # Valid answers with an UNKNOWN: definite findings are still raised below.
+        # Valid answers are still judged below (an UNKNOWN or an unchecked requirement elsewhere in the
+        # spec does not hide a definite finding on a requirement that was answered).
     for a in envelope["per_requirement"]:
         rid = a["requirement_id"]
         for q, label, bad in (("q1", "Q1 no explicit behavior for the requirement", "no"),

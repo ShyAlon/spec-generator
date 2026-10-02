@@ -285,3 +285,23 @@ def test_duplicate_merge_reassembles_green_with_contiguous_decision_links():
     _check_adr_substance(arch)
     assert [d.decision_id for d in arch.decisions]==["ADR-1","ADR-2"]
     assert arch.stack_entries[0].decision_id=="ADR-1"
+
+
+def test_merge_first_collapses_a_triple_duplicate_one_pair_at_a_time():
+    # 4 ADRs, three of them the same decision: ids renumber after every merge, so each merge needs a fresh scan
+    from spec_generator.graph import _assemble_architecture, _check_adr_substance, _duplicate_adr_pairs, _merge_duplicate_adrs_one_at_a_time
+    from vmodel_contracts import ArchitectureOverview
+    opts=[{"option":"generic insurer integration","reason":"variance"},{"option":"direct point integration","reason":"duplication"}]
+    def body(title,decision,o): return {"title":title,"decision":decision,"rationale":"grounded rationale","driver":"simplicity","options_considered":o,"baseline_refs":[],"migration":False,"evidence":[],"affected_repositories":[],"executes_concept_ids":[],"technology_selections":[],"rejected":[]}
+    slots=[{"decision_id":f"ADR-{i}","slug":f"s{i}","migration":False,"authorizes":[],"required_concept_ids":[]} for i in range(1,5)]
+    bodies={"ADR-1":body("Storage policy","Use durable storage",[]),
+            "ADR-2":body("Insurer adapter boundary","Use normalized insurer adapters",opts),
+            "ADR-3":body("Normalized insurer adapter boundary","Use normalized insurer adapters",opts),
+            "ADR-4":body("Insurer adapter boundary layer","Use normalized insurer adapters",opts)}
+    asm=lambda: ArchitectureOverview.model_validate(_assemble_architecture(session_id="s",baseline_id="b",entries={},comp_slots=[],comp_bodies={},adr_slots=slots,adr_bodies=bodies,nfr={}))
+    pairs=_duplicate_adr_pairs(asm())
+    assert len(pairs)==3
+    assert _merge_duplicate_adrs_one_at_a_time(slots,bodies,pairs,asm,"adr-duplicate-merge-first")==2
+    arch=asm(); _check_adr_substance(arch)
+    assert [d.decision_id for d in arch.decisions]==["ADR-1","ADR-2"] and set(bodies)=={"ADR-1","ADR-2"}
+    assert bodies["ADR-1"]["title"]=="Storage policy"        # the distinct decision is untouched

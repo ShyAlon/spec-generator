@@ -297,3 +297,13 @@ and the retained aggregate. This visibility does not change the current review
 cap, correction logic or assembly gate. Older runs without recorded history
 cannot recover missing rounds automatically. Deterministic handoff exports include
 the same docs view without private logs/checkpoint payloads.
+
+## Disposing findings (JEV-D10)
+
+`--dispose founder-script.json` closes OPEN semantic findings. Each disposition selects one finding by exact
+`{"finding_id": "F-..."}` (or by exact `rule_id` + `target_ids` when that pair is unique), is bound to the
+finding's `expected_artifact_sha256`, and needs a rationale. No wildcards; all-or-nothing. Incomplete required
+checks (for example grounding) are not findings and cannot be disposed: re-run the check.
+
+`scripts/findings-review.py DIR summary|list|dispose|staged|unstage|write|apply` builds and validates the script
+(dispose is a dry run until `--yes`; `apply` only prints the `--dispose` command). Run it with the project venv.

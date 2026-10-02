@@ -144,3 +144,38 @@ def test_roundtrip_and_old_checkpoint_without_ledger_is_empty_not_clean():
     assert Ledger.from_dict(None).findings == {}
     with pytest.raises(LedgerError):
         Ledger.from_dict({"version": 99})
+
+
+def _by_id(fid, **over):
+    d = {"selector": {"finding_id": fid}, "expected_artifact_sha256": REV, "action": "reject",
+         "rationale": "ok", "reason_subtype": "false_positive"}
+    d.update(over)
+    return {"version": 1, "authored_by": "founder", "dispositions": [d]}
+
+
+def test_finding_id_selector_disposes_exactly_one_of_several_same_rule_same_target():
+    ledger = Ledger()
+    a = add(ledger, rule="echo.directive", ev=[{"id": "a", "sha256": "1"}])
+    b = add(ledger, rule="echo.directive", ev=[{"id": "b", "sha256": "2"}])
+    assert ledger.apply_script(_by_id(a)) == [a]
+    assert ledger.findings[a]["state"] == "REJECTED" and ledger.findings[b]["state"] == OPEN
+    assert ledger.findings[a]["closure"]["source"] == "founder-script"
+
+
+@pytest.mark.parametrize("sel,why", [
+    ({"finding_id": "F-*"}, "exact id"),
+    ({"finding_id": "F-0123456789abcdef"}, "no open finding"),
+    ({"finding_id": "F-0123456789abcdef", "rule_id": "echo.directive"}, "stands alone"),
+])
+def test_finding_id_selector_refuses_wildcards_unknown_and_mixed_forms(sel, why):
+    ledger = Ledger(); add(ledger, rule="echo.directive")
+    script = _by_id("x"); script["dispositions"][0]["selector"] = sel
+    with pytest.raises(LedgerError, match=why):
+        ledger.apply_script(script)
+
+
+def test_finding_id_selector_is_still_hash_bound_and_atomic():
+    ledger = Ledger(); a = add(ledger, rule="echo.directive")
+    with pytest.raises(LedgerError, match="stale"):
+        ledger.apply_script(_by_id(a, expected_artifact_sha256=revision_of("old")))
+    assert ledger.findings[a]["state"] == OPEN

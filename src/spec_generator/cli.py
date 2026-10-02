@@ -287,6 +287,24 @@ _CLEAR_DOWNSTREAM = {
 }
 
 
+SRS_APPLIED_KEY = "srs_applied_sha256"
+
+
+def _srs_candidate_digest(candidate: dict) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(candidate, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _srs_review_already_applied(prior: dict, candidate: dict) -> bool:
+    """True when this reviewed SRS candidate is already what the checkpoint holds.
+    Marker first (written when we apply). Legacy checkpoints have no marker: fall back
+    to the requirement sections being identical to the candidate's."""
+    if (prior.get("semantic_reviews") or {}).get(SRS_APPLIED_KEY) == _srs_candidate_digest(candidate):
+        return True
+    cur = prior.get("srs") or {}
+    return bool(cur) and all(cur.get(sec) == candidate.get(sec) for sec in ("functional", "non_functional"))
+
+
 def _predecessor(stage: str, review_mode: bool) -> str:
     """The node the checkpoint is rewritten AS (update_state as_node=...), so
     resume continues at the stage the founder asked to re-run. Review-mode
@@ -998,10 +1016,16 @@ def main() -> None:
             raise UserFacingError('SRS candidate review is not ready.',str(exc),'Review every flagged SRS item with Remove, Replace, or Accept before continuing.') from exc
         if resolved:
             candidate,reviewed=resolved
-            reviews={**prior['semantic_reviews'],'srs':reviewed.model_dump(mode='json')}
-            graph.update_state(cfg,{'srs':candidate,'semantic_reviews':reviews},as_node=_predecessor('architecture',args.review))
-            prior={**prior,'srs':candidate,'semantic_reviews':reviews}
-            print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
+            if _srs_review_already_applied(prior,candidate):
+                # update_state(as_node=<predecessor of architecture>) re-queues architecture, so
+                # re-applying an unchanged review on every resume re-ran a finished stage (39 min).
+                print('Reviewed SRS items already applied to this checkpoint; continuing at the next stage.',file=sys.stderr)
+            else:
+                reviews={**prior['semantic_reviews'],'srs':reviewed.model_dump(mode='json'),
+                         SRS_APPLIED_KEY:_srs_candidate_digest(candidate)}
+                graph.update_state(cfg,{'srs':candidate,'semantic_reviews':reviews},as_node=_predecessor('architecture',args.review))
+                prior={**prior,'srs':candidate,'semantic_reviews':reviews}
+                print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
     if resume:
         print("Checkpoint found - resuming; completed stages are NOT re-run.", file=sys.stderr)
         # backfill-persist artifacts for stages completed BEFORE incremental
