@@ -1990,6 +1990,28 @@ def _review_scope_requirements(state: GenState, fixes: list[dict]) -> list[str] 
     return sorted(reqs) or None
 
 
+def _check_ac_ids_stable(before: dict, after: dict) -> None:
+    """Acceptance-criterion ids are numbered sequentially across the whole SRS. A repair that adds or removes a
+    criterion shifts every later AC id, and tests are linked by criterion_id: they would silently point at the wrong
+    criterion. Refuse such a repair before anything is persisted."""
+    from .errors import UserFacingError
+
+    def ids(srs):
+        return {r.get("requirement_id"): [c.get("criterion_id") for c in r.get("acceptance") or []]
+                for sec in ("functional", "non_functional") for r in (srs or {}).get(sec) or []}
+    old, new = ids(before), ids(after)
+    changed = sorted(r for r in set(old) | set(new) if old.get(r) != new.get(r))
+    if changed:
+        detail = "; ".join(f"{r}: {len(old.get(r) or [])} -> {len(new.get(r) or [])} criteria "
+                           f"({(old.get(r) or ['-'])[0]}.. vs {(new.get(r) or ['-'])[0]}..)" for r in changed[:6])
+        raise UserFacingError(
+            "scoped repair refused: it would renumber acceptance criteria.",
+            f"checked the criterion ids of every requirement before and after the repair; found changes in "
+            f"{', '.join(changed)} ({detail}). Tests link by criterion id, so a shift would mis-link them. Nothing was applied.",
+            "rerun the repair; keep the number of acceptance criteria per requirement unchanged, or rerun from 'srs' "
+            "to regenerate tests with the new numbering.")
+
+
 def _fix_targets(fixes: list[dict], scope: str) -> set[str] | None:
     fixes = _normalized_review_fixes(fixes)
     if any(f["scope"] == "systemic" for f in fixes):
@@ -3255,6 +3277,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 data[section]=[originals[r['requirement_id']] if r.get('requirement_id') in accepted else r for r in data.get(section) or []]
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
+        _check_ac_ids_stable(state["srs"], data)
         if persist and data is not state["srs"]:
             persist("srs", data, state)
         return {"srs": data, "review_fixes": fixes, "repair_request": None,
