@@ -1948,7 +1948,8 @@ def _target_revision(state: GenState, fix: dict) -> str:
     return revision_of(text)
 
 
-def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], round_n: int) -> list[str]:
+def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], round_n: int,
+                            raised_out: set | None = None) -> list[str]:
     """Every LLM review finding becomes ledger data. Dedup precedes any limit and the
     ledger is never sliced. These are semantic: they close only by founder disposition."""
     raised = set()
@@ -1958,6 +1959,8 @@ def _ledger_review_findings(ledger: Ledger, state: GenState, fixes: list[dict], 
                    artifact_revision=_target_revision(state, fix), summary=fix["fix"],
                    evidence=[{"id": "review:finding", "sha256": revision_of(fix["fix"]), "excerpt": fix["fix"][:320]}],
                    detail={"scope": fix["scope"], "target_ids": fix["target_ids"], "fix": fix["fix"]}))
+    if raised_out is not None:
+        raised_out.update(raised)
     # a re-run of this round replaces its earlier output (not the founder's decisions, not other rounds)
     return ledger.retire_review_round(f"review:round-{round_n}", raised)
 
@@ -3153,7 +3156,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             model_config._console_line(
                 f"     - boundary=review-filter round={n} filtered={len(filtered)} reason=decided-stack "
                 "decision=archived-not-opened (spec/test findings asking to remove a technology the architecture decided)")
-        _ledger_review_findings(ledger, state, fixes, n)
+        raised_now = set()
+        _ledger_review_findings(ledger, state, fixes, n, raised_out=raised_now)
+        ledger.close_repaired(
+            f"review:round-{n}", raised_now,
+            lambda f: _target_revision(state, {"scope": f["scope"], "target_ids": f["detail"].get("target_ids") or f["targets"]}),
+            [(fx["target_ids"], fx["fix"]) for fx in fixes])
         # Archive every chunk before partial cleanup.
         if persist and hasattr(persist, "review"):
             persist.review({"round": n, "chunks": {k: v for k, v in saved.items()
