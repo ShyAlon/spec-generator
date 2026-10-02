@@ -1918,7 +1918,7 @@ def _ground_items(state, ledger, provider, persist) -> None:
     from . import grounding as G
     reqs = {r.get("requirement_id"): r for sec in ("functional", "non_functional")
             for r in (state.get("srs") or {}).get(sec) or []}
-    excl = (state.get("srs") or {}).get("exclusions") or []
+    excl = G.scope_exclusions(state.get("intent_model"))   # the SRS document has no "exclusions" field
     needs = ((state.get("needs") or {}).get("needs")) if isinstance(state.get("needs"), dict) else None
     for item in state.get("items") or []:
         bound = [reqs[r] for r in item.get("requirement_ids") or [] if r in reqs]

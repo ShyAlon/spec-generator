@@ -176,3 +176,72 @@ def test_missing_exclusions_make_q3_unknown_not_a_pass():
     assert env["status"] == g.UNVERIFIED and not env["eligible"]
     ledger = Ledger(); g.record_grounding(ledger, env)
     assert ledger.gate()["blocked"]
+
+
+def test_scope_exclusions_come_from_the_intent_model_explicit_only():
+    intent = {"scope_exclusions": [{"item": "User accounts", "explicit": True}, {"item": "Maybe ads", "explicit": False},
+                                   {"item": "  Runtime CDN ", "explicit": True}, {"item": "", "explicit": True}]}
+    assert g.scope_exclusions(intent) == [{"id": "E1", "text": "User accounts"}, {"id": "E2", "text": "Runtime CDN"}]
+    assert g.scope_exclusions({}) == [] and g.scope_exclusions(None) == []
+
+
+def test_ground_items_passes_the_intent_exclusions_so_q3_is_asked():
+    from spec_generator.graph import _ground_items
+    asked = []
+
+    class Spy(Mock):
+        def classify(self, state, questions, model):
+            asked.append(sorted(questions))
+            return super().classify(state, questions, model)
+    state = {"srs": {"functional": REQS, "non_functional": []}, "intent_model": {"scope_exclusions": [{"item": "No accounts.", "explicit": True}]},
+             "items": [{"spec_id": "SPEC-1", "body_markdown": BODY, "requirement_ids": ["R-13"]}]}
+    ledger = Ledger()
+    _ground_items(state, ledger, Spy(), None)
+    assert any("R-13.q3" in keys for keys in asked) and not ledger.incomplete
+    # no exclusions in the intent: Q3 is not asked, the spec stays incomplete (UNKNOWN, never a pass)
+    asked.clear(); ledger2 = Ledger()
+    _ground_items({**state, "intent_model": {}}, ledger2, Spy(), None)
+    assert not any("R-13.q3" in keys for keys in asked) and ledger2.incomplete
+
+
+def test_span_questions_name_the_requirement_and_the_answer_they_support():
+    seen = {}
+
+    class Spy(Mock):
+        def classify(self, state, questions, model):
+            seen.update(questions)
+            return super().classify(state, questions, model)
+    run(Spy())
+    assert "R-13.q1" in seen["R-13.q1.body"][0] and "YOUR ANSWER" in seen["R-13.q1.body"][0]
+    assert "R-13.q2" in seen["R-13.q2.basis"][0]
+    assert g.RUBRIC_VERSION == "jev-grounding-2"
+
+
+def test_yes_without_span_is_re_asked_once_and_then_passes():
+    n = {"i": 0}
+
+    def flaky(ans):
+        n["i"] += 1
+        if n["i"] == 1:
+            ans["R-13.q1.body"] = "NONE"
+        return ans
+    env = run(Mock(mutate=flaky))
+    assert env["status"] == g.ELIGIBLE and env["check_complete"] and n["i"] == 2
+
+
+def test_yes_without_span_twice_leaves_that_requirement_incomplete_and_checks_the_rest():
+    reqs = REQS + [{"requirement_id": "R-14", "statement": "The system shall store progress.", "acceptance": []}]
+
+    def bad_first_requirement(ans):
+        for k in list(ans):
+            if k.endswith(".basis") and ans[k] == "R-13":
+                ans[k] = k.split(".")[0]          # the Mock always answers R-13; point it at this requirement
+        if "R-13.q1.body" in ans:
+            ans["R-13.q1.body"] = "UNKNOWN"
+        return ans
+    env = g.ground_spec("SPEC-1", BODY, reqs, Mock(mutate=bad_first_requirement), exclusions=EXCL)
+    assert env["status"] == g.UNVERIFIED and not env["check_complete"] and not env["eligible"]
+    assert [a["requirement_id"] for a in env["per_requirement"]] == ["R-14"]       # the rest of the spec was still checked
+    assert env["failed_requirements"][0]["requirement_id"] == "R-13" and "yes without a body evidence span" in env["reason"]
+    ledger = Ledger(); g.record_grounding(ledger, env)
+    assert ledger.incomplete and ledger.gate()["blocked"]
