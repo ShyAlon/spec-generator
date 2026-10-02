@@ -14,8 +14,9 @@ so only the extremes are decided here; the middle band is returned as GRAY and
 the caller turns it into a finding for Jev or the founder.
 
 Thresholds are PROVISIONAL (28 designed labels). They are named constants with
-a version so a change is visible in every stored result. Over-limit work means
-NOT_CHECKED, never a pass. Raw text and hashes are preserved; normalized copies
+a version so a change is visible in every stored result. Over-limit work is never a
+silent pass and never a stop: duplicate pairs decide on shingle overlap, everything else
+becomes a GRAY finding for review. Raw text and hashes are preserved; normalized copies
 are comparison-only.
 """
 from __future__ import annotations
@@ -26,7 +27,7 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 
 NORMALIZATION_VERSION = "norm-1"
-POLICY_VERSION = "content-acceptance-1"
+POLICY_VERSION = "content-acceptance-2"
 
 # --- provisional thresholds (founder-labeled fixture, see tests/fixtures) ----
 ECHO_REJECT_MAX = 0.12      # whole-body distance at or below: deterministic echo
@@ -36,7 +37,7 @@ DUP_LEV_MAX = 0.02          # distance at or below: duplicate (labels: yes <= .0
 DUP_SHINGLE_MIN = 0.82      # jaccard at or above: duplicate (labels: yes >= .9391, no <= .8182)
 SHINGLE_SIZE = 3
 MIN_SUBSTANTIVE_CHARS = 20  # review trigger only; never an automatic pass or reject by itself
-# --- work limits (placeholders; over-limit = NOT_CHECKED and blocks) --------
+# --- work limits (placeholders; over-limit: duplicate decides on shingles, other checks go GRAY) --------
 MAX_COMPARE_CELLS = 4_000_000   # len(a) * len(b) per Levenshtein call
 MAX_SPANS = 400                 # sentence/paragraph spans checked per body
 MAX_SIBLINGS = 200              # accepted siblings compared per candidate
@@ -215,14 +216,14 @@ def check_echo(body: str, catalogue: dict[str, str] | None = None) -> list[Check
                                        score=0.0, matched_span=nd, matched_offsets=[0, len(body)], **base))
             continue
         if len(body_spans) > MAX_SPANS:
-            results.append(CheckResult(status=NOT_CHECKED, reason=f"more than {MAX_SPANS} spans", **base))
+            results.append(CheckResult(status=GRAY, reason=f"more than {MAX_SPANS} spans; not compared, needs review", **base))
             continue
         whole = normalized_distance(nd, nbody)
         best, best_span = None, None
         for s in body_spans:
             d = normalized_distance(nd, s)
             if d is None:
-                results.append(CheckResult(status=NOT_CHECKED, reason="span comparison over the work limit", **base))
+                results.append(CheckResult(status=GRAY, reason="span comparison over the work limit; not compared, needs review", **base))
                 best = None
                 break
             if best is None or d < best:
@@ -230,7 +231,7 @@ def check_echo(body: str, catalogue: dict[str, str] | None = None) -> list[Check
         else:
             pass
         if whole is None:
-            results.append(CheckResult(status=NOT_CHECKED, reason="whole-body comparison over the work limit", **base))
+            results.append(CheckResult(status=GRAY, reason="whole-body comparison over the work limit; not compared, needs review", **base))
             continue
         if whole <= ECHO_REJECT_MAX:
             results.append(CheckResult(status=REJECT, score=whole, matched_span=nbody[:400],
@@ -253,8 +254,8 @@ def check_duplicate(candidate_id: str, body: str, siblings: dict[str, str]) -> l
     cand = normalize(substantive_text(body))
     chash = sha256(body)
     if len(siblings) > MAX_SIBLINGS:
-        return [CheckResult(rule="duplicate", status=NOT_CHECKED, candidate_sha256=chash,
-                            reason=f"more than {MAX_SIBLINGS} siblings")]
+        return [CheckResult(rule="duplicate", status=GRAY, candidate_sha256=chash,
+                            reason=f"more than {MAX_SIBLINGS} siblings; not compared, needs review")]
     short = substantive_length(body) < MIN_SUBSTANTIVE_CHARS
     for sid, other_body in siblings.items():
         if sid == candidate_id:
@@ -277,10 +278,15 @@ def check_duplicate(candidate_id: str, body: str, siblings: dict[str, str]) -> l
                 **base))
             continue
         d = normalized_distance(cand, other)
-        if d is None:
-            results.append(CheckResult(status=NOT_CHECKED, reason="comparison over the work limit", **base))
-            continue
         j = shingle_jaccard(cand, other)
+        if d is None:
+            # Over the Levenshtein work limit: decide on shingle overlap alone
+            # (linear time, calibrated). Never an unchecked reject.
+            if j >= DUP_SHINGLE_MIN:
+                results.append(CheckResult(status=REJECT, score=None, shingle=j,
+                                           reason="near-duplicate of sibling (shingle overlap past threshold; "
+                                                  "distance over the work limit)", **base))
+            continue
         if d <= DUP_LEV_MAX or j >= DUP_SHINGLE_MIN:
             results.append(CheckResult(status=REJECT, score=d, shingle=j,
                                        reason="near-duplicate of sibling (distance or shingle overlap past threshold)",

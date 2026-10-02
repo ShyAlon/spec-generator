@@ -1671,10 +1671,10 @@ _CONTENT_RULES = {"echo": "echo.directive", "duplicate": "duplicate.body"}
 def _accept_content(spec_id: str, body: str, siblings: dict[str, str], ledger: Ledger, sink=None) -> list:
     """The ONE content acceptance boundary (JEV-D10 rules 1 and 2). Every authoring
     path - bulk, per-spec, surgical repair, resumed partials - calls it before an
-    item can be saved as accepted. Reject / not-checked stop the stage loudly and
+    item can be saved as accepted. Reject stops the stage loudly (inconclusive results are GRAY, never a stop) and
     the candidate is kept as evidence. Gray results become OPEN findings."""
     results = _ca.check_echo(body) + _ca.check_duplicate(spec_id, body, siblings)
-    blocked = [r.to_dict() for r in results if r.status in (_ca.REJECT, _ca.NOT_CHECKED)]
+    blocked = [r.to_dict() for r in results if r.status in (_ca.REJECT,)]
     if blocked:
         if sink:
             sink({"spec_id": spec_id, "body": body, "body_revision": revision_of(body), "results": blocked})

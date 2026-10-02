@@ -96,11 +96,24 @@ def test_empty_string_behavior_is_explicit():
     assert ca.substantive_length("## Interface\n## Errors") == 0
 
 
-def test_over_limit_work_is_not_checked_never_a_pass(monkeypatch):
+def test_over_limit_duplicate_decides_on_shingles_never_stops(monkeypatch):
     monkeypatch.setattr(ca, "MAX_COMPARE_CELLS", 50)
     body = "word " * 40
-    assert ca.worst(ca.check_duplicate("C", body, {"S": body + " different tail text here"})) == ca.NOT_CHECKED
-    assert ca.worst(ca.check_echo(body, {"d": "some directive that is long enough to blow the cap " * 2})) == ca.NOT_CHECKED
+    other = "completely unrelated storage persistence prose about local caches and offline lessons " * 3
+    # distinct content: shingles decide, clean pass (no NOT_CHECKED, no reject)
+    assert ca.worst(ca.check_duplicate("C", body + "alpha beta gamma delta", {"S": other})) == ca.PASS
+    # near-identical long bodies: rejected on shingle overlap alone, distance not computed
+    long_a = " ".join(f"token{i}" for i in range(60))
+    res = ca.check_duplicate("C", long_a, {"S": long_a + " extra"})
+    assert ca.worst(res) == ca.REJECT and res[0].score is None and res[0].shingle >= ca.DUP_SHINGLE_MIN
+
+
+def test_over_limit_echo_and_sibling_cap_are_gray_never_reject(monkeypatch):
+    monkeypatch.setattr(ca, "MAX_COMPARE_CELLS", 50)
+    body = "word " * 40
+    assert ca.worst(ca.check_echo(body, {"d": "some directive that is long enough to blow the cap " * 2})) == ca.GRAY
+    monkeypatch.setattr(ca, "MAX_SIBLINGS", 1)
+    assert ca.worst(ca.check_duplicate("C", body, {"a": "x", "b": "y"})) == ca.GRAY
 
 
 def test_short_valid_clauses_are_a_review_trigger_not_an_auto_reject():
@@ -135,3 +148,15 @@ def test_result_records_evidence_for_the_ledger():
     assert r["catalogue_id"] == "watchdog-retry" and r["status"] == ca.REJECT
     assert r["candidate_sha256"] and r["other_sha256"] and r["policy_version"] == ca.POLICY_VERSION
     assert r["threshold"]["reject_max"] == ca.ECHO_REJECT_MAX
+
+
+def test_long_distinct_spec_bodies_pass_the_gate_without_limit_patching():
+    # regression (resumed spec-d10 run): two real-length bodies exceeded the cell cap,
+    # the duplicate check returned NOT_CHECKED and the gate rejected on nothing.
+    from spec_generator.graph import _accept_content
+    from spec_generator.findings_ledger import Ledger
+    a = "\n".join(f"- **Item {i}**: the UI replicates the lesson screen layout, tap targets and animations number {i}." for i in range(40))
+    b = "\n".join(f"- **Rule {i}**: storage keeps progress record {i} across sessions with validation and fallback." for i in range(40))
+    assert len(a) * len(b) > ca.MAX_COMPARE_CELLS
+    results = _accept_content("SPEC-3", "## Local\\n" + b, {"SPEC-1": "## UI\\n" + a}, Ledger())
+    assert all(r.status != ca.REJECT for r in results)
