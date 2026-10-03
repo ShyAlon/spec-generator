@@ -97,3 +97,11 @@ def test_handoff_blocks_on_missing_or_open_ledger(tmp_path,monkeypatch):
  ledger=Ledger();ledger.add(rule_id='echo.directive',rule_version='1',source='rule',kind='semantic',targets=['SPEC-1'],artifact_revision='x',summary='gray')
  (spec/'findings-ledger.json').write_text(json.dumps(ledger.to_dict()))
  assert any('open finding' in r for r in build_handoff(interview,spec)['blocked_reasons'])
+
+def test_decided_input_without_a_reason_reads_no_reason_recorded(tmp_path,monkeypatch):
+ interview,spec,intent=outputs(tmp_path,monkeypatch)
+ intent['founder_register']['items']=[{'item_id':'FD-tone','data_class':'content','question':'Tone?','owner':'founder','status':'decided','decision':'Friendly','scope':'Copy','source':'Interview','blocks':[]}]
+ (interview/'intent_model.json').write_text(json.dumps(intent))
+ srs=json.loads((spec/'srs.json').read_text());srs['founder_register']=intent['founder_register'];(spec/'srs.json').write_text(json.dumps(srs))
+ handoff=build_handoff(interview,spec)
+ assert 'FD-tone: Friendly Why: no reason recorded.' in handoff['files']['README.md'] or 'Why: no reason recorded' in json.dumps(handoff['files'])
