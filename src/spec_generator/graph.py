@@ -43,7 +43,7 @@ from .tech_candidates import (KIND_LEXICONS, PLATFORM_CHECKED_KINDS,
 from .tools import tools_enabled
 from .skeleton import (ModelStructureError, assign_architecture_ids,
                                    build_srs_skeleton, build_test_skeleton,
-                                   merge_srs_fills, merge_test_fills)
+                                   merge_srs_fills, merge_test_fills, check_runner_execution)
 from .assembly import build_traceability, order_milestones, validate_traceability
 from .prompts import METHODOLOGY, STAGE_PROMPTS
 from .telemetry import UsageLog
@@ -3010,6 +3010,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             merged = merge_test_fills(slots, d)
             for t in merged:
                 AcceptanceTest.model_validate(t)
+            check_runner_execution(merged)
             return merged
 
         from .schemas import test_fill_schema
@@ -3053,8 +3054,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             partials.save("tests_fills", done)
 
                 def _validate_new(d):
-                    for t in merge_test_fills(missing, d):
+                    merged_new = merge_test_fills(missing, d)
+                    for t in merged_new:
                         AcceptanceTest.model_validate(t)
+                    check_runner_execution(merged_new)
                     return d
 
                 missing_ids = [sl["test_id"] for sl in missing]
@@ -3086,8 +3089,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     link = sl.get("criterion_id") or sl.get("spec_id") or ""
 
                     def _validate_one(d, sl=sl):
-                        for t in merge_test_fills([sl], d):
+                        merged_one = merge_test_fills([sl], d)
+                        for t in merged_one:
                             AcceptanceTest.model_validate(t)
+                        check_runner_execution(merged_one)
                         return d
 
                     # Shared prefix FIRST (SRS+ITEMS are identical across

@@ -251,7 +251,7 @@ def test_tools_opt_in_full_pipeline_green(monkeypatch):
         "tests": [[{"name": "add_test",
                     "args": {"level": "module", "spec_id": "SPEC-1",
                              "description": "end-to-end module flow", "runner": "http",
-                             "definition": {"preconditions": [], "steps": ["GET /api/x"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}, "id": "c2"}], []]})
+                             "definition": {"preconditions": [], "steps": ["GET /api/x"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {"url": "/api/x", "method": "GET", "expected_status": 200}}}, "id": "c2"}], []]})
     srs = r["bundle"]["_srs"]
     assert [q["requirement_id"] for q in srs["functional"]] == ["R-1"]
     assert srs["functional"][0]["need_ids"] == ["N-1"]  # dedup: link was already implied

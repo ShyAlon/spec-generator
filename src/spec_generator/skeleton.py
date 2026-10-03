@@ -179,6 +179,29 @@ def build_test_skeleton(srs: dict, items: list) -> list[dict]:
     return slots
 
 
+_RUNNER_REQUIRED = {"dom": ("selector",), "http": ("url", "method", "expected_status"), "cli": ("command",)}
+
+
+def check_runner_execution(tests: list[dict]) -> None:
+    """Deterministic gate: a runner that executes something must carry the machine-readable
+    fields that execution needs. The error names the exact test, runner and missing fields so
+    the retry feedback is specific. static/semantic runners need none."""
+    problems = []
+    for t in tests:
+        need = _RUNNER_REQUIRED.get(str(t.get("runner") or "").strip().lower())
+        if not need:
+            continue
+        d = t.get("definition")
+        ex = (d.get("execution") if isinstance(d, dict) else getattr(d, "execution", None)) or {}
+        get = ex.get if isinstance(ex, dict) else lambda k, default=None: getattr(ex, k, default)
+        missing = [f for f in need if get(f) in (None, "", [])]
+        if missing:
+            problems.append(f"{t.get('test_id')}: runner '{t.get('runner')}' requires definition.execution."
+                            + ", ".join(missing) + " (missing: " + ", ".join(missing) + ")")
+    if problems:
+        raise ModelStructureError("; ".join(problems))
+
+
 def merge_test_fills(slots: list[dict], body) -> list[dict]:
     fills = body.get("fills") if isinstance(body, dict) else None
     if isinstance(fills, dict):

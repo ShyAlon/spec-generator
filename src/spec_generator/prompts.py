@@ -53,7 +53,11 @@ STAGE_PROMPTS = {
              "requirements by id through requirement_ids - never restate or regroup requirement "
              "text, and never invent ids: use only requirement ids that exist in the SRS below. "
              "One JSON array.",
-    "tests": "Author the test prose. The skeleton is FIXED: one acceptance-level slot per SRS "
+    "tests": "You are a QA engineer writing tests for ONE acceptance criterion or spec at a time. Each test asserts "
+             "ONLY what its one criterion or spec states: add no scenarios, failure modes, security, encryption, "
+             "localization, accessibility or latency numbers that the cited criterion or spec does not state. "
+             "expected_outcomes must be observable. runner dom needs execution.selector, http needs execution.url, "
+             "method and expected_status, cli needs execution.command. Author the test prose. The skeleton is FIXED: one acceptance-level slot per SRS "
              "acceptance criterion (criterion_id linked) and one unit-level slot per item spec "
              "(spec_id linked), test_ids already assigned - never change, renumber, add, or drop "
              "them. For EACH slot write description, runner ('http' | 'dom' | 'cli' | 'static' | "
@@ -86,15 +90,17 @@ STAGE_PROMPTS = {
     "items_body": "Write the body of ONE item spec, for a coding agent to execute against: interface, "
                   "data model, behaviors, error cases, non-functionals. Markdown. No marketing "
                   "language. Reference requirements by id; never restate their text.",
-    "review": "Review pass {n}: find gaps, contradictions, orphan requirements, uncheckable criteria, and downstream "
-              "text that restates requirements. Rules depend on the artifact's scope. "
+    "review": "Review pass {n}: find gaps, contradictions, orphan requirements and uncheckable criteria. "
+              "Rules depend on the artifact's scope. "
               "requirement (the SRS): flag solution language - named technologies, UI widgets, APIs - because requirements stay "
               "solution-agnostic. "
               "spec and test: the architecture has ALREADY DECIDED the stack (the DECIDED ARCHITECTURE block is binding). "
               "Naming the decided technologies, APIs, selectors and HTTP methods in a spec or a test is REQUIRED. Never flag it "
               "and never ask to remove, replace, abstract or avoid it. For spec and test flag ONLY: missing behavior, "
-              "contradictions with the SRS or with the decided architecture, orphan items, uncheckable items, and restated "
-              "requirement text. A technology that is NOT in the decided architecture may be flagged as a contradiction. "
+              "contradictions with the SRS or with the decided architecture, orphan items, and uncheckable items. "
+              "A test is flagged ONLY for contradicting its own criterion or spec, or for an expected result that cannot be "
+              "observed. A spec 'add behavior' finding must cite a requirement or AC id. "
+              "A technology that is NOT in the decided architecture may be flagged as a contradiction. "
               "Return a JSON list of typed fixes {{scope, target_ids, fix}}, or []. scope is requirement|spec|test|systemic. "
               "Use exact R-/SPEC-/T- ids for a scoped fix; use systemic with [] only when no safe target exists.",
 }
@@ -201,9 +207,10 @@ TOOL_PROMPTS = {
            "SKELETON:\n{skeleton}\n\nNEEDS:\n{needs}\n\nINTENT:\n{intent}",
     "tests": "Here is the test skeleton (one acceptance slot per SRS criterion, one "
              "unit slot per item spec, ids/links fixed) with the SRS and the item "
-             "specs. You may propose ADDITIONAL tests via add_test - only for real "
-             "gaps the skeleton cannot cover: a module/system test spanning several "
-             "specs, or an acceptance angle with no criterion. If the skeleton covers "
+             "specs. Act as a QA engineer: each test asserts only what its one "
+             "criterion or spec states, with observable expected_outcomes, and no new scenarios, failure modes, "
+             "security, encryption, localization, accessibility or latency numbers. Do NOT call add_test unless "
+             "a criterion or spec has no test at all and the skeleton cannot cover it. If the skeleton covers "
              "the V, call no tools and say so briefly.\n\n"
              "SKELETON:\n{skeleton}\n\nSRS:\n{srs}\n\nITEMS:\n{items}",
 }
