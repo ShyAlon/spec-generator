@@ -206,6 +206,24 @@ def _apply_ledger_actions(graph, cfg, prior, args):
     return graph.get_state(cfg).values
 
 
+def _pre_run_actions(graph, cfg, prior, args):
+    """Ledger actions and quick_stop handling before a run. Returns (prior, dispose_only).
+
+    A bare --dispose (no --repair) only records the founder's dispositions: it must NOT
+    clear quick_stop, because clearing it re-points the checkpoint at items and the next
+    plain run then regenerates everything the quick run deliberately skipped."""
+    dispose_only = bool(args.dispose and not args.repair)
+    if dispose_only:
+        return _apply_ledger_actions(graph, cfg, prior, args), True
+    if prior and prior.get("quick_stop") and not args.quick:
+        # a finished quick run ends the graph at its review; any later run starts clean
+        graph.update_state(cfg, {"quick_stop": False, "repair_quick": False}, as_node="apply_fixes")  # resume at items: regenerate what the quick run skipped
+        prior = graph.get_state(cfg).values
+    if args.dispose or args.repair:
+        prior = _apply_ledger_actions(graph, cfg, prior, args)
+    return prior, False
+
+
 def _quick_summary(before: dict | None, after: dict, outdir) -> str:
     """What a quick repair run leaves behind: what closed, what is still open. Printed and saved."""
     from collections import Counter
@@ -1036,13 +1054,12 @@ def main() -> None:
     if args.quick and not args.repair:
         raise UserFacingError("--quick only applies to --repair.", "nothing was changed.",
                               "use --repair <finding ids> --quick, or drop --quick.")
-    if prior and prior.get("quick_stop") and not args.quick:
-        # a finished quick run ends the graph at its review; any later run starts clean
-        graph.update_state(cfg, {"quick_stop": False, "repair_quick": False}, as_node="apply_fixes")  # resume at items: regenerate what the quick run skipped
-        prior = graph.get_state(cfg).values
+    prior, dispose_only = _pre_run_actions(graph, cfg, prior, args)
+    if dispose_only:
+        print("Disposition recorded in the findings ledger. Nothing was resumed or regenerated; "
+              "rerun without --dispose to continue.", file=sys.stderr)
+        return
     prior_ledger_before_run = (prior or {}).get("findings_ledger")
-    if args.dispose or args.repair:
-        prior = _apply_ledger_actions(graph, cfg, prior, args)
     resume = bool(prior)
     if resume:
         prior_conops = prior.get("conops")
