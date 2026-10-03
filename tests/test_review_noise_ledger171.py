@@ -64,3 +64,10 @@ def test_refresh_does_not_reopen_a_noise_class_finding():
 def test_filter_returns_g_class_for_systemic_scope_too():
     kept, filtered = filter_review_noise([{"scope": "systemic", "target_ids": [], "fix": "Avoid restating requirement text anywhere."}])
     assert not kept and filtered[0]["noise_class"].startswith("G")
+
+
+def test_class_h_stays_disabled():
+    # Class H (systemic-universal) matched founder-kept findings on the 171 ledger.
+    # Shy: leave it off, it is technical debt. Do not enable without a new fixture gate.
+    from spec_generator import review_noise
+    assert review_noise.CLASS_H_ENABLED is False
