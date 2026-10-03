@@ -42,14 +42,29 @@ _FUTURE_MARKERS = ("in the future", "future phase", "future release", "phase 2",
                    "someday", "not yet", "for now,")
 
 
-def is_future_commitment(text: str) -> bool:
-    """Deterministic deferred-detection from the need's own words."""
-    t = str(text).lower()
-    return any(m in t for m in _FUTURE_MARKERS)
+def deferred_sn_ids(intent: dict | None) -> set[str]:
+    """SN ids the interview flagged deferred (IntentNeed.deferred)."""
+    return {n.get("need_id") for n in ((intent or {}).get("stakeholder_needs") or []) if n.get("deferred") is True}
 
 
-def deferred_needs(needs: dict) -> list[dict]:
-    return [n for n in (needs.get("needs") or []) if is_future_commitment(n.get("statement", ""))]
+def is_future_commitment(need, intent: dict | None = None) -> bool:
+    """A need is a future commitment when the interview flagged it deferred
+    (IntentNeed.deferred, directly or via intent_need_ids), OR - fallback for
+    payloads from before the flag - its own words match a future marker.
+    `need` may be a dict, a model with .statement, or bare text."""
+    if isinstance(need, str):
+        statement, flagged = need, False
+    else:
+        get = need.get if isinstance(need, dict) else lambda k, d=None: getattr(need, k, d)
+        statement = get("statement", "") or ""
+        flagged = get("deferred", False) is True or bool(
+            set(get("intent_need_ids", None) or []) & deferred_sn_ids(intent))
+    t = str(statement).lower()
+    return flagged or any(m in t for m in _FUTURE_MARKERS)
+
+
+def deferred_needs(needs: dict, intent: dict | None = None) -> list[dict]:
+    return [n for n in (needs.get("needs") or []) if is_future_commitment(n, intent)]
 
 def needs_from_intent(intent: dict) -> dict:
     """Carry validated interview needs forward without asking a model.
@@ -104,13 +119,13 @@ def merge_duplicate_needs(needs: dict, threshold: float = 0.72) -> dict:
     return {**needs,"needs":out}
 
 
-def build_srs_skeleton(needs: dict) -> list[dict]:
+def build_srs_skeleton(needs: dict, intent: dict | None = None) -> list[dict]:
     """One requirement slot per CURRENT stakeholder need, R-n in need order.
     Deferred (future-phase) needs drive no slots: they are commitments about
     LATER, recorded in the SRS scope's deferred block (srs_document_data)."""
     slots = []
     for i, n in enumerate(needs.get("needs") or [], start=1):
-        if is_future_commitment(n.get("statement", "")):
+        if is_future_commitment(n, intent):
             continue
         slots.append({
             "requirement_id": f"R-{len(slots) + 1}",
