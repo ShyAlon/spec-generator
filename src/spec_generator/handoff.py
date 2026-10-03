@@ -47,7 +47,7 @@ def build_handoff(interview:Path,spec:Path)->dict:
     decisions.insert(0,{'id':conops.decision.selected_concept_id,'choice':conops.decision.selected_concept,'why':conops.decision.rationale,'source':'interview/conops.json','owner':'founder'})
     for source,record in semantic_records.items():
         decisions.extend({'id':d.item_id,'choice':d.action,'why':d.rationale,'source':source,'owner':d.actor} for d in record.decisions)
-    decisions.extend({'id':x.item_id,'choice':x.decision,'why':x.reason,'source':'founder-decisions.json','owner':x.owner} for x in register.items if x.status=='decided')
+    decisions.extend({'id':x.item_id,'choice':x.decision,'why':x.reason or 'no reason recorded','source':'founder-decisions.json','owner':x.owner} for x in register.items if x.status=='decided')
     digest_lines=['# Coding-agent handoff','','## Decided']+[f"- {d['id']}: {d['choice']} Why: {d['why']}. Source: {d['source']}." for d in decisions]
     digest_lines+=['','## Open founder inputs']+[f"- {x.item_id} [{x.data_class}, {x.status}] Owner: {x.owner}. {x.question} Blocks: {', '.join(x.blocks) or 'none recorded'}. Source: {x.source}." for x in register.items if x.status!='decided']
     digest_lines+=['','## Constraint advisories']+[f'- {x.advisory_id} [{x.status}]: {x.statement} Validation: {x.validation_expectation}' for x in register.advisories]
