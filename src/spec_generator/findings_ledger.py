@@ -215,6 +215,15 @@ class Ledger:
                      and not (f["state"] == ADDRESSED and current[t] == (f["closure"] or {}).get("after_revision"))]
             if not moved:
                 continue
+            from .review_noise import noise_class
+            cls = noise_class({"scope": f.get("scope"), "fix": (f.get("detail") or {}).get("fix") or f.get("summary") or ""})
+            if f["rule_id"] == "review.llm" and cls:
+                # measured review-noise class: do not re-raise it open when its target moved
+                f["state"] = SUPERSEDED
+                f["closure"] = {"reason": f"filtered: noise-class {cls}", "before_revision": f["artifact_revision"],
+                                "after_revision": current[moved[0]]}
+                self.history.append({"event": "refresh_filtered_noise", "finding_id": fid, "noise_class": cls})
+                continue
             f["state"] = SUPERSEDED
             new_rev = current[moved[0]]
             nid = self.add(rule_id=f["rule_id"], rule_version=f["rule_version"], source=f["sources"][0],

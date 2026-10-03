@@ -1876,47 +1876,10 @@ def _filter_decided_stack_findings(fixes: list[dict], state: GenState) -> tuple[
     return kept, filtered
 
 
-# Review-noise classes (measured on the 2026-10-02 ledger, 96 spec/test findings the founder rejected, 0 of them
-# kept by these rules; requirement and systemic findings are never touched). Each class is a deterministic phrase
-# pattern; a finding that states a contradiction, an absence or an orphan is rescued and stays open.
-_NOISE_RESCUE = _re.compile(
-    r"contradict|conflict|inconsisten|mismatch|does not match|doesn't match|\bbut the (architecture|srs|requirement)|"
-    r"\binstead of\b|\b(missing|omits?|omitted|absent|lacks?|no mention|not mentioned|never (states|mentions))\b|"
-    r"\borphan|untraced|unreferenced|restat\w+ (the )?requirement", _re.I)
-_NOISE_CLASSES = (
-    ("A:anti-technology-doctrine", _re.compile(
-        r"solution[- ]agnostic|technology[- ]agnostic|"
-        r"(do not|don't|not|avoid|without)\s+(\w+\s+){0,2}(imply\w*|prescrib\w*|specif\w*|nam\w+|referenc\w*|mention\w*)"
-        r"\s+(\w+\s+){0,3}(specific |particular )?(technolog|implementation|design solution|frameworks?\b)", _re.I)),
-    ("E:solution-detail-in-spec-or-test", _re.compile(
-        r"(does not|do not|not)\s+specify\b.{0,80}(UI elements|UI interactions|selectors?|solution details?|"
-        r"performance metrics|GitHub)|"
-        r"(remove|avoid)\b.{0,60}\b(solution[- ]specific|solution detail|solution language|implies? (a )?(solution|implementation)|"
-        r"prescribes? a design)", _re.I)),
-    ("F:cites-decided-architecture", _re.compile(
-        r"(as per|aligning with|consistent with|per) the decided (architecture|storage|programming language|stack)", _re.I)),
-)
-
-
-def _noise_class(fix: dict) -> str | None:
-    if fix.get("scope") not in ("spec", "test"):
-        return None
-    text = fix.get("fix") or ""
-    if _NOISE_RESCUE.search(text):
-        return None
-    return next((name for name, pat in _NOISE_CLASSES if pat.search(text)), None)
-
-
-def _filter_review_noise(fixes: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Archive (never open) spec/test findings in the measured noise classes. Auditable: the caller records them."""
-    kept, filtered = [], []
-    for fix in fixes:
-        cls = _noise_class(fix)
-        if cls:
-            filtered.append({**fix, "filtered": f"filtered: noise-class {cls}", "noise_class": cls})
-        else:
-            kept.append(fix)
-    return kept, filtered
+# Review-noise classes live in review_noise.py (shared with Ledger.refresh).
+from .review_noise import filter_review_noise as _filter_review_noise  # noqa: E402,F401
+from .review_noise import noise_class as _noise_class  # noqa: E402,F401
+from .review_noise import _NOISE_CLASSES, _NOISE_RESCUE  # noqa: E402,F401
 
 
 def _normalized_review_fixes(value) -> list[dict]:

@@ -1,0 +1,1028 @@
+[
+ {
+  "id": "L000",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Clarify 'replicate' to specify the extent of replication required for lesson content."
+ },
+ {
+  "id": "L001",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure 'interactive elements' are explicitly defined to avoid ambiguity."
+ },
+ {
+  "id": "L002",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Define 'feedback' to specify the metrics and format of user performance feedback."
+ },
+ {
+  "id": "L003",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Clarify 'progress through lessons' to specify the exact sequence and conditions for progression."
+ },
+ {
+  "id": "L004",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure the requirement 'The application shall provide precise feedback on the type of failure when a song is scored poorly.' is traceable to a stakeholder need."
+ },
+ {
+  "id": "L005",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure acceptance criteria AC-19, AC-20, and AC-21 are observable and verifiable without referencing specific technologies or methods."
+ },
+ {
+  "id": "L006",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure the requirement 'The application shall maintain a responsive user interface with minimal lag during interactions' is observable and verifiable without solution-specific language."
+ },
+ {
+  "id": "L007",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Remove 'including all the lessons' from the requirement statement to avoid solution-specific language."
+ },
+ {
+  "id": "L008",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Ensure test description and steps focus on lesson accessibility without specifying lesson content."
+ },
+ {
+  "id": "L009",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Ensure test description and steps focus on offline functionality without specifying lesson content."
+ },
+ {
+  "id": "L010",
+  "scope": "spec",
+  "class": "invented-encryption",
+  "text": "Specify the encryption method for securing local storage data to ensure it aligns with the requirement for security."
+ },
+ {
+  "id": "L011",
+  "scope": "test",
+  "class": "invented-encryption",
+  "text": "Add a test case to verify that local storage data is encrypted as per the security requirement."
+ },
+ {
+  "id": "L012",
+  "scope": "systemic",
+  "class": "invented-encryption",
+  "text": "Ensure that the encryption method for local storage data is documented and consistent across all relevant specifications and tests."
+ },
+ {
+  "id": "L013",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Clarify the requirement to specify the exact sequence of lessons as per the Duolingo Music track."
+ },
+ {
+  "id": "L014",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Ensure the spec references requirement R-9 without restating its text."
+ },
+ {
+  "id": "L015",
+  "scope": "test",
+  "class": "G-restate",
+  "text": "Ensure the test definition for T-20 references AC-32 without restating its text."
+ },
+ {
+  "id": "L016",
+  "scope": "test",
+  "class": "G-restate",
+  "text": "Ensure the test definition for T-21 references AC-33 without restating its text."
+ },
+ {
+  "id": "L017",
+  "scope": "test",
+  "class": "G-restate",
+  "text": "Ensure the test definition for T-22 references AC-34 without restating its text."
+ },
+ {
+  "id": "L018",
+  "scope": "test",
+  "class": "G-restate",
+  "text": "Ensure the test definition for T-23 references AC-35 without restating its text."
+ },
+ {
+  "id": "L019",
+  "scope": "test",
+  "class": "G-restate",
+  "text": "Ensure the test definition for T-56 references SPEC-1 without restating its text."
+ },
+ {
+  "id": "L020",
+  "scope": "spec",
+  "class": "failure-mode-speculation",
+  "text": "Add a behavior to handle the case where the score is not within the expected range, ensuring a generic feedback message is displayed."
+ },
+ {
+  "id": "L021",
+  "scope": "test",
+  "class": "failure-mode-speculation",
+  "text": "Include a test case for when the score is not within the expected range to verify that a generic feedback message is displayed."
+ },
+ {
+  "id": "L022",
+  "scope": "spec",
+  "class": "failure-mode-speculation",
+  "text": "Ensure the specification includes a behavior for handling device-specific issues during application launch."
+ },
+ {
+  "id": "L023",
+  "scope": "spec",
+  "class": "failure-mode-speculation",
+  "text": "Add a behavior to address UI element accessibility issues due to screen size or orientation constraints."
+ },
+ {
+  "id": "L024",
+  "scope": "spec",
+  "class": "failure-mode-speculation",
+  "text": "Include a behavior for managing input handling issues where the on-screen piano keyboard may not respond accurately."
+ },
+ {
+  "id": "L025",
+  "scope": "spec",
+  "class": "failure-mode-speculation",
+  "text": "Specify a behavior to handle playback issues during lessons."
+ },
+ {
+  "id": "L026",
+  "scope": "spec",
+  "class": "failure-mode-speculation",
+  "text": "Define a behavior for error handling in real-time updates of the star and scoring system."
+ },
+ {
+  "id": "L027",
+  "scope": "spec",
+  "class": "failure-mode-speculation",
+  "text": "Add a behavior to address potential failures in persisting data to local storage."
+ },
+ {
+  "id": "L028",
+  "scope": "test",
+  "class": "failure-mode-speculation",
+  "text": "Include a test case for handling scenarios where the application may not launch or operate correctly due to device-specific issues."
+ },
+ {
+  "id": "L029",
+  "scope": "test",
+  "class": "failure-mode-speculation",
+  "text": "Add a test case to address cases where UI elements may not be accessible or interactable due to screen size or orientation constraints."
+ },
+ {
+  "id": "L030",
+  "scope": "test",
+  "class": "failure-mode-speculation",
+  "text": "Include a test case for managing situations where the on-screen piano keyboard may not respond accurately to user input."
+ },
+ {
+  "id": "L031",
+  "scope": "test",
+  "class": "failure-mode-speculation",
+  "text": "Specify a test case to handle playback issues during lessons."
+ },
+ {
+  "id": "L032",
+  "scope": "test",
+  "class": "failure-mode-speculation",
+  "text": "Define a test case for error handling in real-time updates of the star and scoring system."
+ },
+ {
+  "id": "L033",
+  "scope": "test",
+  "class": "failure-mode-speculation",
+  "text": "Add a test case to address potential failures in persisting data to local storage."
+ },
+ {
+  "id": "L034",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure the requirement 'The application shall be deployed using GitHub Actions to GitHub Pages' is verifiable and observable without specifying technologies."
+ },
+ {
+  "id": "L035",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Ensure the Local Storage Component's `setItem` method handles non-string values correctly by serializing them to JSON strings."
+ },
+ {
+  "id": "L036",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Add error handling for JSON serialization/deserialization in the Local Storage Component to prevent application crashes."
+ },
+ {
+  "id": "L037",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Specify a maximum storage size for local storage to prevent exceeding browser limits and handle quota exceeded errors gracefully."
+ },
+ {
+  "id": "L038",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Implement data sanitization in the Local Storage Component to prevent XSS attacks and ensure data privacy."
+ },
+ {
+  "id": "L039",
+  "scope": "test",
+  "class": "storage-real",
+  "text": "Add a test case for non-string values in the `setItem` method to verify correct JSON serialization."
+ },
+ {
+  "id": "L040",
+  "scope": "test",
+  "class": "storage-real",
+  "text": "Include a test case for JSON serialization errors in the `setItem` method to ensure robust error handling."
+ },
+ {
+  "id": "L041",
+  "scope": "test",
+  "class": "storage-real",
+  "text": "Add a test case to verify behavior when local storage quota is exceeded in the `setItem` method."
+ },
+ {
+  "id": "L042",
+  "scope": "test",
+  "class": "storage-real",
+  "text": "Include a test case to verify data sanitization in the `setItem` method to prevent XSS attacks."
+ },
+ {
+  "id": "L043",
+  "scope": "systemic",
+  "class": "storage-real",
+  "text": "Ensure all test cases for local storage operations include checks for data integrity and security."
+ },
+ {
+  "id": "L044",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure acceptance criteria are observable and verifiable without specifying technologies or methods."
+ },
+ {
+  "id": "L045",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Ensure the test definition does not specify HTTP methods or status codes in the acceptance criteria."
+ },
+ {
+  "id": "L046",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Ensure the test definition does not specify CLI commands in the acceptance criteria."
+ },
+ {
+  "id": "L047",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Include specific observable criteria for 'replicating the UI and UX' in the spec."
+ },
+ {
+  "id": "L048",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Ensure the spec details how 'all lessons' are accessible, including offline."
+ },
+ {
+  "id": "L049",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Specify how 'offline' functionality is implemented and verified."
+ },
+ {
+  "id": "L050",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Ensure the 'Error Cases' section explicitly states that any attempt to access or store user-specific data should be intercepted and prevented."
+ },
+ {
+  "id": "L051",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Ensure the Local Storage Component's `setItem` method handles non-string values correctly by serializing them to JSON."
+ },
+ {
+  "id": "L052",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Avoid restating requirement text in the Data Model section; reference requirement R-7 instead."
+ },
+ {
+  "id": "L053",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Add behavior for handling cases where lesson data is unavailable or incomplete."
+ },
+ {
+  "id": "L054",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Specify error handling for scenarios where user performance data cannot be recorded."
+ },
+ {
+  "id": "L055",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Define error handling for issues in calculating the grade due to data inconsistencies."
+ },
+ {
+  "id": "L056",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Ensure 'Lesson Data' includes all necessary attributes for replication, such as lesson titles, descriptions, and interactive elements."
+ },
+ {
+  "id": "L057",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Define 'User Progress' to include specific metrics and data points tracked for user performance."
+ },
+ {
+  "id": "L058",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Specify the structure and format of data stored in 'Local Storage' to ensure consistency and reliability."
+ },
+ {
+  "id": "L059",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Detail the implementation of 'Interactive Elements' to ensure they match the Duolingo Music track's functionality."
+ },
+ {
+  "id": "L060",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Clarify the 'Feedback Mechanism' to specify how feedback is presented and what metrics are included."
+ },
+ {
+  "id": "L061",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Define the sequence and conditions for 'Progression' to ensure lessons are accessed in the correct order."
+ },
+ {
+  "id": "L062",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Remove the 'API Endpoints' section from the Song Library Data Model specification as it is solution-specific."
+ },
+ {
+  "id": "L063",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Ensure the 'Song' data model attributes do not include solution-specific details like 'popularity'."
+ },
+ {
+  "id": "L064",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Ensure the 'Behaviors' section does not specify UI interactions like 'The user interface will display a list of songs'."
+ },
+ {
+  "id": "L065",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Ensure the 'Non-Functionals' section does not specify performance metrics like 'The song list should load and render within 200 milliseconds'."
+ },
+ {
+  "id": "L066",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Ensure the Feedback Display Component is specified to use React, as per the decided architecture."
+ },
+ {
+  "id": "L067",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Specify that the FeedbackMessage object is stored using SQLite, aligning with the decided storage solution."
+ },
+ {
+  "id": "L068",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Include Service Workers in the Offline Support section to ensure feedback is available offline."
+ },
+ {
+  "id": "L069",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Ensure the Feedback Evaluation behavior is implemented in JavaScript, as per the decided programming language."
+ },
+ {
+  "id": "L070",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Ensure the Feedback Evaluation behavior in SPEC-7 is traceable to R-14."
+ },
+ {
+  "id": "L071",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Ensure the 'Retry' button resets the exercise state to its initial condition as per R-15."
+ },
+ {
+  "id": "L072",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Clarify that the 'Switch' button opens a list of available exercises, aligning with R-15."
+ },
+ {
+  "id": "L073",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Specify that the exercise list contains unique identifiers and metadata for each exercise, as required by R-15."
+ },
+ {
+  "id": "L074",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Ensure the 'Retry Current Exercise' behavior resets the exercise state to its initial condition, consistent with AC-52."
+ },
+ {
+  "id": "L075",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Define 'Switch to Another Exercise' behavior to save the current exercise state before switching, as per AC-54."
+ },
+ {
+  "id": "L076",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Ensure 'Visual Confirmation' behavior provides feedback for both retry and switch actions, aligning with AC-55."
+ },
+ {
+  "id": "L077",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Address 'Invalid Exercise Selection' error case by specifying the error message to be displayed."
+ },
+ {
+  "id": "L078",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Clarify 'State Preservation Failure' error case by detailing the error message and prevention mechanism."
+ },
+ {
+  "id": "L079",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Ensure SPEC-9 references requirement R-4 by id without restating its text."
+ },
+ {
+  "id": "L080",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Ensure 'Web Storage API' is explicitly mentioned as the interface for local storage interactions."
+ },
+ {
+  "id": "L081",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Ensure the Local Storage Persistence spec includes error handling for serialization errors."
+ },
+ {
+  "id": "L082",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Add a behavior for handling storage limit exceeded errors in the Local Storage Persistence spec."
+ },
+ {
+  "id": "L083",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Include a behavior for handling quota exceeded errors in the Local Storage Persistence spec."
+ },
+ {
+  "id": "L084",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Remove 'hardware-accelerated CSS animations' from the 'Animation and Interaction' section to maintain solution-agnostic language."
+ },
+ {
+  "id": "L085",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Clarify 'replicate the UI and UX' to specify measurable criteria for UI elements and UX flow."
+ },
+ {
+  "id": "L086",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Define 'all lessons' to include specific lesson identifiers or categories."
+ },
+ {
+  "id": "L087",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure offline functionality is explicitly linked to stakeholder need N-1."
+ },
+ {
+  "id": "L088",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Add specific behaviors for offline functionality to align with R-1."
+ },
+ {
+  "id": "L089",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Include error handling for offline functionality in the UIReplicationComponent."
+ },
+ {
+  "id": "L090",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Ensure test T-1 includes checks for all UI elements specified in R-1."
+ },
+ {
+  "id": "L091",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Verify T-2 includes steps to test all interactive elements as per R-1."
+ },
+ {
+  "id": "L092",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Ensure T-3 checks for accessibility of all lessons, including those offline."
+ },
+ {
+  "id": "L093",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Confirm T-4 tests offline functionality for all lessons and experiences."
+ },
+ {
+  "id": "L094",
+  "scope": "systemic",
+  "class": "systemic-vague",
+  "text": "Ensure all acceptance criteria are directly traceable to stakeholder needs."
+ },
+ {
+  "id": "L095",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Ensure the 'No User Management' spec explicitly states that no user data is collected, stored, or processed, aligning with R-2."
+ },
+ {
+  "id": "L096",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Add a step in T-7 to explicitly check that no user-specific data is stored in local storage or session storage."
+ },
+ {
+  "id": "L097",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Ensure T-8 includes a step to verify that no user-specific data is stored or used to differentiate sessions."
+ },
+ {
+  "id": "L098",
+  "scope": "spec",
+  "class": "invented-encryption",
+  "text": "Add behavior to handle data encryption for sensitive user data in local storage."
+ },
+ {
+  "id": "L099",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Specify error handling for data corruption in local storage, including recovery or reset mechanisms."
+ },
+ {
+  "id": "L100",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Define fallback mechanisms for when local storage limit is exceeded, such as data compression."
+ },
+ {
+  "id": "L101",
+  "scope": "test",
+  "class": "invented-encryption",
+  "text": "Include a test case for verifying data encryption in local storage."
+ },
+ {
+  "id": "L102",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Add a test case to verify data integrity after application restart."
+ },
+ {
+  "id": "L103",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Ensure test verifies that user progress data matches the data saved during the previous session."
+ },
+ {
+  "id": "L104",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Include a test case for verifying data persistence after device restart."
+ },
+ {
+  "id": "L105",
+  "scope": "systemic",
+  "class": "systemic-vague",
+  "text": "Ensure all acceptance criteria are verifiable and observable."
+ },
+ {
+  "id": "L106",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Include a step to verify that Service Workers are active and intercepting network requests."
+ },
+ {
+  "id": "L107",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Add a verification step to ensure that cached assets are used when accessing lesson content offline."
+ },
+ {
+  "id": "L108",
+  "scope": "test",
+  "class": "storage-real",
+  "text": "Include a check to confirm that user data is stored in local storage and accessible offline."
+ },
+ {
+  "id": "L109",
+  "scope": "systemic",
+  "class": "G-restate",
+  "text": "Ensure all acceptance criteria are verifiable and do not restate requirement text."
+ },
+ {
+  "id": "L110",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure the requirement statement is solution-agnostic by removing any implied solution details."
+ },
+ {
+  "id": "L111",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure the requirement 'The PWA shall include all lesson content from the Duolingo Music track' is verifiable and does not imply specific technologies or UI elements."
+ },
+ {
+  "id": "L112",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Clarify that 'Lesson Data' includes all necessary elements without restating requirement R-9 verbatim."
+ },
+ {
+  "id": "L113",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Remove any implied technology or UI specifics in the test for AC-33, focusing on the presence of interactive elements."
+ },
+ {
+  "id": "L114",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Ensure the test for AC-34 does not specify how feedback is presented, only that it is provided."
+ },
+ {
+  "id": "L115",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure the acceptance criterion 'Each song in the list shall be a popular song' is verifiable by defining what constitutes a 'popular song'."
+ },
+ {
+  "id": "L116",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Add a behavior to verify the popularity of songs in the list, ensuring it aligns with the acceptance criterion AC-43."
+ },
+ {
+  "id": "L117",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Define a method to verify song popularity, such as comparing against a predefined list of popular songs."
+ },
+ {
+  "id": "L118",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Ensure the test for selecting a song includes verification that the song is indeed popular, aligning with AC-43."
+ },
+ {
+  "id": "L119",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Add a behavior to handle cases where both pitch and rhythm errors occur, ensuring the feedback message is 'Pitch and rhythm error'."
+ },
+ {
+  "id": "L120",
+  "scope": "spec",
+  "class": "invented-scope",
+  "text": "Ensure the Feedback Display Component renders messages within 200 milliseconds of grading completion."
+ },
+ {
+  "id": "L121",
+  "scope": "spec",
+  "class": "invented-scope",
+  "text": "Specify that feedback messages and visual aids must be accessible to users with disabilities."
+ },
+ {
+  "id": "L122",
+  "scope": "spec",
+  "class": "invented-scope",
+  "text": "Include localization support for feedback messages to cater to a diverse user base."
+ },
+ {
+  "id": "L123",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Add a test case for when both pitch and rhythm errors occur, verifying the message 'Pitch and rhythm error' is displayed."
+ },
+ {
+  "id": "L124",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Ensure the test verifies feedback is displayed within 200 milliseconds of grading completion."
+ },
+ {
+  "id": "L125",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Verify that visual aids are used to enhance understanding when necessary."
+ },
+ {
+  "id": "L126",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Ensure 'FeedbackMessage' object includes a 'visualAid' field for optional visual aids."
+ },
+ {
+  "id": "L127",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Clarify 'Feedback Generation' behavior to specify how feedback type is determined."
+ },
+ {
+  "id": "L128",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Define 'Invalid Feedback Type' error handling to ensure a generic message is displayed."
+ },
+ {
+  "id": "L129",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Specify handling for 'Missing Visual Aids' to ensure feedback proceeds without them."
+ },
+ {
+  "id": "L130",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Add 'selector' for 'feedback-message' in 'execution' to ensure correct DOM element is targeted."
+ },
+ {
+  "id": "L131",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Add 'selector' for 'feedback-message' in 'execution' to ensure correct DOM element is targeted."
+ },
+ {
+  "id": "L132",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Add 'selector' for 'feedback-message' in 'execution' to ensure correct DOM element is targeted."
+ },
+ {
+  "id": "L133",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Change 'selector' from '#feedback-container' to '#feedback-message' for consistency with other tests."
+ },
+ {
+  "id": "L134",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Clarify that the list of available exercises is dynamically loaded and managed using JavaScript."
+ },
+ {
+  "id": "L135",
+  "scope": "spec",
+  "class": "AEF-tech-demand",
+  "text": "Ensure visual confirmation is implemented using JavaScript-based UI elements like toasts or modals."
+ },
+ {
+  "id": "L136",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Use JavaScript to locate and interact with the 'Retry' button using the specified DOM selector."
+ },
+ {
+  "id": "L137",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Use JavaScript to locate and interact with the 'Switch Exercise' button using the specified DOM selector."
+ },
+ {
+  "id": "L138",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Use JavaScript to locate and interact with the exercise switch button using the specified DOM selector."
+ },
+ {
+  "id": "L139",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Use JavaScript to verify visual confirmation using the specified DOM selectors for exercise switch and retry."
+ },
+ {
+  "id": "L140",
+  "scope": "systemic",
+  "class": "AEF-tech-demand",
+  "text": "Ensure all JavaScript interactions are consistent with the decided architecture using GitHub Pages and Service Workers."
+ },
+ {
+  "id": "L141",
+  "scope": "systemic",
+  "class": "systemic-vague",
+  "text": "Ensure the requirement 'The application shall be fully functional on both iPhone and iPad devices' is observable and verifiable without specifying UI elements or behaviors."
+ },
+ {
+  "id": "L142",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Remove 'The application shall launch and operate without errors on both iPhone and iPad' from the Behaviors section to avoid restating the requirement."
+ },
+ {
+  "id": "L143",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Remove 'All UI elements must be accessible and interactable on both devices' from the Behaviors section to avoid restating the requirement."
+ },
+ {
+  "id": "L144",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Remove 'The on-screen piano keyboard must respond accurately to user input on both devices' from the Behaviors section to avoid restating the requirement."
+ },
+ {
+  "id": "L145",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Remove 'All lessons, including ear training, sight-reading, and full song recitals, must be playable on both devices' from the Behaviors section to avoid restating the requirement."
+ },
+ {
+  "id": "L146",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Remove 'The star and scoring system must display correctly and update in real-time on both devices' from the Behaviors section to avoid restating the requirement."
+ },
+ {
+  "id": "L147",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Add behavior to handle deployment failures due to misconfigured GitHub Pages settings."
+ },
+ {
+  "id": "L148",
+  "scope": "spec",
+  "class": "other-review",
+  "text": "Include error case for GitHub Actions workflow syntax errors."
+ },
+ {
+  "id": "L149",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Add precondition to verify the `gh-pages` branch is correctly configured before testing accessibility."
+ },
+ {
+  "id": "L150",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Ensure test verifies the workflow file is correctly configured in the `.github/workflows` directory."
+ },
+ {
+  "id": "L151",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Add step to verify the `gh-pages` branch is updated with the latest build artifacts."
+ },
+ {
+  "id": "L152",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Include test case for handling deployment failures due to network-related issues."
+ },
+ {
+  "id": "L153",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Clarify that 'local storage' refers to the browser's local storage API, not external storage solutions."
+ },
+ {
+  "id": "L154",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Ensure the data model specifies that 'User Data' and 'Lesson Content' are stored as JSON objects in the browser's local storage."
+ },
+ {
+  "id": "L155",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Add a behavior to handle scenarios where local storage is full, including data compression or selective storage."
+ },
+ {
+  "id": "L156",
+  "scope": "spec",
+  "class": "invented-encryption",
+  "text": "Specify encryption methods for sensitive data stored in local storage to ensure data security."
+ },
+ {
+  "id": "L157",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Include a step to verify that no network requests are made during offline operation."
+ },
+ {
+  "id": "L158",
+  "scope": "test",
+  "class": "storage-real",
+  "text": "Ensure test steps include verification of data integrity when retrieving from local storage."
+ },
+ {
+  "id": "L159",
+  "scope": "test",
+  "class": "storage-real",
+  "text": "Add a step to verify that the application can handle scenarios where local storage is full while offline."
+ },
+ {
+  "id": "L160",
+  "scope": "systemic",
+  "class": "systemic-vague",
+  "text": "Ensure all acceptance criteria are verifiable and do not rely on external data sources."
+ },
+ {
+  "id": "L161",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure the requirement statement explicitly states that all necessary data, including lesson content, is preloaded into local storage."
+ },
+ {
+  "id": "L162",
+  "scope": "spec",
+  "class": "storage-real",
+  "text": "Clarify that the 'Lesson Content' stored in local storage includes all necessary data for operation without external sources."
+ },
+ {
+  "id": "L163",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Add a step to verify that all necessary lesson content is preloaded into local storage before application launch."
+ },
+ {
+  "id": "L164",
+  "scope": "test",
+  "class": "other-review",
+  "text": "Ensure test cases explicitly check that no external data retrieval attempts are made during lesson interaction."
+ },
+ {
+  "id": "L165",
+  "scope": "test",
+  "class": "storage-real",
+  "text": "Include a verification step to confirm that all data used during operation is retrieved from local storage."
+ },
+ {
+  "id": "L166",
+  "scope": "requirement",
+  "class": "REQ-leave-for-repair",
+  "text": "Ensure the requirement statement is observable and verifiable without solution-specific language."
+ },
+ {
+  "id": "L167",
+  "scope": "spec",
+  "class": "G-restate",
+  "text": "Remove restated requirement text; reference requirement by ID only."
+ },
+ {
+  "id": "L168",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Ensure test steps and expected outcomes are observable and verifiable without solution-specific language."
+ },
+ {
+  "id": "L169",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Ensure test steps and expected outcomes are observable and verifiable without solution-specific language."
+ },
+ {
+  "id": "L170",
+  "scope": "test",
+  "class": "AEF-tech-demand",
+  "text": "Ensure test steps and expected outcomes are observable and verifiable without solution-specific language."
+ }
+]
