@@ -81,7 +81,7 @@ def render_needs(needs: StakeholderNeedsSet) -> str:
     L = ["# Stakeholder needs", ""]
     for n in needs.needs:
         marker = " _(deferred - future phase, drives no current requirements)_" \
-            if is_future_commitment(n.statement) else ""
+            if is_future_commitment(n) else ""
         L.append(f"**{n.need_id}** ({n.stakeholder}): {n.statement}{marker}")
     return "\n".join(L)
 

@@ -329,10 +329,22 @@ def srs_document_data(intent_model: dict, srs_body: dict) -> dict:
     # 2026-09-13 habit-app bundle). Code-owned block: stripped and rewritten
     # so the review gate's re-validation stays idempotent.
     from .skeleton import is_future_commitment
-    deferred = [n.statement for n in intent.stakeholder_needs if is_future_commitment(n.statement)]
+    deferred = [n.statement for n in intent.stakeholder_needs if is_future_commitment(n)]
+    # Founder amendments (decisions made after the interview) render in the scope
+    # with their source, code-owned and idempotent like the deferred block.
+    summary = str(data.get("scope_summary", ""))
+    if intent.amendments or deferred:
+        summary = _re.sub(r"\n*Deferred to a future phase.*$", "", summary, flags=_re.S).rstrip()
+        summary = _re.sub(r"\n*Founder amendments \(.*$", "", summary, flags=_re.S).rstrip()
+    if intent.amendments:
+        summary += ("\n\nFounder amendments (decided after the interview, in the founder's own words):\n"
+                    + "\n".join(f"- {a.amendment_id}: {a.statement} (source: {a.source}, "
+                                 f"decided {a.decided_on.isoformat()}"
+                                 + (f"; rationale: {a.rationale}" if a.rationale else "") + ")"
+                                 for a in intent.amendments))
+        data["scope_summary"] = summary
     if deferred:
-        summary = _re.sub(r"\n*Deferred to a future phase.*$", "",
-                          str(data.get("scope_summary", "")), flags=_re.S).rstrip()
+        summary = _re.sub(r"\n*Deferred to a future phase.*$", "", summary, flags=_re.S).rstrip()
         data["scope_summary"] = (summary + "\n\nDeferred to a future phase (interview "
                                  "commitments, NOT current scope - no requirements derive "
                                  "from these yet):\n"
@@ -419,7 +431,7 @@ def _srs_fill_call(state: GenState, extra: str = ""):
     V-model methodology instead of the founder's product)."""
     from .schemas import srs_fill_schema
 
-    slots = build_srs_skeleton(state["needs"])
+    slots = build_srs_skeleton(state["needs"], state.get("intent_model"))
     payload = (STAGE_PROMPTS["srs"] + "\n\nREQUIREMENT SLOTS (fill prose for each, keyed by requirement_id):\n"
                + json.dumps(slots) + "\n\nNEEDS:\n" + json.dumps(_prompt_view(state["needs"]))
                + "\n\nINTENT:\n" + json.dumps(_prompt_view(state["intent_model"])) + extra)
@@ -690,8 +702,8 @@ def _founder_required_tech(intent_model: dict, key: str, value: str) -> bool:
                 and normalize_technology_alias(str(pref.get("preference", ""))) == desired):
             return True
     for need in intent_model.get("stakeholder_needs") or []:
-        if not need.get("source_turns"):
-            continue
+        if not need.get("source_turns") and not need.get("amendment_id"):
+            continue  # grounded by founder turns, or by a founder amendment (IntentModel.amendments)
         statement = str(need.get("statement", ""))
         # "Use React Native" must never exempt React by prefix. The need's
         # chosen technology is the longest matching registered name.
@@ -2207,7 +2219,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         from .progress import ProgressEvent
         from .schemas import srs_overview_schema, srs_slot_fill_schema
 
-        slots = build_srs_skeleton(state["needs"])
+        slots = build_srs_skeleton(state["needs"], state.get("intent_model"))
         if model_config.bulk_fills_enabled() and only is None:
             extra = ""
             if feedback:
@@ -2292,7 +2304,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         # ADR-0020: code owns the skeleton (R-ids, kinds, trace links, section
         # assignment); the model fills prose per slot. Structure carried from
         # the intent model stays deterministic (ADR-0015) via srs_document_data.
-        slots = build_srs_skeleton(state["needs"])  # the toolbox needs them; the fill call rebuilds identically
+        slots = build_srs_skeleton(state["needs"], state.get("intent_model"))  # the toolbox needs them; the fill call rebuilds identically
         if tools_enabled():
             from .tools import SrsToolbox, run_tool_loop
             from .prompts import TOOL_PROMPTS
@@ -2309,7 +2321,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if fb:
             feedback = "FOUNDER FEEDBACK ON YOUR PREVIOUS DRAFT (apply it):\n" + fb
         from .skeleton import deferred_needs as _deferred_needs
-        _def = _deferred_needs(state["needs"])
+        _def = _deferred_needs(state["needs"], state.get("intent_model"))
         if _def:
             model_config._console_line(
                 f"   future-phase: {len(_def)} need(s) deferred in the interview "
