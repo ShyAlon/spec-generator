@@ -73,8 +73,8 @@ def test_reviewed_srs_is_not_reapplied_on_a_second_resume():
  from spec_generator.cli import _srs_review_already_applied,_srs_candidate_digest,SRS_APPLIED_KEY
  r=review();cand=r.candidate
  first={'srs':r.candidate,'semantic_reviews':{'srs':r.model_dump()}}
- # legacy checkpoint (no marker) whose requirements already equal the candidate: skip
- assert _srs_review_already_applied(first,cand)
+ # no marker and the checkpoint review carries no decisions: equal sections no longer count as applied
+ assert not _srs_review_already_applied(first,cand)
  # checkpoint still holding the pre-review SRS: apply
  edited={**cand,'functional':[{**cand['functional'][0],'statement':'The system shall show a widget.'}]}
  assert not _srs_review_already_applied({'srs':edited,'semantic_reviews':{'srs':r.model_dump()}},cand)
@@ -84,3 +84,18 @@ def test_reviewed_srs_is_not_reapplied_on_a_second_resume():
  # a different reviewed candidate (new decisions) is applied again
  other={**cand,'functional':[{**cand['functional'][0],'statement':'The system shall show status.'}]}
  assert not _srs_review_already_applied(marked,other)
+
+
+def test_accept_only_review_is_applied_to_the_checkpoint_then_not_again():
+ # Accept leaves the SRS sections unchanged. The checkpoint's own review still has no
+ # decisions, so skipping the apply made architecture fail with 'unresolved review items'.
+ from spec_generator.cli import _srs_review_already_applied
+ r=review();d=r.model_dump();d['decisions']=[{'item_id':'R-1','action':'accept','actor':'founder'}]
+ candidate,record=reviewed_srs(INTENT,r.model_dump(),d)
+ undecided={'srs':candidate,'semantic_reviews':{'srs':r.model_dump()}}
+ assert candidate==undecided['srs']
+ assert not _srs_review_already_applied(undecided,candidate,record)
+ with pytest.raises(ValueError,match='unresolved review items'):reviewed_srs(INTENT,undecided['semantic_reviews']['srs'],undecided['semantic_reviews']['srs'])
+ applied={'srs':candidate,'semantic_reviews':{'srs':record.model_dump(mode='json')}}
+ assert _srs_review_already_applied(applied,candidate,record)
+ reviewed_srs(INTENT,applied['semantic_reviews']['srs'],applied['semantic_reviews']['srs'])
