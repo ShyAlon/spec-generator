@@ -118,6 +118,19 @@ def _atomic_write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def _decided_review_on_disk(path: Path, semantic: dict) -> bool:
+    """True when the file already holds the founder's decisions for this same
+    review and the checkpoint copy has none. A resume's backfill must never
+    replace recorded decisions with the checkpoint's undecided copy."""
+    try:
+        disk = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return (isinstance(disk, dict) and bool(disk.get("decisions")) and not semantic.get("decisions")
+            and disk.get("revision") == semantic.get("revision")
+            and disk.get("session_id") == semantic.get("session_id"))
+
+
 def _make_partials(outdir: Path, architecture_lifecycle=None):
     """Per-item resume WITHIN an authoring stage (his ask 2026-09-10, after a
     Ctrl+C at T-34 of 36 reran everything): completed fills/bodies land in a
@@ -292,7 +305,8 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
             _atomic_write(outdir / "needs.md", render_needs(needs))
         elif stage == "srs":
             semantic=(state.get('semantic_reviews') or {}).get('srs')
-            if semantic:_atomic_write(outdir/'srs.semantic-review.json',json.dumps(semantic,indent=2))
+            if semantic and not _decided_review_on_disk(outdir/'srs.semantic-review.json',semantic):
+                _atomic_write(outdir/'srs.semantic-review.json',json.dumps(semantic,indent=2))
             doc = srs_document_data(intent, {**data, "session_id": sid, "intent_model_ref": sid})
             _atomic_write(outdir / "srs.json", json.dumps(doc, indent=2))
             srs = SRSDocument.model_validate(coerce_for_model(doc, SRSDocument))
