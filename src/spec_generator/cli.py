@@ -369,14 +369,20 @@ def _srs_candidate_digest(candidate: dict) -> str:
     return hashlib.sha256(json.dumps(candidate, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def _srs_review_already_applied(prior: dict, candidate: dict) -> bool:
-    """True when this reviewed SRS candidate is already what the checkpoint holds.
-    Marker first (written when we apply). Legacy checkpoints have no marker: fall back
-    to the requirement sections being identical to the candidate's."""
-    if (prior.get("semantic_reviews") or {}).get(SRS_APPLIED_KEY) == _srs_candidate_digest(candidate):
+def _srs_review_already_applied(prior: dict, candidate: dict, reviewed=None) -> bool:
+    """True when this reviewed SRS is already recorded in the checkpoint.
+    Marker first (written when we apply). Otherwise the checkpoint's own review must
+    already carry the same decisions as the reviewed file. Equal requirement sections
+    prove nothing: an all-Accept review leaves them untouched, and the checkpoint
+    review would stay undecided and fail the architecture stage."""
+    held = (prior.get("semantic_reviews") or {})
+    if held.get(SRS_APPLIED_KEY) == _srs_candidate_digest(candidate):
         return True
-    cur = prior.get("srs") or {}
-    return bool(cur) and all(cur.get(sec) == candidate.get(sec) for sec in ("functional", "non_functional"))
+    if reviewed is None:
+        return False
+    mine = held.get("srs") or {}
+    want = reviewed.model_dump(mode="json").get("decisions") or []
+    return bool(want) and (mine.get("decisions") or []) == want
 
 
 def _predecessor(stage: str, review_mode: bool) -> str:
@@ -1112,7 +1118,7 @@ def main() -> None:
             raise UserFacingError('SRS candidate review is not ready.',str(exc),'Review every flagged SRS item with Remove, Replace, or Accept before continuing.') from exc
         if resolved:
             candidate,reviewed=resolved
-            if _srs_review_already_applied(prior,candidate):
+            if _srs_review_already_applied(prior,candidate,reviewed):
                 # update_state(as_node=<predecessor of architecture>) re-queues architecture, so
                 # re-applying an unchanged review on every resume re-ran a finished stage (39 min).
                 print('Reviewed SRS items already applied to this checkpoint; continuing at the next stage.',file=sys.stderr)
