@@ -99,3 +99,28 @@ def test_accept_only_review_is_applied_to_the_checkpoint_then_not_again():
  applied={'srs':candidate,'semantic_reviews':{'srs':record.model_dump(mode='json')}}
  assert _srs_review_already_applied(applied,candidate,record)
  reviewed_srs(INTENT,applied['semantic_reviews']['srs'],applied['semantic_reviews']['srs'])
+
+
+def _persist_srs(tmp_path,state_review):
+ from spec_generator.cli import _make_persist
+ from conftest import SYSTEM_BASELINE
+ persist=_make_persist(INTENT,tmp_path,conops_present=False)
+ persist('srs',{**SRS,'session_id':INTENT['session_id'],'intent_model_ref':INTENT['session_id']},{'semantic_reviews':{'srs':state_review}})
+
+def test_persist_keeps_recorded_decisions_over_undecided_checkpoint_copy(tmp_path):
+ import json
+ r=review();d=r.model_dump();d['decisions']=[{'item_id':'R-1','action':'accept','actor':'founder'}]
+ path=tmp_path/'srs.semantic-review.json';path.write_text(json.dumps(d))
+ _persist_srs(tmp_path,r.model_dump())
+ assert json.loads(path.read_text())['decisions']==d['decisions']
+
+def test_persist_overwrites_when_revision_differs_or_state_is_decided(tmp_path):
+ import json
+ r=review();d=r.model_dump();d['decisions']=[{'item_id':'R-1','action':'accept','actor':'founder'}]
+ path=tmp_path/'srs.semantic-review.json'
+ path.write_text(json.dumps({**d,'revision':'0'*64}))
+ _persist_srs(tmp_path,r.model_dump())
+ assert json.loads(path.read_text())['decisions']==[]
+ path.write_text(json.dumps(d))
+ _persist_srs(tmp_path,{**r.model_dump(),'decisions':[{'item_id':'R-1','action':'accept','actor':'engine'}]})
+ assert json.loads(path.read_text())['decisions'][0]['actor']=='engine'
