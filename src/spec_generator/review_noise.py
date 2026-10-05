@@ -39,7 +39,7 @@ _NOISE_CLASSES = (
         r"prescribes? a design)|"
         r"\bsolution[- ]specific\b|"
         r"\buse javascript to\b|\bjavascript[- ]based\b|\b(implemented|managed|handled) (in|using|with) javascript\b|"
-        r"\b(add|change|use|specify)\b.{0,40}\b(DOM )?selectors?\b|\bdom selectors?\b", _re.I)),
+        r"\b(add|change|use|specify)\b.{0,40}\b(DOM )?selectors?\b|\b(dom|ui) selectors?\b", _re.I)),
     ("F:cites-decided-architecture", _re.compile(
         r"(as per|aligning with|consistent with|per) the decided (architecture|storage|programming language|stack)", _re.I)),
 )

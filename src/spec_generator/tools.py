@@ -66,8 +66,8 @@ ADD_TEST = _fn(
      "criterion_id": {"type": "string", "description": "required for level=acceptance: an existing AC-id"},
      "spec_id": {"type": "string", "description": "required for unit/module/system: an existing SPEC-id"},
      "description": {"type": "string"},
-     "runner": {"type": "string", "description": "'http' | 'dom' | 'cli' | 'static' | 'semantic'"},
-     "definition": {"type": "object", "description": "runner payload: URL+expected status, selector, command, ..."}},
+     "runner": {"type": "string", "description": "'http' | 'ui' | 'cli' | 'static' | 'semantic'"},
+     "definition": {"type": "object", "description": "runner payload: URL+expected status, command, ... (ui tests carry no selectors)"}},
     ["level", "description", "runner", "definition"])
 
 ADD_COMPONENT = _fn(
