@@ -3122,7 +3122,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                           + "\n\nTEST SLOT (fill its prose):\n" + json.dumps(sl)
                           + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                             "return one STRICT JSON object {fills: {...}} with EXACTLY this one key: "
-                          + json.dumps([tid]) + ". The fill is {description, runner, definition}; definition is "
+                          + json.dumps([tid]) + ". The fill is {description, runner, components: [architecture component names], definition}; definition is "
                             "{preconditions: [string], steps: [string], expected_outcomes: [string], cleanup: [string], "
                             "cases: [{name, inputs: [string], expected_outcomes: [string]}], execution: {url?, method?, "
                             "body_json?, expected_status?, command?, expected_exit?, expected_stdout_contains?}}. "
