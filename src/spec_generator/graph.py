@@ -29,6 +29,7 @@ from vmodel_contracts import (
     SpecManifest,
     SRSDocument,
     StakeholderNeedsSet,
+    ValidationPlan,
     text_qa,
 )
 
@@ -44,7 +45,8 @@ from .tools import tools_enabled
 from .skeleton import (ModelStructureError, assign_architecture_ids,
                                    build_srs_skeleton, build_test_skeleton,
                                    merge_srs_fills, merge_test_fills, check_runner_execution,
-                                   check_test_components)
+                                   check_test_components, check_validation_items,
+                                   merge_validation_fills, uncovered_needs, validation_slots)
 from .assembly import build_traceability, order_milestones, validate_traceability
 from .prompts import METHODOLOGY, STAGE_PROMPTS
 from .telemetry import UsageLog
@@ -73,6 +75,7 @@ class GenState(TypedDict, total=False):
     architecture: dict
     items: list[dict]
     tests: list[dict]
+    validation: dict
     review_round: int
     review_fixes: list[dict]
     bundle: dict
@@ -1473,7 +1476,7 @@ def _heal_slugs(entries: list) -> list:
         unique.append(entry)
     counts = Counter(entry.get("slug") for entry in unique
                      if isinstance(entry, dict) and isinstance(entry.get("slug"), str))
-    stage_names = {"needs", "srs", "architecture", "items", "tests", "review", "assemble"}
+    stage_names = {"needs", "srs", "architecture", "items", "tests", "validation", "review", "assemble"}
     used, mapping, out = set(), defaultdict(list), []
     for entry in unique:
         if not isinstance(entry, dict):
@@ -3144,6 +3147,54 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             partials.clear("tests_fills")
         return {"tests": data}
 
+    def node_validation(state: GenState) -> dict:
+        """The human-judged half of the V-model: one call per stakeholder need, after tests. The model
+        proposes items; V-ids and verified_by are code-owned. A need that no machine test chain and no
+        validation item reaches becomes an OPEN finding (rule validation.uncovered_need), never silence."""
+        from .schemas import validation_fill_schema
+
+        arch = state.get("architecture") or {}
+        names = [c.get("name") for c in arch.get("components") or []]
+        slots = validation_slots(state["needs"], state["srs"], state["tests"])
+        done = dict((partials.load("validation_fills") or {}) if partials else {})
+        minimal_arch = {k: arch.get(k) for k in ("components",) if arch.get(k)}
+        for sl in slots:
+            nid = sl["need_id"]
+            if nid in done:
+                continue
+
+            def _validate(d, sl=sl):
+                check_validation_items(sl, (d or {}).get("items") or [], arch)
+                return d
+
+            out = _call_json("validation",
+                      STAGE_PROMPTS["validation"]
+                      + "\n\nARCHITECTURE COMPONENTS:\n" + json.dumps(_prompt_view(minimal_arch))
+                      + "\n\nNEED (its criteria list the machine tests that already check them):\n" + json.dumps(_prompt_view(sl)),
+                      log, progress, validate=_validate, schema=validation_fill_schema(sl, names),
+                      stream_items=False, item_label=f"{nid} (validation)")
+            done[nid] = {"items": list(out.get("items") or [])}
+            if partials:
+                partials.save("validation_fills", done)
+        data = merge_validation_fills(slots, done)
+        ledger = Ledger.from_dict(state.get("findings_ledger"))
+        if state.get("findings_ledger") is None and state.get("items"):
+            _accept_all(state["items"], ledger, _content_sink(persist))  # unreviewed stays unreviewed, never clean
+        raised = set()
+        for sl in uncovered_needs(slots, data):
+            raised.add(ledger.add(
+                rule_id="validation.uncovered_need", rule_version="1", source="validation", kind="semantic",
+                targets=[sl["need_id"]], artifact_revision=revision_of(str(sl.get("statement") or "")),
+                scope="need", evidence=[{"id": sl["need_id"], "sha256": revision_of(str(sl.get("statement") or "")),
+                                         "excerpt": str(sl.get("statement") or "")[:400]}],
+                summary=f"{sl['need_id']} has no machine test and no validation item: nothing checks that it was met"))
+        ledger.retire_rule("validation.uncovered_need", raised, "validation stage re-run covered or re-raised this need")
+        if persist:
+            persist("validation", data, state)
+        if partials:
+            partials.clear("validation_fills")
+        return {"validation": data, "findings_ledger": ledger.to_dict()}
+
     def node_review(state: GenState) -> dict:
         from .schemas import for_stage as output_schema
 
@@ -3359,6 +3410,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         arch = ArchitectureOverview.model_validate(_legacy_arch_fill(state["architecture"]))
         items = [ItemSpec.model_validate(i) for i in state["items"]]
         tests = [AcceptanceTest.model_validate(t) for t in state["tests"]]
+        validation = (ValidationPlan.model_validate({"session_id": sid, **state["validation"]})
+                      if state.get("validation") else None)  # optional: older checkpoints carry none
         violations = validate_traceability(needs, reqs, items, tests) + state.get("guard_flags", [])
         trace = build_traceability(reqs, items, tests)
         milestones = order_milestones(items, tests)
@@ -3368,6 +3421,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 "needs": "needs.md", "srs": "srs.md",
                 "architecture": "architecture.md", "agents": "AGENTS.md",
                 "traceability": "traceability.json", "manifest": "manifest.json",
+                **({"validation": "validation.json"} if validation else {}),
                 **{i.spec_id: f"specs/{i.spec_id}.md" for i in items},
             },
             milestones=milestones,
@@ -3386,31 +3440,35 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         out["_requirements"] = reqs.model_dump(mode="json")
         out["_architecture"] = arch.model_dump(mode="json")
         out["_tests"] = [t.model_dump(mode="json") for t in tests]
+        if validation:
+            out["_validation"] = validation.model_dump(mode="json")
         return {"bundle": out, "violations": violations}
 
     g = StateGraph(GenState)
     g.add_node("needs", _wrap("needs", "Formalizing stakeholder needs",
-            lambda st: f"stage 1/6, from {_sn_count(st)} interview needs (+ any implied)")(node_needs))
+            lambda st: f"stage 1/7, from {_sn_count(st)} interview needs (+ any implied)")(node_needs))
     g.add_node("srs", _wrap("srs", "Authoring the SRS",
-            lambda st: f"stage 2/6, from {_n_count(st)} stakeholder needs")(node_srs))
+            lambda st: f"stage 2/7, from {_n_count(st)} stakeholder needs")(node_srs))
     g.add_node("architecture", _wrap("architecture", "Drafting architecture overview",
-            lambda st: f"stage 3/6, from {_req_count(st)} requirements")(node_architecture))
+            lambda st: f"stage 3/7, from {_req_count(st)} requirements")(node_architecture))
     g.add_node("items", _wrap("items", "Writing module specs",
-            lambda st: f"stage 4/6, covering {_req_count(st)} requirements")(node_items))
+            lambda st: f"stage 4/7, covering {_req_count(st)} requirements")(node_items))
     g.add_node("tests", _wrap("tests", "Deriving test specifications",
-            lambda st: f"stage 5/6, from {_ac_count(st)} acceptance criteria + {len(st['items'])} module specs")(node_tests))
+            lambda st: f"stage 5/7, from {_ac_count(st)} acceptance criteria + {len(st['items'])} module specs")(node_tests))
+    g.add_node("validation", _wrap("validation", "Deriving validation items",
+            lambda st: f"stage 6/7, from {len(((st.get('needs') or {}).get('needs')) or [])} stakeholder needs")(node_validation))
     g.add_node("review", _wrap("review", "Cross-checking consistency",
-            lambda st: f"stage 6/6, over {_req_count(st)} requirements, {len(st['items'])} specs, {len(st['tests'])} tests")(node_review))
+            lambda st: f"stage 7/7, over {_req_count(st)} requirements, {len(st['items'])} specs, {len(st['tests'])} tests")(node_review))
     g.add_node("apply_fixes", _wrap("apply_fixes", "Applying review fixes")(node_apply_fixes))
     g.add_node("assemble", _wrap("assemble", "Assembling + validating bundle", "deterministic")(node_assemble))
     if only_stage:
-        if only_stage not in ("srs", "architecture", "items", "tests", "review"):
+        if only_stage not in ("srs", "architecture", "items", "tests", "validation", "review"):
             raise ValueError(f"unsupported only_stage: {only_stage}")
         g.set_entry_point(only_stage)
         g.add_edge(only_stage, END)
         return g.compile(checkpointer=checkpointer or MemorySaver(serde=checkpoint_serde()))
 
-    stoppable = ("needs", "srs", "architecture", "items", "tests")
+    stoppable = ("needs", "srs", "architecture", "items", "tests", "validation")
     if stop_after is not None and stop_after not in stoppable:
         raise ValueError(f"unsupported stop_after: {stop_after}")
 
@@ -3618,7 +3676,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         edge("srs", "architecture")
         edge("architecture", "items")
     edge("items", "tests")
-    edge("tests", "review")
+    edge("tests", "validation")
+    edge("validation", "review")
     g.add_conditional_edges("review", route_review, {"apply_fixes": "apply_fixes", "assemble": "assemble", "stop": END})
     g.add_conditional_edges(
         "apply_fixes",

@@ -105,7 +105,7 @@ def test_persist_hook_fires_per_stage_in_order(queue_models):
     g = build_graph(UsageLog("s"), checkpointer=MemorySaver(),
                     persist=lambda stage, data, state: fired.append(stage))
     g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "p1"}})
-    assert fired == ["needs", "srs", "architecture", "items", "tests"]
+    assert fired == ["needs", "srs", "architecture", "items", "tests", "validation"]
 
 
 def test_incremental_bundle_on_disk_and_atomic(tmp_path, queue_models):

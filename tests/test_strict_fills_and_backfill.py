@@ -94,7 +94,7 @@ def test_backfill_writes_completed_stages_without_rerunning(monkeypatch, tmp_pat
     g2 = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
     prior = g2.get_state(cfg).values
     written = _backfill_persist(_make_persist(dict(INTENT), outdir), prior)
-    assert written == ["needs", "srs", "architecture", "items", "tests"]
+    assert written == ["needs", "srs", "architecture", "items", "tests", "validation"]
     for f in ("needs.json", "needs.md", "srs.json", "srs.md",
               "architecture.json", "architecture.md", "items.json", "tests.json"):
         assert (outdir / f).exists(), f

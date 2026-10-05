@@ -42,7 +42,7 @@ def test_from_items_reruns_downstream_only(monkeypatch, tmp_path):
     db = str(tmp_path / "cp.sqlite")
     g, cfg = _run_once(box, monkeypatch, db)
     counts = {k: v.calls for k, v in box.items()}
-    assert counts == {"srs": 1, "architecture": 7, "items": 1, "tests": 1, "review": 1}  # architecture: 3 plans + 3 slot fills
+    assert counts == {"srs": 1, "architecture": 7, "items": 1, "tests": 1, "validation": 1, "review": 1}  # architecture: 3 plans + 3 slot fills
 
     _invalidate_from(g, cfg, "items", review_mode=False)
     r = g.invoke(None, cfg)
@@ -620,14 +620,16 @@ def test_from_srs_resets_expert_budget_and_architecture_preserves_srs_history(mo
 @pytest.mark.parametrize(
     "stage,cleared_artifacts,preserved_gates,cleared_partials",
     [
-        ("srs", {"srs", "architecture", "items", "tests", "bundle"}, set(),
-         {"srs_fills", "architecture", "items", "tests_fills", "review"}),
-        ("architecture", {"architecture", "items", "tests", "bundle"}, {"srs"},
-         {"architecture", "items", "tests_fills", "review"}),
-        ("items", {"items", "tests", "bundle"}, {"srs", "architecture"},
-         {"items", "tests_fills", "review"}),
-        ("tests", {"tests", "bundle"}, {"srs", "architecture"},
-         {"tests_fills", "review"}),
+        ("srs", {"srs", "architecture", "items", "tests", "validation", "bundle"}, set(),
+         {"srs_fills", "architecture", "items", "tests_fills", "validation_fills", "review"}),
+        ("architecture", {"architecture", "items", "tests", "validation", "bundle"}, {"srs"},
+         {"architecture", "items", "tests_fills", "validation_fills", "review"}),
+        ("items", {"items", "tests", "validation", "bundle"}, {"srs", "architecture"},
+         {"items", "tests_fills", "validation_fills", "review"}),
+        ("tests", {"tests", "validation", "bundle"}, {"srs", "architecture"},
+         {"tests_fills", "validation_fills", "review"}),
+        ("validation", {"validation", "bundle"}, {"srs", "architecture"},
+         {"validation_fills", "review"}),
         ("review", {"bundle"}, {"srs", "architecture"}, {"review"}),
     ],
 )
@@ -645,7 +647,7 @@ def test_from_boundary_invalidation_matrix(
             self.values = {
                 "needs": {"id": "needs"}, "srs": {"id": "srs"},
                 "architecture": {"id": "architecture"}, "items": [{"id": "items"}],
-                "tests": [{"id": "tests"}], "bundle": {"id": "bundle"},
+                "tests": [{"id": "tests"}], "validation": {"id": "validation"}, "bundle": {"id": "bundle"},
                 "expert_opinions": [
                     {"gate": "srs", "action": "approve"},
                     {"gate": "architecture", "action": "approve"},
@@ -677,7 +679,7 @@ def test_from_boundary_invalidation_matrix(
     lifecycle.write_text('{"transition":"finalize","artifact":"architecture"}\n')
     before_lifecycle = lifecycle.read_bytes()
     partials = _make_partials(tmp_path)
-    all_partials = {"srs_fills", "architecture", "items", "tests_fills", "review"}
+    all_partials = {"srs_fills", "architecture", "items", "tests_fills", "validation_fills", "review"}
     for key in all_partials:
         partials.save(key, {"completed": key})
     for key in _PARTIAL_DOWNSTREAM[stage]:

@@ -155,6 +155,18 @@ class Ledger:
             f["superseded_by"] = new_id
             self.findings[new_id]["supersedes"] = fid
 
+    def retire_rule(self, rule_id: str, keep: set[str], reason: str) -> list[str]:
+        """A re-run of the stage that owns `rule_id` replaces its own output: OPEN findings of that rule not
+        raised again are SUPERSEDED (history kept). Other rules and founder dispositions are untouched."""
+        retired = [fid for fid, f in self.findings.items()
+                   if f["state"] == OPEN and f["rule_id"] == rule_id and fid not in keep]
+        for fid in retired:
+            self.findings[fid]["state"] = SUPERSEDED
+            self.findings[fid]["closure"] = {"reason": reason}
+        if retired:
+            self.history.append({"event": "rule_rerun_replaced", "rule_id": rule_id, "finding_ids": retired})
+        return retired
+
     def retire_review_round(self, source: str, keep: set[str]) -> list[str]:
         """A re-run of review round N replaces that round's own output. OPEN review.llm findings that came
         ONLY from this round's source and were not raised again are SUPERSEDED (history kept, never deleted).
