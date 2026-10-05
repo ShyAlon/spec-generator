@@ -65,8 +65,8 @@ def test_test_skeleton_links_and_continuous_ids():
         {"test_id": "T-1", "level": "acceptance", "criterion_id": "AC-1", "spec_id": None},
         {"test_id": "T-2", "level": "unit", "criterion_id": None, "spec_id": "SPEC-1"}]
     merged = merge_test_fills(slots, {"fills": [
-        {"test_id": "T-2", "description": "d2", "runner": "pytest", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}},
-        {"test_id": "T-1", "description": "d1", "runner": "http", "definition": {"preconditions": [], "steps": ["GET /"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}]})
+        {"test_id": "T-2", "description": "d2", "components": ["api"], "runner": "pytest", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}},
+        {"test_id": "T-1", "description": "d1", "components": ["api"], "runner": "http", "definition": {"preconditions": [], "steps": ["GET /"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}]})
     assert [(t["test_id"], t["description"]) for t in merged] == [("T-1", "d1"), ("T-2", "d2")]
 
 
@@ -128,9 +128,9 @@ def test_tests_merged_body_validated_at_stage(monkeypatch):
     """Tests: model fills prose per slot, code merges and validates EVERY
     merged AcceptanceTest at the stage. A definition that is not an object
     breaks the contract and must fail AT the tests stage, not in assembly."""
-    bad = {"fills": [{"test_id": "T-1", "description": "ok", "runner": "http",
+    bad = {"fills": [{"test_id": "T-1", "description": "ok", "components": ["api"], "runner": "http",
                       "definition": {"preconditions": [], "steps": ["GET /"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}},
-                     {"test_id": "T-2", "description": "broken", "runner": "pytest",
+                     {"test_id": "T-2", "description": "broken", "components": ["api"], "runner": "pytest",
                       "definition": "not-an-object"}]}
     e = _run_until_stage_error(monkeypatch, "tests", bad)
     assert "tests" in e.render()

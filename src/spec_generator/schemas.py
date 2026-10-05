@@ -159,8 +159,9 @@ def test_fill_schema(slots: list[dict]) -> dict:
     fill = {"type": "object",
             "properties": {"description": {"type": "string"},
                            "runner": {"type": "string"},
+                           "components": {"type": "array", "items": {"type": "string"}},
                            "definition": _test_definition_schema()},
-            "required": ["description", "runner", "definition"],
+            "required": ["description", "runner", "components", "definition"],
             "additionalProperties": False}
     ids = [sl["test_id"] for sl in slots]
     return {"type": "object",
@@ -398,8 +399,9 @@ def _raw_stage_schema(stage: str) -> dict:
                 "properties": {"test_id": {"type": "string"},
                                "description": {"type": "string"},
                                "runner": {"type": "string"},
+                               "components": {"type": "array", "items": {"type": "string"}},
                                "definition": _test_definition_schema()},
-                "required": ["test_id", "description", "runner", "definition"],
+                "required": ["test_id", "description", "runner", "components", "definition"],
                 "additionalProperties": False}
         return {"type": "object",
                 "properties": {"fills": {"type": "array", "items": fill}},

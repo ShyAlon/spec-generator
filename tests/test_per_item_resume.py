@@ -84,7 +84,7 @@ def _routing(calls, fail_after_bodies=None, bus_events=None):
             elif self.stage == "tests":
                 wanted = self.schema["properties"]["fills"]["required"]
                 out = {"fills": {tid: PAYLOADS["tests"]["fills"].get(
-                    tid, {"description": f"{tid} holds", "runner": "pytest",
+                    tid, {"description": f"{tid} holds", "components": ["api"], "runner": "pytest",
                           "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}}) for tid in wanted}}
             elif self.stage == "architecture":
                 out = _arch_answer(self.schema)

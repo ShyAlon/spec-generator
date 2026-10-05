@@ -6,7 +6,7 @@ from spec_generator.skeleton import ModelStructureError, check_runner_execution
 
 
 def t(runner, **ex):
-    return {"test_id": "T-7", "runner": runner,
+    return {"test_id": "T-7", "runner": runner, "components": ["api"],
             "definition": {"preconditions": [], "steps": [], "expected_outcomes": [], "cleanup": [], "cases": [], "execution": ex}}
 
 
@@ -118,3 +118,59 @@ def test_agents_md_tells_the_developer_to_bind_ui_tests():
                                                 components=[], decisions=[], non_functionals={})
     md = render_agents_md(arch, [], SpecManifest.model_construct(milestones=[]), [])
     assert "UI tests are yours to bind" in md and "ui-bindings.json" in md and "data-testid" in md
+
+
+ARCH = {"components": [{"name": "Progress Store", "requirement_ids": ["R-1"]},
+                       {"name": "Audio Engine", "requirement_ids": ["R-2"]},
+                       {"name": "Build Pipeline", "requirement_ids": []}]}
+SRS = {"functional": [{"requirement_id": "R-1", "acceptance": [{"criterion_id": "AC-1"}]},
+                      {"requirement_id": "R-2", "acceptance": [{"criterion_id": "AC-2"}]},
+                      {"requirement_id": "R-9", "acceptance": [{"criterion_id": "AC-9"}]}],
+       "non_functional": []}
+ITEMS = [{"spec_id": "SPEC-1", "requirement_ids": ["R-1", "R-2"]}]
+
+
+def comp_test(comps, **link):
+    return {"test_id": "T-3", "components": comps, "criterion_id": link.get("criterion_id"), "spec_id": link.get("spec_id")}
+
+
+def test_component_candidates_follow_requirement_ownership():
+    from spec_generator.skeleton import component_candidates
+    assert component_candidates({"criterion_id": "AC-1"}, SRS, ITEMS, ARCH) == ["Progress Store"]
+    assert component_candidates({"spec_id": "SPEC-1"}, SRS, ITEMS, ARCH) == ["Progress Store", "Audio Engine"]
+    assert component_candidates({"criterion_id": "AC-9"}, SRS, ITEMS, ARCH) == []
+
+
+def test_declared_components_must_be_architecture_components():
+    from spec_generator.skeleton import check_test_components
+    with pytest.raises(ModelStructureError, match=r"T-3.*\['Progress Storage'\].*not in the architecture"):
+        check_test_components([comp_test(["Progress Storage"], criterion_id="AC-1")], SRS, ITEMS, ARCH)
+
+
+def test_declared_components_must_own_the_requirement_and_feedback_lists_the_owners():
+    from spec_generator.skeleton import check_test_components
+    with pytest.raises(ModelStructureError, match=r"T-3.*\['Audio Engine'\].*choose from \['Progress Store'\]"):
+        check_test_components([comp_test(["Audio Engine"], criterion_id="AC-1")], SRS, ITEMS, ARCH)
+    check_test_components([comp_test(["Progress Store"], criterion_id="AC-1"),
+                           comp_test(["Audio Engine", "Progress Store"], spec_id="SPEC-1")], SRS, ITEMS, ARCH)
+
+
+def test_unowned_requirement_checks_existence_only():
+    from spec_generator.skeleton import check_test_components
+    check_test_components([comp_test(["Build Pipeline"], criterion_id="AC-9")], SRS, ITEMS, ARCH)
+    with pytest.raises(ModelStructureError, match="not in the architecture"):
+        check_test_components([comp_test(["Nope"], criterion_id="AC-9")], SRS, ITEMS, ARCH)
+
+
+def test_tests_prompt_and_slot_context_carry_the_component_choice():
+    from spec_generator.graph import _compact_test_context
+    assert "components (the names of the architecture components" in STAGE_PROMPTS["tests"]
+    ctx = _compact_test_context({"srs": SRS, "items": ITEMS, "architecture": ARCH}, {"criterion_id": "AC-1"})
+    assert ctx["candidate_components"] == ["Progress Store"]
+
+
+def test_merge_carries_components_and_tool_proposals_need_them():
+    from spec_generator.skeleton import merge_test_fills
+    slots = [{"test_id": "T-1", "level": "acceptance", "criterion_id": "AC-1", "spec_id": None}]
+    body = {"fills": {"T-1": {"description": "d", "runner": "http", "components": ["Progress Store"], "definition": {}}}}
+    assert merge_test_fills(slots, body)[0]["components"] == ["Progress Store"]

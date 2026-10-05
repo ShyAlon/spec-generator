@@ -61,7 +61,7 @@ STAGE_PROMPTS = {
              "method and expected_status, cli needs execution.command. A runner ui test describes ONE interaction at the system boundary and the measurable response, in product terms: steps are what the user or system does, expected_outcomes state a value or state that can be true or false ('the score screen shows 10 of 10'), and the elements involved are named in product language ('the score display'). NEVER write a selector, element id, CSS class, data-testid or other markup: the developer owns the markup and binds it to the test later. Author the test prose. The skeleton is FIXED: one acceptance-level slot per SRS "
              "acceptance criterion (criterion_id linked) and one unit-level slot per item spec "
              "(spec_id linked), test_ids already assigned - never change, renumber, add, or drop "
-             "them. For EACH slot write description, runner ('http' | 'ui' | 'cli' | 'static' | "
+             "them. For EACH slot write description, components (the names of the architecture components this test exercises, copied exactly from the architecture's component list; pick from candidate_components when it is given), runner ('http' | 'ui' | 'cli' | 'static' | "
              "'semantic'), and definition using the canonical procedure shape: "
              "{preconditions: [string], steps: [string], expected_outcomes: [string], cleanup: "
              "[string], cases: [{name, inputs: [string], expected_outcomes: [string]}], execution: "

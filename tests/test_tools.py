@@ -98,7 +98,7 @@ class TestAddTest:
     def test_happy_path(self):
         tb = self._tb()
         out = tb.call("add_test", {"level": "module", "spec_id": "SPEC-1",
-                                   "description": "upload then report flow", "runner": "http",
+                                   "description": "upload then report flow", "components": ["api"], "runner": "http",
                                    "definition": {"preconditions": [], "steps": ["GET /api/report"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}})
         assert out["test_id"] == "T-3"
         slot = [s for s in tb.slots if s["test_id"] == "T-3"][0]
@@ -106,10 +106,10 @@ class TestAddTest:
         assert slot["seed"]["runner"] == "http"
 
     @pytest.mark.parametrize("args, msg", [
-        ({"level": "e2e", "spec_id": "SPEC-1", "description": "d", "runner": "http", "definition": {}}, "level must be"),
-        ({"level": "acceptance", "criterion_id": "AC-9", "description": "d", "runner": "http", "definition": {}}, "existing criterion_id"),
-        ({"level": "unit", "spec_id": "SPEC-9", "description": "d", "runner": "http", "definition": {}}, "existing spec_id"),
-        ({"level": "unit", "spec_id": "SPEC-1", "description": "", "runner": "http", "definition": {}}, "description, runner"),
+        ({"level": "e2e", "spec_id": "SPEC-1", "description": "d", "components": ["api"], "runner": "http", "definition": {}}, "level must be"),
+        ({"level": "acceptance", "criterion_id": "AC-9", "description": "d", "components": ["api"], "runner": "http", "definition": {}}, "existing criterion_id"),
+        ({"level": "unit", "spec_id": "SPEC-9", "description": "d", "components": ["api"], "runner": "http", "definition": {}}, "existing spec_id"),
+        ({"level": "unit", "spec_id": "SPEC-1", "description": "", "components": ["api"], "runner": "http", "definition": {}}, "description, runner"),
     ])
     def test_rejections(self, args, msg):
         with pytest.raises(ModelStructureError, match=msg):
@@ -118,10 +118,10 @@ class TestAddTest:
     def test_seed_adopted_as_fill(self):
         tb = self._tb()
         tb.call("add_test", {"level": "system", "spec_id": "SPEC-1", "description": "full flow",
-                             "runner": "http", "definition": {"preconditions": [], "steps": ["GET /api/x"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}})
+                             "components": ["api"], "runner": "http", "definition": {"preconditions": [], "steps": ["GET /api/x"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}})
         doc = merge_test_fills(tb.slots, {"fills": [
-            {"test_id": "T-1", "description": "d", "runner": "http", "definition": {"preconditions": [], "steps": ["GET /u"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}},
-            {"test_id": "T-2", "description": "d", "runner": "http", "definition": {"preconditions": [], "steps": ["GET /u"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}]})
+            {"test_id": "T-1", "description": "d", "components": ["api"], "runner": "http", "definition": {"preconditions": [], "steps": ["GET /u"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}},
+            {"test_id": "T-2", "description": "d", "components": ["api"], "runner": "http", "definition": {"preconditions": [], "steps": ["GET /u"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}]})
         assert len(doc) == 3
         added = doc[2]
         assert added["test_id"] == "T-3" and added["description"] == "full flow"
@@ -250,7 +250,7 @@ def test_tools_opt_in_full_pipeline_green(monkeypatch):
                   "args": {"requirement_id": "R-1", "need_id": "N-1"}, "id": "c1"}], []],
         "tests": [[{"name": "add_test",
                     "args": {"level": "module", "spec_id": "SPEC-1",
-                             "description": "end-to-end module flow", "runner": "http",
+                             "description": "end-to-end module flow", "components": ["api"], "runner": "http",
                              "definition": {"preconditions": [], "steps": ["GET /api/x"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {"url": "/api/x", "method": "GET", "expected_status": 200}}}, "id": "c2"}], []]})
     srs = r["bundle"]["_srs"]
     assert [q["requirement_id"] for q in srs["functional"]] == ["R-1"]
