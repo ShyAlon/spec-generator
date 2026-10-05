@@ -609,6 +609,13 @@ def _resume_after_bounded_stop(graph, cfg: dict, prior: dict) -> str | None:
         if prior.get(stage) and not prior.get(downstream):
             graph.update_state(cfg, {}, as_node=stage)
             return stage
+    # --to tests ends the graph at tests. Review has not run when no review round
+    # is recorded; a finished review that stopped for a repair proposal or a quick
+    # run has recorded one (or set its own stop flag) and must not be replayed.
+    if (prior.get("tests") and not prior.get("review_round")
+            and not prior.get("quick_stop") and not prior.get("repair_proposal")):
+        graph.update_state(cfg, {}, as_node="tests")
+        return "tests"
     return None
 
 
