@@ -434,6 +434,37 @@ def test_to_architecture_stops_real_checkpoint_before_downstream(monkeypatch, tm
     assert g.get_state(cfg).values["architecture"]
 
 
+def test_resume_after_to_tests_reconnects_review_and_assembly(monkeypatch, tmp_path, capsys):
+    """The UI runs phases with --to <stage>. A plain resume of a checkpoint stopped after
+    tests must run review and assembly; before, it found nothing pending and failed with
+    'assembly produced no bundle'."""
+    box = {}
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    intent_file = tmp_path / "intent_model.json"
+    intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
+    baseline_file = tmp_path / "baseline.json"; baseline_file.write_text(json.dumps(SYSTEM_BASELINE))
+    outdir = tmp_path / "bundle"
+    base = ["cli", str(intent_file), "-o", str(outdir), "--system-baseline", str(baseline_file)]
+    monkeypatch.setattr(sys, "argv", base + ["--to", "tests"])
+    main()
+    capsys.readouterr()
+    assert "review" not in box and (outdir / "tests.json").is_file()
+    monkeypatch.setattr(sys, "argv", base)
+    main()
+    err = capsys.readouterr().err
+    assert "Checkpoint intentionally stopped after 'tests'" in err
+    assert box["review"].calls == 1
+    assert "no bundle" not in err
+    assert (outdir / "manifest.json").is_file()
+    monkeypatch.setattr(sys, "argv", base)
+    main()  # a completed run resumes as a no-op and never replays review
+    assert box["review"].calls == 1
+
+
 def test_reconcile_artifacts_copy_hashes_semantics_stales_and_audits(tmp_path):
     from spec_generator.cli import _reconcile_artifacts
 
