@@ -4,12 +4,13 @@ Usage: python -m spec_generator.cli out/<session>/intent_model.json
 
 Bundle layout (written INCREMENTALLY as each stage completes, atomic
 tmp+rename - a late failure leaves all completed work on disk):
-  needs.json / needs.md            after stage 1/6
-  srs.json / srs.md                after stage 2/6 (re-written if review fixes apply)
-  architecture.json / architecture.md  after stage 3/6
-  items.json + specs/<SPEC-id>.md  after stage 4/6
-  tests.json                       after stage 5/6
-  AGENTS.md / traceability.json / manifest.json   at assembly (stage 6/6)
+  needs.json / needs.md            after stage 1/7
+  srs.json / srs.md                after stage 2/7 (re-written if review fixes apply)
+  architecture.json / architecture.md  after stage 3/7
+  items.json + specs/<SPEC-id>.md  after stage 4/7
+  tests.json                       after stage 5/7
+  validation.json                  after stage 6/7 (what only a person can judge)
+  AGENTS.md / traceability.json / manifest.json   at assembly (stage 7/7)
   gate_srs.* / gate_architecture.* (--review)     at the gates
   usage.jsonl / checkpoints.sqlite                run bookkeeping
 """
@@ -103,7 +104,7 @@ def _backfill_persist(persist, values: dict) -> list[str]:
     persist() never fires for them and the bundle dir stays empty). State is
     authoritative - overwrite stale files. Returns the stages written."""
     written = []
-    for stage in ("needs", "srs", "architecture", "items", "tests"):
+    for stage in ("needs", "srs", "architecture", "items", "tests", "validation"):
         if values.get(stage):
             persist(stage, values[stage], values)
             written.append(stage)
@@ -142,6 +143,7 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
              "architecture": "architecture.partial.json",
              "items": "items.partial.json",
              "tests_fills": "tests_fills.partial.json",
+             "validation_fills": "validation_fills.partial.json",
              "review": "review.partial.json"}
 
     class _Partials:
@@ -181,10 +183,11 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
 
 
 # partial files invalidated by --from <stage> (that stage and everything after)
-_PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fills", "review"),
-                      "architecture": ("architecture", "items", "tests_fills", "review"),
-                      "items": ("items", "tests_fills", "review"),
-                      "tests": ("tests_fills", "review"),
+_PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fills", "validation_fills", "review"),
+                      "architecture": ("architecture", "items", "tests_fills", "validation_fills", "review"),
+                      "items": ("items", "tests_fills", "validation_fills", "review"),
+                      "tests": ("tests_fills", "validation_fills", "review"),
+                      "validation": ("validation_fills", "review"),
                       "review": ("review",)}
 
 
@@ -339,6 +342,9 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
                 _atomic_write(outdir / "specs" / f"{item.spec_id}.md", render_spec_file(item))
         elif stage == "tests":
             _atomic_write(outdir / "tests.json", json.dumps(_stamped(data), indent=2))
+        elif stage == "validation":
+            _atomic_write(outdir / "validation.json",
+                          json.dumps(_stamped({"session_id": sid, **data}), indent=2))
 
         refresh_docs(outdir, intent=intent, event=stage, state={**state, stage: data})
 
@@ -368,21 +374,23 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
     return _persist
 
 
-STAGE_ORDER = ("needs", "srs", "architecture", "items", "tests", "review", "assemble")
+STAGE_ORDER = ("needs", "srs", "architecture", "items", "tests", "validation", "review", "assemble")
 
 # What a --from rewind invalidates: the named stage's own output and every
 # downstream product (LangGraph state has no key delete; overwrite with
 # empties - review_round resets so the review loop runs fresh).
 _CLEAR_DOWNSTREAM = {
-    "srs": {"srs": None, "architecture": None, "items": None, "tests": None,
+    "srs": {"srs": None, "architecture": None, "items": None, "tests": None, "validation": None,
             "review_round": 0, "review_fixes": [], "bundle": None, "violations": [],
             "guard_flags": []},
-    "architecture": {"architecture": None, "items": None, "tests": None,
+    "architecture": {"architecture": None, "items": None, "tests": None, "validation": None,
                      "review_round": 0, "review_fixes": [], "bundle": None, "violations": []},
-    "items": {"items": None, "tests": None, "review_round": 0, "review_fixes": [],
+    "items": {"items": None, "tests": None, "validation": None, "review_round": 0, "review_fixes": [],
               "bundle": None, "violations": []},
-    "tests": {"tests": None, "review_round": 0, "review_fixes": [], "bundle": None,
+    "tests": {"tests": None, "validation": None, "review_round": 0, "review_fixes": [], "bundle": None,
               "violations": []},
+    "validation": {"validation": None, "review_round": 0, "review_fixes": [], "bundle": None,
+                   "violations": []},
     "review": {"review_round": 0, "review_fixes": [], "bundle": None, "violations": []},
     "assemble": {"bundle": None, "violations": []},
 }
@@ -420,7 +428,8 @@ def _predecessor(stage: str, review_mode: bool) -> str:
             "architecture": "gate_srs" if review_mode else "srs",
             "items": "gate_architecture" if review_mode else "architecture",
             "tests": "items",
-            "review": "tests",
+            "validation": "tests",
+            "review": "validation",
             "assemble": "review"}[stage]
 
 
@@ -430,8 +439,9 @@ def _rerun_missing_prerequisite(stage: str, current: dict) -> str | None:
         "needs": (), "srs": ("needs",), "architecture": ("needs", "srs"),
         "items": ("needs", "srs", "architecture"),
         "tests": ("needs", "srs", "architecture", "items"),
-        "review": ("needs", "srs", "architecture", "items", "tests"),
-        "assemble": ("needs", "srs", "architecture", "items", "tests", "review"),
+        "validation": ("needs", "srs", "architecture", "items", "tests"),
+        "review": ("needs", "srs", "architecture", "items", "tests", "validation"),
+        "assemble": ("needs", "srs", "architecture", "items", "tests", "validation", "review"),
     }
     for prerequisite in prerequisites[stage]:
         fulfilled = current.get(prerequisite) is not None
@@ -612,7 +622,11 @@ def _resume_after_bounded_stop(graph, cfg: dict, prior: dict) -> str | None:
     # --to tests ends the graph at tests. Review has not run when no review round
     # is recorded; a finished review that stopped for a repair proposal or a quick
     # run has recorded one (or set its own stop flag) and must not be replayed.
-    if (prior.get("tests") and not prior.get("review_round")
+    if (prior.get("validation") and not prior.get("review_round")
+            and not prior.get("quick_stop") and not prior.get("repair_proposal")):
+        graph.update_state(cfg, {}, as_node="validation")
+        return "validation"
+    if (prior.get("tests") and not prior.get("validation") and not prior.get("review_round")
             and not prior.get("quick_stop") and not prior.get("repair_proposal")):
         graph.update_state(cfg, {}, as_node="tests")
         return "tests"
@@ -660,10 +674,12 @@ _ONLY_STAGE_INPUTS = {
     "architecture": ("srs",),
     "items": ("srs", "architecture"),
     "tests": ("srs", "architecture", "items"),
+    "validation": ("needs", "srs", "architecture", "items", "tests"),
     "review": ("srs", "architecture", "items", "tests"),
 }
 _ARTIFACT_FILES = {"needs": "needs.json", "srs": "srs.json", "architecture": "architecture.json",
-                   "items": "items.json", "tests": "tests.json"}
+                   "items": "items.json", "tests": "tests.json",
+                   "validation": "validation.json"}
 
 
 def _stage_outdir(source: Path, stage: str) -> Path:
@@ -857,7 +873,7 @@ def _reconcile_artifacts(intent: dict, baseline: dict, source: Path,
     status_path = destination / "artifact-status.json"
     status = json.loads(status_path.read_text()) if status_path.exists() else {"artifacts": {}}
     if changed:
-        for name in ("items.json", "tests.json", "specs", "AGENTS.md", "traceability.json", "manifest.json"):
+        for name in ("items.json", "tests.json", "validation.json", "specs", "AGENTS.md", "traceability.json", "manifest.json"):
             status["artifacts"][name] = {"state": "stale", "cause": cause,
                                              "basis_hashes_before": before,
                                              "basis_hashes_after": after}
@@ -888,7 +904,7 @@ def main() -> None:
                     help="rewind the checkpoint: re-run STAGE and everything after it under the "
                          "current code, earlier stages preserved (stages: needs, srs, architecture, "
                          "items, tests, review, assemble)")
-    ap.add_argument("--to", dest="to_stage", choices=("needs", "srs", "architecture", "items", "tests"),
+    ap.add_argument("--to", dest="to_stage", choices=("needs", "srs", "architecture", "items", "tests", "validation"),
                     help="stop after this stage; completed state remains resumable")
     ap.add_argument("--reconcile-artifacts", action="store_true",
                     help="zero-LLM deterministic reconciliation of existing SRS/architecture and views")
@@ -1204,7 +1220,7 @@ def main() -> None:
                 print(f"  discarding {len(saved)} preserved item(s) ({key}) - they will be regenerated "
                       "under the new baseline.", file=sys.stderr)
             partials.clear(key)
-        for stale in ("architecture.json", "architecture.md", "items.json", "tests.json",
+        for stale in ("architecture.json", "architecture.md", "items.json", "tests.json", "validation.json",
                       "AGENTS.md", "manifest.json", "traceability.json", "review-fixes.json"):
             (outdir / stale).unlink(missing_ok=True)
         for stale in (outdir / "specs").glob("SPEC-*.md"):
@@ -1315,6 +1331,8 @@ def main() -> None:
     (outdir / "traceability.json").write_text(json.dumps(b["traceability"], indent=2))
     (outdir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
     (outdir / "tests.json").write_text(json.dumps(b["_tests"], indent=2))
+    if b.get("_validation"):
+        (outdir / "validation.json").write_text(json.dumps(b["_validation"], indent=2))
 
     refresh_docs(outdir, intent=intent, conops=conops, event="assemble", state=result)
     if result.get("violations"):

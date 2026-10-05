@@ -46,6 +46,7 @@ PAYLOADS = {
                         "T-2": {"description": "spec renders",
                                 "components": ["api"], "runner": "pytest", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}}}},
     "review": [],
+    "validation": {"items": []},
 }
 
 # the contract-shaped SRS the srs node assembles from PAYLOADS needs+srs
@@ -122,11 +123,11 @@ def test_full_pipeline_progress_events(fake_models):
     r = g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert "bundle" in r
     seq = [(e.stage, e.status) for e in events]
-    for stage in ("needs", "srs", "architecture", "items", "tests", "review", "assemble"):
+    for stage in ("needs", "srs", "architecture", "items", "tests", "validation", "review", "assemble"):
         assert (stage, "started") in seq and (stage, "completed") in seq, stage
     # starts come in pipeline order
     starts = [e.stage for e in events if e.status == "started"]
-    assert starts == ["needs", "srs", "architecture", "items", "tests", "review", "assemble"]
+    assert starts == ["needs", "srs", "architecture", "items", "tests", "validation", "review", "assemble"]
 
 
 def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
@@ -170,17 +171,17 @@ def test_stage_start_lines_carry_input_counts(fake_models):
     started = {e.stage: e for e in events if e.status == "started"}
 
     n_sn = len(INTENT["stakeholder_needs"])
-    assert started["needs"].detail == f"stage 1/6, from {n_sn} interview needs (+ any implied)"
+    assert started["needs"].detail == f"stage 1/7, from {n_sn} interview needs (+ any implied)"
 
     n_needs = len(PAYLOADS["needs"]["needs"])
-    assert started["srs"].detail == f"stage 2/6, from {n_needs} stakeholder needs"
+    assert started["srs"].detail == f"stage 2/7, from {n_needs} stakeholder needs"
 
     n_reqs = len(CONTRACT_SRS["functional"]) + len(CONTRACT_SRS["non_functional"])
-    assert started["architecture"].detail == f"stage 3/6, from {n_reqs} requirements"
-    assert started["items"].detail == f"stage 4/6, covering {n_reqs} requirements"
+    assert started["architecture"].detail == f"stage 3/7, from {n_reqs} requirements"
+    assert started["items"].detail == f"stage 4/7, covering {n_reqs} requirements"
 
     n_ac = sum(len(r["acceptance"]) for sec in ("functional", "non_functional") for r in CONTRACT_SRS[sec])
-    assert started["tests"].detail == f"stage 5/6, from {n_ac} acceptance criteria + {len(PAYLOADS['items'])} module specs"
+    assert started["tests"].detail == f"stage 5/7, from {n_ac} acceptance criteria + {len(PAYLOADS['items'])} module specs"
 
     # no detail may promise an output count
     for e in started.values():

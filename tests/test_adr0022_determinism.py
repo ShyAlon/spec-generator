@@ -103,6 +103,8 @@ def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
             elif self.stage == "tests":
                 wanted = self.schema["properties"]["fills"]["required"]
                 out = {"fills": {tid: PAYLOADS["tests"]["fills"][tid] for tid in wanted}}
+            elif self.stage == "validation":
+                out = {"items": []}
             elif self.stage == "architecture":
                 from test_per_item_resume import _arch_answer
                 out = _arch_answer(self.schema)
@@ -121,6 +123,7 @@ def test_full_pipeline_uses_per_slot_micro_calls(monkeypatch):
     assert [s for s, _, _ in calls].count("srs") == 2
     assert [s for s, _, _ in calls].count("items") == 2
     assert [s for s, _, _ in calls].count("tests") == 2  # one call per slot
+    assert [s for s, _, _ in calls].count("validation") == 1  # one call per need
     assert r["srs"]["functional"][0]["requirement_id"] == "R-1"  # code-owned
     assert r["items"][0]["spec_id"] == "SPEC-1" and r["items"][0]["slug"] == "api"  # code-owned numbering
     arch_calls = [s for s, _, _ in calls].count("architecture")

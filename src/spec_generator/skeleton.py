@@ -341,3 +341,81 @@ def assign_architecture_ids(body: dict) -> dict:
         decisions.append(dd)
     out["decisions"] = decisions
     return out
+
+
+# ---- validation stage (V-model: the human-judged half, apart from tests.json) ----
+_VALIDATION_TEXT_FIELDS = ("what_the_human_does", "what_to_observe", "pass_when", "evidence", "environment")
+
+
+def validation_slots(needs: dict, srs: dict, tests: list) -> list[dict]:
+    """One slot per stakeholder need. A slot lists the need's acceptance criteria and, per criterion, the
+    machine tests that already cover it, so the model sees what a human still has to judge. V-ids are
+    assigned later, in code. `machine_covered` is true when at least one test traces to the need."""
+    by_criterion: dict[str, list[str]] = {}
+    for t in tests or []:
+        if t.get("criterion_id"):
+            by_criterion.setdefault(t["criterion_id"], []).append(t.get("test_id"))
+    slots = []
+    for need in (needs or {}).get("needs") or []:
+        nid = need.get("need_id")
+        criteria = []
+        for sec in ("functional", "non_functional"):
+            for req in (srs or {}).get(sec) or []:
+                if nid in (req.get("need_ids") or []):
+                    for c in req.get("acceptance") or []:
+                        criteria.append({"criterion_id": c.get("criterion_id"),
+                                         "requirement_id": req.get("requirement_id"),
+                                         "statement": c.get("statement"),
+                                         "test_ids": by_criterion.get(c.get("criterion_id"), [])})
+        slots.append({"need_id": nid, "statement": need.get("statement"), "criteria": criteria,
+                      "machine_covered": any(c["test_ids"] for c in criteria)})
+    return slots
+
+
+def check_validation_items(slot: dict, items: list[dict], architecture: dict) -> None:
+    """Deterministic gate on one need's validation items. The error names the need and the exact problem
+    so the retry feedback is specific. Checks: the criterion (when given) belongs to this need; components
+    exist in the architecture; every human-facing field is non-empty; no selector or test-hook markup in the
+    human instructions."""
+    names = [c.get("name") for c in (architecture or {}).get("components") or []]
+    own = {c["criterion_id"] for c in slot.get("criteria") or []}
+    problems = []
+    for n, it in enumerate(items or [], 1):
+        label = f"{slot.get('need_id')} item {n}"
+        cid = it.get("criterion_id")
+        if cid and cid not in own:
+            problems.append(f"{label}: criterion {cid} does not belong to this need (its criteria: {sorted(own)})")
+        unknown = [c for c in it.get("components") or [] if names and c not in names]
+        if unknown:
+            problems.append(f"{label}: components {unknown} are not in the architecture (components are: {names})")
+        for f in _VALIDATION_TEXT_FIELDS:
+            if not str(it.get(f) or "").strip():
+                problems.append(f"{label}: {f} is empty")
+        if _MARKUP_RE.search(str(it.get("what_the_human_does") or "") + " " + str(it.get("what_to_observe") or "")):
+            problems.append(f"{label}: describe what the person does and sees in product terms; "
+                            "no selectors, test ids or markup")
+    if problems:
+        raise ModelStructureError("; ".join(problems))
+
+
+def merge_validation_fills(slots: list[dict], fills: dict) -> dict:
+    """Assemble validation.json content from per-need fills ({need_id: {items: [...]}}). V-ids are code-owned
+    and continuous in need order. `verified_by` is derived, not model-authored: the tests that trace to the
+    item's criterion."""
+    tests_of = {c["criterion_id"]: c["test_ids"] for s in slots for c in s.get("criteria") or []}
+    out, n = [], 0
+    for s in slots:
+        for it in (fills.get(s["need_id"]) or {}).get("items") or []:
+            n += 1
+            cid = it.get("criterion_id") or None
+            out.append({"validation_id": f"V-{n}", "need_ids": [s["need_id"]], "criterion_id": cid,
+                        "components": list(it.get("components") or []),
+                        **{f: it.get(f) for f in _VALIDATION_TEXT_FIELDS},
+                        "verified_by": list(tests_of.get(cid, [])) if cid else []})
+    return {"items": out}
+
+
+def uncovered_needs(slots: list[dict], plan: dict) -> list[dict]:
+    """Needs reachable by neither a machine test chain nor a validation item."""
+    valued = {nid for it in plan.get("items") or [] for nid in it.get("need_ids") or []}
+    return [s for s in slots if not s["machine_covered"] and s["need_id"] not in valued]

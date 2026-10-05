@@ -428,3 +428,20 @@ def for_stage(stage: str) -> dict:
     return _grammar_safe(_raw_stage_schema(stage))
 
 
+
+
+def validation_fill_schema(slot: dict, component_names: list[str]) -> dict:
+    """One need's validation fills. The criterion is an enum of that need's own criteria (a foreign one is
+    impossible by construction); components are an enum of the architecture's names when it has any."""
+    crit_ids = [c["criterion_id"] for c in slot.get("criteria") or [] if c.get("criterion_id")]
+    comp = {"type": "string", "enum": list(component_names)} if component_names else {"type": "string"}
+    props = {"components": {"type": "array", "items": comp},
+             "what_the_human_does": {"type": "string"}, "what_to_observe": {"type": "string"},
+             "pass_when": {"type": "string"}, "evidence": {"type": "string"}, "environment": {"type": "string"}}
+    if crit_ids:
+        props["criterion_id"] = {"anyOf": [{"type": "string", "enum": crit_ids}, {"type": "null"}]}
+    item = {"type": "object", "properties": props,
+            "required": [k for k in props], "additionalProperties": False}
+    return {"type": "object",
+            "properties": {"items": {"type": "array", "items": item}},
+            "required": ["items"], "additionalProperties": False}

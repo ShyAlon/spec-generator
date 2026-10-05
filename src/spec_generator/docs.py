@@ -7,7 +7,7 @@ import os
 import re
 from pathlib import Path
 
-STAGES = ('needs', 'srs', 'architecture', 'items', 'tests', 'review', 'assemble')
+STAGES = ('needs', 'srs', 'architecture', 'items', 'tests', 'validation', 'review', 'assemble')
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
@@ -97,6 +97,12 @@ def render_docs(sources, status=None, history=None, changes=None, telemetry=None
         if rid: links.insert(0,'[%s](requirements.md#%s)'%(rid,rid.lower()))
         rows.append(('[%s](tests/%s.md)'%(tid,tid),test.get('level',''),', '.join(links),test.get('runner',''),readiness))
     emit('tests.md','Test specifications',_table(['Test','Level','Links','Runner','Readiness'],rows) if rows else 'Not available yet.','tests','spec/tests.json')
+    vitems=(sources.get('validation') or {}).get('items') or []
+    vrows=[('<a id="%s"></a>%s'%(v['validation_id'].lower(),v['validation_id']),', '.join('[%s](needs.md#%s)'%(n,n.lower()) for n in v.get('need_ids',[])),
+            ('[%s](requirements.md#%s)'%(v['criterion_id'],v['criterion_id'].lower())) if v.get('criterion_id') else '',
+            ', '.join('[%s](tests/%s.md)'%(t,t) for t in v.get('verified_by',[])),', '.join(v.get('components',[])),
+            v.get('what_the_human_does',''),v.get('what_to_observe',''),v.get('pass_when',''),v.get('evidence',''),v.get('environment','')) for v in vitems]
+    emit('validation.md','Validation (human judgment)',_table(['Item','Need','Criterion','Machine proxy','Components','What the person does','What to observe','Pass when','Evidence','Environment'],vrows) if vrows else 'Not available yet.','validation','spec/validation.json')
     trace=sources.get('traceability'); trace_rows=[]
     item_ids={i['spec_id'] for i in items}; test_ids={t['test_id'] for t in tests}
     for r in reqs:
@@ -137,11 +143,11 @@ def refresh_docs(spec, intent=None, conops=None, event=None, state=None, invalid
     """Single writer for incremental, resume, explicit-stage and final output."""
     spec=Path(spec); root=_root(spec); docs=root/'docs'; ledger=_read(spec/'docs-state.json',{})
     stages=ledger.setdefault('status',{}); snapshots=ledger.setdefault('snapshots',{}); changes=ledger.setdefault('changes',[])
-    sources={s:_read(spec/(s+'.json')) for s in ('needs','srs','architecture','items','tests','traceability')}
+    sources={s:_read(spec/(s+'.json')) for s in ('needs','srs','architecture','items','tests','validation','traceability')}
     sources['findings_ledger']=_read(spec/'findings-ledger.json')
     sources['intent']=intent or _read(root/'interview/intent_model.json');sources['conops']=conops or _read(root/'interview/conops.json') or _read(spec/'conops.json')
     if state is not None:
-        for s in ('needs','srs','architecture','items','tests'):
+        for s in ('needs','srs','architecture','items','tests','validation'):
             if sources[s] is None and state.get(s) is not None: sources[s]=state[s]
     if start:
         for s in STAGES:stages[s]='available (prior output; not validated for this invocation)' if sources.get(s) is not None or s=='assemble' and sources.get('traceability') is not None or s=='review' and history_exists(spec) else 'pending'
