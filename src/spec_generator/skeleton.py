@@ -261,6 +261,47 @@ def check_runner_execution(tests: list[dict]) -> None:
         raise ModelStructureError("; ".join(problems))
 
 
+def component_candidates(slot: dict, srs: dict, items: list, architecture: dict) -> list[str]:
+    """Architecture components that own the requirement(s) a test slot traces to: the acceptance
+    criterion's requirement, or the requirement_ids of the targeted item spec. Order follows the
+    architecture's component list."""
+    reqs: set[str] = set()
+    if slot.get("criterion_id"):
+        for sec in ("functional", "non_functional"):
+            for req in (srs or {}).get(sec) or []:
+                if any(c.get("criterion_id") == slot["criterion_id"] for c in req.get("acceptance") or []):
+                    reqs.add(req.get("requirement_id"))
+    elif slot.get("spec_id"):
+        for it in items or []:
+            if it.get("spec_id") == slot["spec_id"]:
+                reqs.update(it.get("requirement_ids") or [])
+    return [c.get("name") for c in (architecture or {}).get("components") or []
+            if reqs & set(c.get("requirement_ids") or [])]
+
+
+def check_test_components(tests: list[dict], srs: dict, items: list, architecture: dict) -> None:
+    """Deterministic gate: a test's declared components are real architecture components, and they
+    are among the components that own the requirement the test traces to. When no component owns
+    that requirement the ownership half cannot be judged, so only existence is checked. The error
+    names the test and lists the valid choices so the retry feedback is specific."""
+    names = [c.get("name") for c in (architecture or {}).get("components") or []]
+    problems = []
+    for t in tests:
+        declared = t.get("components") or []
+        unknown = [c for c in declared if c not in names]
+        if unknown:
+            problems.append(f"{t.get('test_id')}: components {unknown} are not in the architecture "
+                            f"(components are: {names})")
+            continue
+        owners = component_candidates(t, srs, items, architecture)
+        outside = [c for c in declared if owners and c not in owners]
+        if outside:
+            problems.append(f"{t.get('test_id')}: components {outside} do not own the requirement this test "
+                            f"traces to; choose from {owners}")
+    if problems:
+        raise ModelStructureError("; ".join(problems))
+
+
 def merge_test_fills(slots: list[dict], body) -> list[dict]:
     fills = body.get("fills") if isinstance(body, dict) else None
     if isinstance(fills, dict):
@@ -280,7 +321,7 @@ def merge_test_fills(slots: list[dict], body) -> list[dict]:
         out.append({"test_id": tid, "level": slot["level"],
                     "criterion_id": slot["criterion_id"], "spec_id": slot["spec_id"],
                     "description": f.get("description"), "runner": f.get("runner"),
-                    "definition": f.get("definition")})
+                    "components": f.get("components"), "definition": f.get("definition")})
     if by_id:
         raise ModelStructureError(f"fills reference unknown test ids: {sorted(by_id)}")
     return out

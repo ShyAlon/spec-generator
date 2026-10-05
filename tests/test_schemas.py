@@ -41,7 +41,7 @@ def test_tests_schema_is_prose_fills_only():
     sch = for_stage("tests")
     assert set(sch["properties"]) == {"fills"}
     fill = sch["properties"]["fills"]["items"]
-    assert set(fill["properties"]) == {"test_id", "description", "runner", "definition"}
+    assert set(fill["properties"]) == {"test_id", "description", "runner", "components", "definition"}
     # ids, levels, and criterion/spec links are code-owned (ADR-0020)
     for owned in ("level", "criterion_id", "spec_id"):
         assert owned not in str(sch)

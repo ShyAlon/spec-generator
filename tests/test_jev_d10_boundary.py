@@ -41,7 +41,7 @@ def _model(bodies, seen_messages=None):
             elif self.stage == "tests":
                 wanted = self.schema["properties"]["fills"]["required"]
                 out = {"fills": {t: PAYLOADS["tests"]["fills"].get(t, {
-                    "description": f"{t} holds", "runner": "pytest",
+                    "description": f"{t} holds", "components": ["api"], "runner": "pytest",
                     "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"],
                                    "cleanup": [], "cases": [], "execution": {}}}) for t in wanted}}
             elif self.stage == "architecture":

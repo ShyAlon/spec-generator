@@ -104,10 +104,10 @@ def test_invoke_streams_and_preserves_output_contract(monkeypatch):
 def test_keyed_fills_stream_one_item_per_value():
     """2026-09-09 live regression: strict per-skeleton fills changed arrays to
     a keyed object and silently removed test-stage item lines."""
-    text = '{"fills": {"T-1": {"description": "first", "runner": "http", "definition": {"preconditions": [], "steps": ["GET /"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}, "T-22": {"description": "last", "runner": "cli", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["exit 0"], "cleanup": [], "cases": [], "execution": {}}}}}'
+    text = '{"fills": {"T-1": {"description": "first", "components": ["api"], "runner": "http", "definition": {"preconditions": [], "steps": ["GET /"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}, "T-22": {"description": "last", "components": ["api"], "runner": "cli", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["exit 0"], "cleanup": [], "cases": [], "execution": {}}}}}'
     items = extract_array_items(text)
     assert len(items) == 2
-    assert json.loads(items[0]) == {"T-1": {"description": "first", "runner": "http", "definition": {"preconditions": [], "steps": ["GET /"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}}
+    assert json.loads(items[0]) == {"T-1": {"description": "first", "components": ["api"], "runner": "http", "definition": {"preconditions": [], "steps": ["GET /"], "expected_outcomes": ["HTTP 200"], "cleanup": [], "cases": [], "execution": {}}}}
     assert [item_label(x, i + 1) for i, x in enumerate(items)] == ["T-1 first", "T-22 last"]
 
 

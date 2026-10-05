@@ -67,8 +67,10 @@ ADD_TEST = _fn(
      "spec_id": {"type": "string", "description": "required for unit/module/system: an existing SPEC-id"},
      "description": {"type": "string"},
      "runner": {"type": "string", "description": "'http' | 'ui' | 'cli' | 'static' | 'semantic'"},
+     "components": {"type": "array", "items": {"type": "string"},
+                    "description": "architecture component names this test exercises, exactly as listed"},
      "definition": {"type": "object", "description": "runner payload: URL+expected status, command, ... (ui tests carry no selectors)"}},
-    ["level", "description", "runner", "definition"])
+    ["level", "description", "runner", "components", "definition"])
 
 ADD_COMPONENT = _fn(
     "add_component",
@@ -149,10 +151,11 @@ class VerificationToolbox:
     def call(self, name: str, args: dict):
         if name == "add_test":
             return self.add_test(args.get("level"), args.get("description"), args.get("runner"),
-                                 args.get("definition"), args.get("criterion_id"), args.get("spec_id"))
+                                 args.get("definition"), args.get("criterion_id"), args.get("spec_id"),
+                                 args.get("components"))
         raise ModelStructureError(f"unknown tool {name!r}")
 
-    def add_test(self, level, description, runner, definition, criterion_id=None, spec_id=None):
+    def add_test(self, level, description, runner, definition, criterion_id=None, spec_id=None, components=None):
         if level not in ("unit", "module", "system", "acceptance"):
             raise ModelStructureError("level must be unit | module | system | acceptance")
         if level == "acceptance":
@@ -170,7 +173,7 @@ class VerificationToolbox:
         self.slots.append({"test_id": tid, "level": level, "criterion_id": criterion_id,
                            "spec_id": spec_id,
                            "seed": {"description": description, "runner": runner,
-                                    "definition": definition}})
+                                    "components": components, "definition": definition}})
         self.applied.append(f"added {tid} ({level})")
         return {"test_id": tid, "note": "adopted as-is; no fill needed for this slot"}
 

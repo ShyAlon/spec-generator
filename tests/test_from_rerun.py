@@ -129,7 +129,7 @@ def test_from_warns_before_discarding_preserved_partials(monkeypatch, tmp_path, 
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--system-baseline", str(baseline_file)])
     main()
     (outdir / "tests_fills.partial.json").write_text(json.dumps(
-        {"T-1": {"description": "d", "runner": "r", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}}}))
+        {"T-1": {"description": "d", "components": ["api"], "runner": "r", "definition": {"preconditions": [], "steps": ["Run x"], "expected_outcomes": ["passes"], "cleanup": [], "cases": [], "execution": {}}}}))
     monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir), "--from", "items", "--system-baseline", str(baseline_file)])
     main()
     err = capsys.readouterr().err
@@ -360,7 +360,7 @@ def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(mon
                 import re
                 self.calls += 1
                 tid = re.search(r'"test_id":\s*"([^"]+)"', prompt).group(1)
-                fill = next(iter(PAYLOADS["tests"]["fills"].values()))
+                fill = {**next(iter(PAYLOADS["tests"]["fills"].values())), "components": ["persistence"]}
                 return AIMessage(content=json.dumps({"fills": {tid: fill}}))
             return super().invoke(messages)
 

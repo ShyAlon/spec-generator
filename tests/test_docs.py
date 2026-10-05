@@ -12,7 +12,7 @@ def sample():
     return {'needs':{'needs':[{'need_id':'N-1','statement':'Learn notes'}]},
         'srs':{'purpose':'Music','functional':[{'requirement_id':'R-1','title':'Notes','need_ids':['N-1'],'acceptance':[{'criterion_id':'AC-1','statement':'Correct notes'}]}]},
         'items':[{'spec_id':'SPEC-1','title':'Music','requirement_ids':['R-1'],'body_markdown':'Unrelated output must remain visible.'}],
-        'tests':[{'test_id':'T-1','level':'acceptance','criterion_id':'AC-1','spec_id':None,'runner':'static','description':'Check','definition':{'preconditions':['Ready'],'steps':['Play'],'expected_outcomes':['Correct'],'cleanup':[],'cases':[],'execution':{}}}]}
+        'tests':[{'test_id':'T-1','level':'acceptance','criterion_id':'AC-1','spec_id':None,"components": ["api"], "runner": "static",'description':'Check','definition':{'preconditions':['Ready'],'steps':['Play'],'expected_outcomes':['Correct'],'cleanup':[],'cases':[],'execution':{}}}]}
 
 
 def test_start_index_and_complete_layout(tmp_path):

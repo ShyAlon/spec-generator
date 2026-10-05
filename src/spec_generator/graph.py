@@ -43,7 +43,8 @@ from .tech_candidates import (KIND_LEXICONS, PLATFORM_CHECKED_KINDS,
 from .tools import tools_enabled
 from .skeleton import (ModelStructureError, assign_architecture_ids,
                                    build_srs_skeleton, build_test_skeleton,
-                                   merge_srs_fills, merge_test_fills, check_runner_execution)
+                                   merge_srs_fills, merge_test_fills, check_runner_execution,
+                                   check_test_components)
 from .assembly import build_traceability, order_milestones, validate_traceability
 from .prompts import METHODOLOGY, STAGE_PROMPTS
 from .telemetry import UsageLog
@@ -2056,7 +2057,9 @@ def _compact_test_context(state: GenState, slot: dict) -> dict:
     glossary = {"requirements": [r.get("requirement_id") for sec in ("functional", "non_functional")
                                   for r in state["srs"].get(sec) or []],
                 "specs": [i.get("spec_id") for i in state["items"]]}
-    return {"linked_source": linked, "architecture": minimal_arch, "id_glossary": glossary}
+    from .skeleton import component_candidates
+    return {"linked_source": linked, "architecture": minimal_arch, "id_glossary": glossary,
+            "candidate_components": component_candidates(slot, state["srs"], state["items"], arch)}
 
 
 def _stage_validation_error(stage: str, exc: ValidationError):
@@ -3023,13 +3026,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             for t in merged:
                 AcceptanceTest.model_validate(t)
             check_runner_execution(merged)
+            check_test_components(merged, state["srs"], state["items"], state.get("architecture") or {})
             return merged
 
         from .schemas import test_fill_schema
 
         # Per-item resume: each fill is preserved the moment its JSON closes
         # (streamed), so a Ctrl+C at T-34/36 reruns only T-35 and T-36.
-        done = {t["test_id"]: {k: t.get(k) for k in ("description", "runner", "definition")}
+        done = {t["test_id"]: {k: t.get(k) for k in ("description", "runner", "components", "definition")}
                 for t in state.get("tests") or []}
         if partials:
             done.update(partials.load("tests_fills") or {})
@@ -3070,6 +3074,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     for t in merged_new:
                         AcceptanceTest.model_validate(t)
                     check_runner_execution(merged_new)
+                    check_test_components(merged_new, state["srs"], state["items"], state.get("architecture") or {})
                     return d
 
                 missing_ids = [sl["test_id"] for sl in missing]
@@ -3081,7 +3086,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                           + "\n\nITEMS:\n" + json.dumps(_prompt_view(state["items"]))
                           + "\n\nFORMAT CONTRACT (final instruction - overrides anything above that conflicts): "
                             "return one STRICT JSON object {fills: {...}} with EXACTLY these keys, one per slot: "
-                          + json.dumps(missing_ids) + ". Each fill is {description, runner, definition}; definition is "
+                          + json.dumps(missing_ids) + ". Each fill is {description, runner, components: [architecture component names], definition}; definition is "
                             "{preconditions: [string], steps: [string], expected_outcomes: [string], cleanup: [string], "
                             "cases: [{name, inputs: [string], expected_outcomes: [string]}], execution: {url?, method?, "
                             "body_json?, expected_status?, command?, expected_exit?, expected_stdout_contains?}}. "
@@ -3105,6 +3110,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         for t in merged_one:
                             AcceptanceTest.model_validate(t)
                         check_runner_execution(merged_one)
+                        check_test_components(merged_one, state["srs"], state["items"], state.get("architecture") or {})
                         return d
 
                     # Shared prefix FIRST (SRS+ITEMS are identical across
