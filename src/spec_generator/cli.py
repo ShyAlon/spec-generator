@@ -287,6 +287,19 @@ def _resolve_repair_proposal(graph, cfg, prior, args, persist):
     return graph.get_state(cfg).values
 
 
+def _stamped(value):
+    """Contract stamp for artifacts written from raw dicts. The incremental
+    writer bypasses the contract models (which add contract_version by default),
+    and the handoff gate rejects unstamped payloads as pre-versioning artifacts.
+    A stamp already on the payload is kept."""
+    from vmodel_contracts import CONTRACT_VERSION
+    if isinstance(value, list):
+        return [_stamped(x) for x in value]
+    if isinstance(value, dict):
+        return {"contract_version": CONTRACT_VERSION, **value}
+    return value
+
+
 def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
                   conops_present: bool = True, architecture_lifecycle=None):
     """The incremental bundle writer (his ask 2026-09-09: 'persist them
@@ -300,7 +313,7 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
             _atomic_write(outdir / f"{stage}.revision.json", json.dumps(revision, indent=2))
         if stage == "needs":
             body = {**data, "session_id": sid}
-            _atomic_write(outdir / "needs.json", json.dumps(body, indent=2))
+            _atomic_write(outdir / "needs.json", json.dumps(_stamped(body), indent=2))
             needs = StakeholderNeedsSet.model_validate(normalize_enums(coerce_for_model(body, StakeholderNeedsSet), StakeholderNeedsSet))
             _atomic_write(outdir / "needs.md", render_needs(needs))
         elif stage == "srs":
@@ -308,24 +321,24 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
             if semantic and not _decided_review_on_disk(outdir/'srs.semantic-review.json',semantic):
                 _atomic_write(outdir/'srs.semantic-review.json',json.dumps(semantic,indent=2))
             doc = srs_document_data(intent, {**data, "session_id": sid, "intent_model_ref": sid})
-            _atomic_write(outdir / "srs.json", json.dumps(doc, indent=2))
+            _atomic_write(outdir / "srs.json", json.dumps(_stamped(doc), indent=2))
             srs = SRSDocument.model_validate(coerce_for_model(doc, SRSDocument))
             _atomic_write(outdir / "srs.md", render_srs(srs))
         elif stage == "architecture":
             body = _legacy_arch_fill({**data, "session_id": sid})  # pre-0.8.0 checkpoints lack the ADR-0021 fields
             arch = ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
             lifecycle_event = architecture_lifecycle.finalize(body) if architecture_lifecycle else None
-            _atomic_write(outdir / "architecture.json", json.dumps(body, indent=2))
+            _atomic_write(outdir / "architecture.json", json.dumps(_stamped(body), indent=2))
             _atomic_write(outdir / "architecture.md", render_architecture(arch, greenfield=greenfield, conops_present=conops_present))
             if architecture_lifecycle:
                 architecture_lifecycle.commit_finalize(lifecycle_event)
         elif stage == "items":
-            _atomic_write(outdir / "items.json", json.dumps(data, indent=2))
+            _atomic_write(outdir / "items.json", json.dumps(_stamped(data), indent=2))
             for i in data:
                 item = ItemSpec.model_validate(coerce_for_model(i, ItemSpec))
                 _atomic_write(outdir / "specs" / f"{item.spec_id}.md", render_spec_file(item))
         elif stage == "tests":
-            _atomic_write(outdir / "tests.json", json.dumps(data, indent=2))
+            _atomic_write(outdir / "tests.json", json.dumps(_stamped(data), indent=2))
 
         refresh_docs(outdir, intent=intent, event=stage, state={**state, stage: data})
 

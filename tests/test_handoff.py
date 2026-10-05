@@ -37,6 +37,21 @@ def test_export_only_outputs_paths_and_no_silent_defaults(tmp_path,monkeypatch):
  assert 'Decided' in handoff['files']['README.md'];assert not any('PRIVATE' in x for x in handoff['files'].values())
  for path in json.loads(handoff['files']['spec/manifest.json'])['files'].values():assert 'spec/'+path in handoff['files']
 
+def test_incremental_writer_stamps_raw_payloads_so_the_export_gate_accepts_them(tmp_path,monkeypatch):
+ # Regression: the writer dumped raw dicts with no contract_version, and Prepare final package
+ # then failed with ContractVersionMismatch (payload produced against 'unknown').
+ from test_srs import _run,SRS
+ from vmodel_contracts import CONTRACT_VERSION
+ interview,spec,intent=outputs(tmp_path,monkeypatch)
+ b=_run(monkeypatch,SRS)['bundle'];persist=_make_persist(intent,spec)
+ def raw(v):
+  if isinstance(v,list):return [raw(x) for x in v]
+  return {k:x for k,x in v.items() if k!='contract_version'} if isinstance(v,dict) else v
+ for stage,key in [('needs','_needs'),('srs','_srs'),('architecture','_architecture'),('items','items'),('tests','_tests')]:persist(stage,raw(b[key]),{})
+ for name in ('needs','srs','architecture'):assert json.loads((spec/f'{name}.json').read_text())['contract_version']==CONTRACT_VERSION
+ for name in ('items','tests'):assert all(x['contract_version']==CONTRACT_VERSION for x in json.loads((spec/f'{name}.json').read_text()))
+ assert not build_handoff(interview,spec)['blocked_reasons']
+
 def test_open_founder_data_blocks_final_readiness_and_other_run_is_denied(tmp_path,monkeypatch):
  interview,spec,intent=outputs(tmp_path,monkeypatch)
  intent['founder_register']['items']=[{'item_id':'FD-style','data_class':'styling','question':'Which style?','owner':'founder','status':'open','scope':'Design','source':'Interview','blocks':['UI']}]
