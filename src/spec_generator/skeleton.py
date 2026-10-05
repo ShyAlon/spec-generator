@@ -194,25 +194,69 @@ def build_test_skeleton(srs: dict, items: list) -> list[dict]:
     return slots
 
 
-_RUNNER_REQUIRED = {"dom": ("selector",), "http": ("url", "method", "expected_status"), "cli": ("command",)}
+_RUNNER_REQUIRED = {"http": ("url", "method", "expected_status"), "cli": ("command",)}
+# UI markup is the developer's: a spec-time selector is imagined implementation. The scan is narrow on
+# purpose (test-hook attributes, attribute selectors, querySelector) so code identifiers in prose pass.
+_MARKUP_RE = re.compile(r"data-test(?:id)?\b|\[[A-Za-z-]+[~|^$*]?=|queryselector", re.I)
+# Outcomes that state nothing a check could fail on. A cheap tripwire, not a quality gate.
+_VACUOUS_RE = re.compile(
+    r"^(the |a |an )?(page|app|application|screen|view|element|component|ui|it)?\s*"
+    r"(loads?|renders?|works?|exists?|runs?|is (visible|displayed|present|shown|rendered|available))"
+    r"(\s+(successfully|correctly|properly|as expected))?$|^no errors?( occurs?| are shown)?$", re.I)
+
+
+def _outcomes(d) -> list[str]:
+    if isinstance(d, dict):
+        out = list(d.get("expected_outcomes") or [])
+        for c in d.get("cases") or []:
+            out += list((c.get("expected_outcomes") if isinstance(c, dict) else getattr(c, "expected_outcomes", [])) or [])
+        return [str(o) for o in out]
+    out = list(getattr(d, "expected_outcomes", []) or [])
+    for c in getattr(d, "cases", []) or []:
+        out += list(getattr(c, "expected_outcomes", []) or [])
+    return [str(o) for o in out]
 
 
 def check_runner_execution(tests: list[dict]) -> None:
-    """Deterministic gate: a runner that executes something must carry the machine-readable
-    fields that execution needs. The error names the exact test, runner and missing fields so
-    the retry feedback is specific. static/semantic runners need none."""
+    """Deterministic gate on generated tests. The error names the exact test so the retry feedback
+    is specific. (1) The old runner name 'dom' is now 'ui'. (2) A runner that
+    executes something carries the machine-readable fields it needs. (3) UI markup is the
+    developer's: no selector key in execution and no test-hook or attribute selector in the test
+    text. (4) Loose tripwire: a test states at least one outcome, and not only a tautology
+    ('page loads', 'no error', 'element is visible')."""
     problems = []
     for t in tests:
-        need = _RUNNER_REQUIRED.get(str(t.get("runner") or "").strip().lower())
-        if not need:
-            continue
+        tid = t.get("test_id")
+        runner = str(t.get("runner") or "").strip().lower()
+        if runner == "dom":
+            problems.append(f"{tid}: runner 'dom' is now 'ui' (a ui test names no selectors)")
         d = t.get("definition")
         ex = (d.get("execution") if isinstance(d, dict) else getattr(d, "execution", None)) or {}
         get = ex.get if isinstance(ex, dict) else lambda k, default=None: getattr(ex, k, default)
-        missing = [f for f in need if get(f) in (None, "", [])]
-        if missing:
-            problems.append(f"{t.get('test_id')}: runner '{t.get('runner')}' requires definition.execution."
-                            + ", ".join(missing) + " (missing: " + ", ".join(missing) + ")")
+        need = _RUNNER_REQUIRED.get(runner)
+        if need:
+            missing = [f for f in need if get(f) in (None, "", [])]
+            if missing:
+                problems.append(f"{tid}: runner '{t.get('runner')}' requires definition.execution."
+                                + ", ".join(missing) + " (missing: " + ", ".join(missing) + ")")
+        if isinstance(ex, dict) and ex.get("selector"):
+            problems.append(f"{tid}: definition.execution.selector is not allowed; the developer defines the markup. "
+                            "Describe the element in product terms in steps and expected_outcomes")
+        if d is None:
+            continue
+        texts = [str(t.get("description") or "")]
+        if isinstance(d, dict):
+            texts += [str(x) for k in ("preconditions", "steps", "cleanup") for x in (d.get(k) or [])]
+        else:
+            texts += [str(x) for k in ("preconditions", "steps", "cleanup") for x in (getattr(d, k, []) or [])]
+        outs = _outcomes(d)
+        if any(_MARKUP_RE.search(x) for x in texts + outs):
+            problems.append(f"{tid}: names UI markup (a test hook or attribute selector); the developer defines it. "
+                            "Describe the element in product terms")
+        real = [o for o in outs if o.strip() and not _VACUOUS_RE.match(o.strip().rstrip(".!").strip())]
+        if outs is not None and not real:
+            problems.append(f"{tid}: states no checkable outcome (empty or only 'loads', 'no error', 'is visible'). "
+                            "State a value or a state that can be true or false")
     if problems:
         raise ModelStructureError("; ".join(problems))
 

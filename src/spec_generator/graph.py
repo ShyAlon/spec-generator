@@ -3084,7 +3084,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                           + json.dumps(missing_ids) + ". Each fill is {description, runner, definition}; definition is "
                             "{preconditions: [string], steps: [string], expected_outcomes: [string], cleanup: [string], "
                             "cases: [{name, inputs: [string], expected_outcomes: [string]}], execution: {url?, method?, "
-                            "body_json?, expected_status?, command?, expected_exit?, expected_stdout_contains?, selector?}}. "
+                            "body_json?, expected_status?, command?, expected_exit?, expected_stdout_contains?}}. "
                             "Include all six outer fields; use [] or {} when inapplicable. runner and definition describe how "
                             "to test THE FOUNDER'S PRODUCT - "
                             "never this pipeline.", log, progress,
@@ -3119,7 +3119,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                           + json.dumps([tid]) + ". The fill is {description, runner, definition}; definition is "
                             "{preconditions: [string], steps: [string], expected_outcomes: [string], cleanup: [string], "
                             "cases: [{name, inputs: [string], expected_outcomes: [string]}], execution: {url?, method?, "
-                            "body_json?, expected_status?, command?, expected_exit?, expected_stdout_contains?, selector?}}. "
+                            "body_json?, expected_status?, command?, expected_exit?, expected_stdout_contains?}}. "
                             "Include all six outer fields; use [] or {} when inapplicable. runner and definition describe how "
                             "to test THE FOUNDER'S PRODUCT - "
                             "never this pipeline.", log, progress,

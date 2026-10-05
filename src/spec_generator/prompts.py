@@ -16,8 +16,9 @@ Authoring rules (these are what separate this from a free PRD generator):
   technologies or algorithms (no 'AES-256', 'OAuth', 'Kafka' - those are design
   decisions belonging to the architecture stage). NEVER invent artifacts,
   features, or numbers the stakeholder did not state.
-- The executable HOW (http GET /health, DOM selectors, db probes) is authored at
-  the TEST stage, where the architecture exists - never in the SRS.
+- The executable HOW that the architecture and specs define (http GET /health, CLI
+  commands, db probes) is authored at the TEST stage - never in the SRS. UI markup
+  (selectors, ids, test ids) is authored nowhere in the spec: the developer defines it.
 - Downstream artifacts REFERENCE requirements by id (R-n) through the traceability
   matrix. Restating or regrouping a requirement's text downstream is a defect.
 - Item specs are written FOR A CODING AGENT: interface, data model, behaviors, error cases,
@@ -56,16 +57,16 @@ STAGE_PROMPTS = {
     "tests": "You are a QA engineer writing tests for ONE acceptance criterion or spec at a time. Each test asserts "
              "ONLY what its one criterion or spec states: add no scenarios, failure modes, security, encryption, "
              "localization, accessibility or latency numbers that the cited criterion or spec does not state. "
-             "expected_outcomes must be observable. runner dom needs execution.selector, http needs execution.url, "
-             "method and expected_status, cli needs execution.command. Author the test prose. The skeleton is FIXED: one acceptance-level slot per SRS "
+             "expected_outcomes must be observable. runner http needs execution.url, "
+             "method and expected_status, cli needs execution.command. A runner ui test describes ONE interaction at the system boundary and the measurable response, in product terms: steps are what the user or system does, expected_outcomes state a value or state that can be true or false ('the score screen shows 10 of 10'), and the elements involved are named in product language ('the score display'). NEVER write a selector, element id, CSS class, data-testid or other markup: the developer owns the markup and binds it to the test later. Author the test prose. The skeleton is FIXED: one acceptance-level slot per SRS "
              "acceptance criterion (criterion_id linked) and one unit-level slot per item spec "
              "(spec_id linked), test_ids already assigned - never change, renumber, add, or drop "
-             "them. For EACH slot write description, runner ('http' | 'dom' | 'cli' | 'static' | "
+             "them. For EACH slot write description, runner ('http' | 'ui' | 'cli' | 'static' | "
              "'semantic'), and definition using the canonical procedure shape: "
              "{preconditions: [string], steps: [string], expected_outcomes: [string], cleanup: "
              "[string], cases: [{name, inputs: [string], expected_outcomes: [string]}], execution: "
              "{url?, method?, body_json?, expected_status?, command?, expected_exit?, "
-             "expected_stdout_contains?, selector?}}. Always include all six outer definition "
+             "expected_stdout_contains?}}. Always include all six outer definition "
              "fields; use [] where a phase does not apply and {} when no execution field applies. "
              "Put readable technical detail in the procedure strings, and duplicate only the "
              "small machine-readable subset into execution when it applies. Use cases only for a "
@@ -95,11 +96,11 @@ STAGE_PROMPTS = {
               "requirement (the SRS): flag solution language - named technologies, UI widgets, APIs - because requirements stay "
               "solution-agnostic. "
               "spec and test: the architecture has ALREADY DECIDED the stack (the DECIDED ARCHITECTURE block is binding). "
-              "Naming the decided technologies, APIs, selectors and HTTP methods in a spec or a test is REQUIRED. Never flag it "
+              "Naming the decided technologies, APIs and HTTP methods in a spec or a test is REQUIRED. Never flag it "
               "and never ask to remove, replace, abstract or avoid it. For spec and test flag ONLY: missing behavior, "
               "contradictions with the SRS or with the decided architecture, orphan items, and uncheckable items. "
-              "A test is flagged ONLY for contradicting its own criterion or spec, or for an expected result that cannot be "
-              "observed. A spec 'add behavior' finding must cite a requirement or AC id. "
+              "A test is flagged ONLY for contradicting its own criterion or spec, for an expected result that cannot be "
+              "observed, or for naming a selector, element id, CSS class or test id (UI markup is the developer's). A spec 'add behavior' finding must cite a requirement or AC id. "
               "A technology that is NOT in the decided architecture may be flagged as a contradiction. "
               "Return a JSON list of typed fixes {{scope, target_ids, fix}}, or []. scope is requirement|spec|test|systemic. "
               "Use exact R-/SPEC-/T- ids for a scoped fix; use systemic with [] only when no safe target exists.",

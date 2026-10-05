@@ -88,7 +88,7 @@ def test_old_contract_and_unsafe_baseline_are_denied(tmp_path,monkeypatch):
  interview,spec,intent=outputs(tmp_path,monkeypatch)
  intent['contract_version']='0.19.0';(interview/'intent_model.json').write_text(json.dumps(intent))
  with pytest.raises(ValueError,match='0.19'):build_handoff(interview,spec)
- intent['contract_version']='0.20.0';(interview/'intent_model.json').write_text(json.dumps(intent))
+ intent['contract_version']='0.21.0';(interview/'intent_model.json').write_text(json.dumps(intent))
  (spec/'system-baseline.json').write_text('x'*2_000_001)
  with pytest.raises(ValueError,match='Baseline exceeds'):build_handoff(interview,spec)
 

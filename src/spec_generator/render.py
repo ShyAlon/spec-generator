@@ -68,6 +68,12 @@ def render_agents_md(
         "",
         "Every requirement ships with machine-checkable acceptance criteria.",
         "Run the acceptance suite after each milestone; a red test is a divergence, not a suggestion.",
+        "",
+        "## UI tests are yours to bind",
+        "",
+        "Tests with runner `ui` describe an interaction and a measurable response in product terms. They contain no selectors, because the markup is yours to define.",
+        "Define stable test hooks (for example data-testid attributes) as you build the UI, and write the UI tests against the behaviours in tests.json.",
+        "Keep the mapping from each T-id to its element hooks in `ui-bindings.json` in your repository, and update it whenever the markup changes.",
     ]
     return "\n".join(L)
 
@@ -125,7 +131,7 @@ def render_srs(srs: SRSDocument) -> str:
         L += ["## 8. Open questions (never silently resolved)", *[f"- {q}" for q in srs.open_questions], ""]
     L += ["---",
           "_Solution-agnostic by design: observable outcomes only. Executable checks "
-          "(endpoints, selectors, probes) live in the test specifications._"]
+          "(endpoints, commands, probes) live in the test specifications; UI element bindings are the developer's._"]
     return "\n".join(L)
 
 
