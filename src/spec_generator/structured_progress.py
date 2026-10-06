@@ -9,7 +9,7 @@ from vmodel_contracts.progress_signal import ProgressSignal
 
 PREFIX = "VMODEL_PROGRESS_JSONL:"
 active_sink: StructuredProgress | None = None
-STAGE_PHASE = {"needs":"needs", "srs":"srs", "architecture":"architecture", "items":"specs", "tests":"tests", "validation":"tests"}
+STAGE_PHASE = {"needs":"needs", "srs":"srs", "architecture":"architecture", "items":"specs", "tests":"tests", "validation":"validation"}
 
 class StructuredProgress:
     def __init__(self, task_id: str, session_id: str, fallback_phase: str):

@@ -13,3 +13,14 @@ def test_structured_frame_uses_canonical_phase_and_order(capsys,monkeypatch):
     assert (a.phase_key,b.phase_key)==('specs','specs')
     assert (a.cursor,b.cursor)==(1,2)
     assert b.status=='heartbeat'
+
+
+def test_every_generator_stage_reports_under_its_own_phase():
+    from spec_generator.structured_progress import STAGE_PHASE
+    assert STAGE_PHASE['validation']=='validation' and STAGE_PHASE['tests']=='tests'
+    sink=StructuredProgress('task','session',STAGE_PHASE['validation'])
+    import io,contextlib
+    buf=io.StringIO()
+    with contextlib.redirect_stdout(buf):sink.emit('validation','Writing validation items','started')
+    signal=ProgressSignal.model_validate_json(buf.getvalue().strip().removeprefix(PREFIX))
+    assert signal.phase_key=='validation'
