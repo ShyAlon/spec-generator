@@ -24,6 +24,12 @@ def build_handoff(interview:Path,spec:Path)->dict:
     items=array('items.json',ItemSpec)
     tests=array('tests.json' if (spec/'tests.json').is_file() else 'test_specifications.json',AcceptanceTest)
     if any(model.session_id!=intent.session_id for model in (conops,needs,srs,arch)):raise ValueError('Phase outputs belong to different sessions')
+    validation_path=spec/'validation.json'  # optional: sessions run before the validation stage carry none
+    if validation_path.exists():
+        from vmodel_contracts.verification import ValidationPlan
+        if validation_path.is_symlink() or validation_path.stat().st_size>2_000_000:raise ValueError('Unsafe output: validation.json')
+        raw=json.loads(validation_path.read_text());check_compatible(raw)
+        if ValidationPlan.model_validate(raw).session_id!=intent.session_id:raise ValueError('Validation plan belongs to another session')
     semantic_records={}
     for path,canonical in ((interview/'semantic-review.json',intent.model_dump(mode='json')),(spec/'srs.semantic-review.json',srs.model_dump(mode='json'))):
         if path.exists():
@@ -65,6 +71,7 @@ def build_handoff(interview:Path,spec:Path)->dict:
         if name not in files:raise ValueError(f'Missing manifest dependency: {relative}')
     phase_files={'interview/intent_model.json':interview/'intent_model.json','interview/conops.json':interview/'conops.json',
        'spec/needs.json':spec/'needs.json','spec/srs.json':spec/'srs.json','spec/architecture.json':spec/'architecture.json','spec/items.json':spec/'items.json','spec/tests.json':spec/('tests.json' if (spec/'tests.json').is_file() else 'test_specifications.json')}
+    if validation_path.exists():phase_files['spec/validation.json']=validation_path
     for name,path in phase_files.items():
         files[name]=path.read_text()
         sibling=path.with_suffix('.md')

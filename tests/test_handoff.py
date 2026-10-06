@@ -120,3 +120,21 @@ def test_decided_input_without_a_reason_reads_no_reason_recorded(tmp_path,monkey
  srs=json.loads((spec/'srs.json').read_text());srs['founder_register']=intent['founder_register'];(spec/'srs.json').write_text(json.dumps(srs))
  handoff=build_handoff(interview,spec)
  assert 'FD-tone: Friendly Why: no reason recorded.' in handoff['files']['README.md'] or 'Why: no reason recorded' in json.dumps(handoff['files'])
+
+
+def _plan(session_id):
+ return {'contract_version':'0.22.0','session_id':session_id,'items':[]}
+
+def test_handoff_carries_validation_json_when_present(tmp_path,monkeypatch):
+ interview,spec,intent=outputs(tmp_path,monkeypatch)
+ assert 'spec/validation.json' not in build_handoff(interview,spec)['files']  # older sessions export as before
+ (spec/'validation.json').write_text(json.dumps(_plan(intent['session_id'])))
+ (spec/'validation.md').write_text('# Validation\n')
+ files=build_handoff(interview,spec)['files']
+ assert json.loads(files['spec/validation.json'])['session_id']==intent['session_id']
+ assert files['spec/validation.md']=='# Validation\n'
+
+def test_handoff_denies_validation_plan_from_another_session(tmp_path,monkeypatch):
+ interview,spec,_=outputs(tmp_path,monkeypatch)
+ (spec/'validation.json').write_text(json.dumps(_plan('another-session')))
+ with pytest.raises(ValueError,match='another session'):build_handoff(interview,spec)
