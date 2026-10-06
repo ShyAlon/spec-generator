@@ -303,6 +303,58 @@ def _stamped(value):
     return value
 
 
+def _write_decisions_companion(outdir: Path, architecture: dict) -> None:
+    """architecture.decisions.json: what the gate page needs to collect founder decisions.
+    No research_required slot means no file. An earlier answer for the same slot key and brief
+    is carried as `prefill` for the founder to confirm; it is never applied silently."""
+    from .architecture_decisions import COMPANION_NAME, companion_for
+    path = outdir / COMPANION_NAME
+    companion = companion_for(architecture)
+    if companion is None:
+        if path.is_file() and not path.is_symlink():
+            path.unlink()
+        return
+    earlier: dict[tuple[str, str], dict] = {}
+    if path.is_file() and not path.is_symlink():
+        try:
+            for s in json.loads(path.read_text()).get("slots") or []:
+                answer = s.get("founder_decision") or s.get("prefill")
+                if answer:
+                    earlier[(s.get("key"), s.get("brief"))] = answer
+        except (ValueError, OSError):
+            earlier = {}
+    for s in companion["slots"]:
+        answer = earlier.get((s["key"], s["brief"]))
+        s["prefill"] = answer if answer and not s.get("founder_decision") else None
+    _atomic_write(path, json.dumps(companion, indent=2))
+
+
+def _apply_saved_architecture_decisions(graph, cfg, prior: dict, outdir: Path, persist):
+    """Resume: fold the founder's saved decisions (written by the gate page) into the checkpoint
+    so items and everything after read them. Does not re-run architecture."""
+    from .architecture_decisions import COMPANION_NAME, merge_companion, raise_findings
+    from .findings_ledger import Ledger
+    path = outdir / COMPANION_NAME
+    arch = prior.get("architecture")
+    if not arch or not path.is_file() or path.is_symlink():
+        return prior
+    try:
+        merged = merge_companion(arch, json.loads(path.read_text()))
+    except ValueError as exc:
+        raise UserFacingError("Saved architecture decisions are not usable.", str(exc),
+                              "open the architecture gate, review the decisions and save them again.") from exc
+    if merged == arch:
+        return prior
+    ledger = Ledger.from_dict(prior.get("findings_ledger"))
+    raise_findings(ledger, merged)
+    update = {"architecture": merged, "findings_ledger": ledger.to_dict()}
+    graph.update_state(cfg, update, as_node="architecture")
+    state = {**prior, **update}
+    persist("architecture", merged, state)
+    print("Founder decisions for architecture slots applied; continuing at the next stage.", file=sys.stderr)
+    return state
+
+
 def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
                   conops_present: bool = True, architecture_lifecycle=None):
     """The incremental bundle writer (his ask 2026-09-09: 'persist them
@@ -333,6 +385,7 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
             lifecycle_event = architecture_lifecycle.finalize(body) if architecture_lifecycle else None
             _atomic_write(outdir / "architecture.json", json.dumps(_stamped(body), indent=2))
             _atomic_write(outdir / "architecture.md", render_architecture(arch, greenfield=greenfield, conops_present=conops_present))
+            _write_decisions_companion(outdir, body)
             if architecture_lifecycle:
                 architecture_lifecycle.commit_finalize(lifecycle_event)
         elif stage == "items":
@@ -932,6 +985,9 @@ def main() -> None:
                     help="apply the pending repair proposal (repair-proposal.md) and continue to items, tests, review")
     ap.add_argument("--reject-repair", action="store_true",
                     help="drop the pending repair proposal; the SRS stays as it was and findings stay open")
+    ap.add_argument("--require-decisions", action="store_true",
+                    help="attended run: refuse to start items while a research_required stack slot has no founder decision "
+                         "(decision and reason). Off by default: unattended runs raise an open ledger finding per slot instead")
     ap.add_argument("--export-handoff",action="store_true",help="zero-LLM validated coding-agent handoff from completed outputs")
     ap.add_argument("--preflight", action="store_true",
                     help="validate inputs and checkpoint compatibility without building a model or spending a call")
@@ -1087,7 +1143,7 @@ def main() -> None:
     persist_fn = _make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
                                conops_present=conops is not None,
                                architecture_lifecycle=architecture_lifecycle)
-    graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding,
+    graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding, require_decisions=args.require_decisions,
                         persist=persist_fn,
                         partials=partials, stop_after=args.to_stage)
     from . import model_config as _mc
@@ -1178,6 +1234,8 @@ def main() -> None:
                 graph.update_state(cfg,{'srs':candidate,'semantic_reviews':reviews},as_node=_predecessor('architecture',args.review))
                 prior={**prior,'srs':candidate,'semantic_reviews':reviews}
                 print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
+    if resume:
+        prior = _apply_saved_architecture_decisions(graph, cfg, prior, outdir, persist_fn)
     if resume:
         print("Checkpoint found - resuming; completed stages are NOT re-run.", file=sys.stderr)
         # backfill-persist artifacts for stages completed BEFORE incremental

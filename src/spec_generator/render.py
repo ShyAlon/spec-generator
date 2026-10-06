@@ -42,7 +42,9 @@ def render_agents_md(
     for e in arch.stack_entries:
         L.append(f"- **{e.key}**: {e.value}")
     for e in arch.stack_entry_dispositions:
-        if e.status.value == "research_required":
+        if e.status.value == "research_required" and e.founder_decision:
+            L.append(f"- **{e.key}**: Decided by founder: {e.founder_decision.text} (reason: {e.founder_decision.reason})")
+        elif e.status.value == "research_required":
             L.append(f"- **{e.key}**: RESEARCH REQUIRED - {e.research_brief}")
         else:
             L.append(f"- **{e.key}**: NOT APPLICABLE - {e.reason}")
@@ -287,7 +289,9 @@ def render_architecture(arch: ArchitectureOverview, greenfield: bool = False,
     if arch.stack_entry_dispositions:
         lines.append("\n## Considered stack slots without a technology selection")
         for e in arch.stack_entry_dispositions:
-            if e.status.value == "research_required":
+            if e.status.value == "research_required" and e.founder_decision:
+                lines.append(f"- **{e.key}** - Decided by founder: {e.founder_decision.text} (reason: {e.founder_decision.reason})")
+            elif e.status.value == "research_required":
                 lines.append(f"- **{e.key}** - RESEARCH REQUIRED: {e.research_brief}")
             else:
                 lines.append(f"- **{e.key}** - NOT APPLICABLE: {e.reason}")

@@ -145,6 +145,12 @@ ARCH_STACK_ENTRY = """Decide ONE stack slot. Return exactly one legal JSON shape
 3. Genuine irrelevance: {status:"not_applicable", reason: non-empty string}. Use this rarely, only when the slot truly does not apply to the concept; the reason must argue why.
 An empty technology without an explicit status is illegal. A missing baseline fact does not make a slot not_applicable. If a concrete technology is grounded in baseline facts, cite every ref and copy the fact text verbatim. Otherwise baseline_refs is [] and the choice is new design or an authorized migration. Off-list concrete picks require a substantive justification."""
 
+ARCH_STACK_OPTIONS = """The founder must decide ONE open stack slot. Propose two or three distinct candidate answers
+the founder can pick from, each a short phrase naming a concrete approach or technology that fits the slot's
+brief and the requirements. These are proposals for the founder to accept or replace, not a decision: do not
+state a preference, and do not claim current facts (versions, prices, availability) you have not been given.
+Return STRICT JSON {options:[string, string, ...]} with 2 or 3 items."""
+
 ARCH_COMPONENT_PLAN = """List the software components of this architecture. For each: a short
 unique name, the requirement ids (R-n) it realizes, the baseline refs proving where it already
 exists (existing mode: a preserved component NEEDS refs), and migration=true only for a

@@ -277,6 +277,14 @@ def arch_stack_entry_schema(valid_refs: list[str], technology_ids: list[str]) ->
             "oneOf": [concrete, research, excluded]}
 
 
+def arch_stack_options_schema() -> dict:
+    """Candidate answers for one research_required slot: two or three short strings."""
+    return {"type": "object",
+            "properties": {"options": {"type": "array", "minItems": 2, "maxItems": 3,
+                                       "items": {"type": "string", "minLength": 1}}},
+            "required": ["options"], "additionalProperties": False}
+
+
 def arch_component_plan_schema(requirement_ids: list[str], valid_refs: list[str]) -> dict:
     """Plan call B: the component slots. Requirement and ref enums are the
     real ids/refs, so coverage and grounding are checked against truth."""

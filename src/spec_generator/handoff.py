@@ -99,6 +99,10 @@ def build_handoff(interview:Path,spec:Path)->dict:
         raw=json.loads(baseline.read_text());check_compatible(raw)
         SystemBaseline.model_validate(raw);files['spec/system-baseline.json']=baseline.read_text()
     blockers=[f'{x.item_id}: {x.question}' for x in register.items if x.status!='decided' and x.blocks]
+    arch_path=spec/'architecture.json'
+    if arch_path.is_file() and not arch_path.is_symlink():
+        from .architecture_decisions import open_slots
+        blockers+=[f"architecture slot {d['key']}: no founder decision" for d in open_slots(json.loads(arch_path.read_text()))]
     from .findings_ledger import Ledger,revision_of
     ledger_path=spec/'findings-ledger.json'
     if not ledger_path.is_file() or ledger_path.is_symlink():
