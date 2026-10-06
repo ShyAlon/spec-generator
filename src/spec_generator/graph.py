@@ -773,6 +773,18 @@ def _specific_reason(reason: str) -> bool:
     return r not in _GENERIC_REJECTIONS
 
 
+def _founder_stack_block(state) -> str:
+    """Decided research_required slots are binding founder constraints for the items stage."""
+    decided = [d for d in ((state.get("architecture") or {}).get("stack_entry_dispositions") or [])
+               if d.get("status") == "research_required" and d.get("founder_decision")]
+    if not decided:
+        return ""
+    lines = [f"- {d['key']}: {d['founder_decision']['text']} (founder's reason: {d['founder_decision']['reason']})"
+             for d in decided]
+    return ("\n\nFOUNDER DECISIONS ON OPEN STACK SLOTS (binding; the founder chose these, do not substitute):\n"
+            + "\n".join(lines))
+
+
 def _candidate_block(key: str, founder_techs: list[str]) -> str:
     """Per-stack-entry prompt injection: the dated curated candidates for the
     slot's kind, with founder-named technologies marked and weighted."""
@@ -2165,7 +2177,8 @@ def _ground_items(state, ledger, provider, persist) -> None:
 def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None = None,
                 review: bool = False, persist=None, partials=None,
                 only_stage: str | None = None, stop_after: str | None = None,
-                expert_opinion: bool = False, grounding=None):
+                expert_opinion: bool = False, grounding=None,
+                require_decisions: bool = False):
     """persist(stage, data, state): optional side-effect hook fired after each
     authoring stage completes - the CLI uses it to write the bundle
     incrementally, so a late failure leaves all completed work on disk.
@@ -2389,11 +2402,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         item, the same way the SRS fills already do."""
         from .prompts import (ARCH_ADR_BODY, ARCH_ADR_PLAN, ARCH_COMPONENT_BODY,
                               ARCH_COMPONENT_PLAN, ARCH_CONTEXT, ARCH_NFR,
-                              ARCH_STACK_ENTRY, ARCH_STACK_PLAN)
+                              ARCH_STACK_ENTRY, ARCH_STACK_OPTIONS, ARCH_STACK_PLAN)
         from .schemas import (arch_adr_body_schema, arch_adr_plan_schema,
                               arch_component_body_schema, arch_component_plan_schema,
                               arch_nfr_schema, arch_stack_entry_schema,
-                              arch_stack_plan_schema)
+                              arch_stack_options_schema, arch_stack_plan_schema)
 
         if "system_baseline" not in state:
             # a KNOWN pain (old checkpoint, flag never merged) - human-readable,
@@ -2464,7 +2477,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     brief = str(d.get("research_brief") or "").strip()
                     if not brief:
                         raise ModelStructureError(f"stack.{key}: research_required requires a research_brief")
-                    return {"key": key, "status": status, "research_brief": brief}
+                    kept = {"key": key, "status": status, "research_brief": brief}
+                    if d.get("candidate_options"):
+                        kept["candidate_options"] = [str(o) for o in d["candidate_options"]]
+                    return kept
                 if status == "not_applicable":
                     reason = str(d.get("reason") or "").strip()
                     if not reason:
@@ -2595,6 +2611,29 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 log, progress, validate=lambda d, key=key: _v_entry(d, key),
                 schema=arch_stack_entry_schema(valid_refs, [r["technology_id"] for r in TECH_ROWS]),
                 stream_items=False, item_label=f"stack:{key}")
+            _save()
+
+        # 2b. One small call per research_required slot: two or three candidate
+        # answers for the founder to pick from. Resumable per slot; a failure
+        # here costs one retried slot, never the stage.
+        def _v_options(d, key):
+            opts = [str(o).strip() for o in (d.get("options") or [])]
+            if not 2 <= len(opts) <= 3 or any(not o for o in opts):
+                raise ModelStructureError(f"stack.{key}: propose two or three non-empty options")
+            if len({o.casefold() for o in opts}) != len(opts):
+                raise ModelStructureError(f"stack.{key}: the options must be distinct")
+            return {"options": opts}
+
+        for key in part["stack_keys"]:
+            e = entries.get(key)
+            if not isinstance(e, dict) or e.get("status") != "research_required" or e.get("candidate_options"):
+                continue
+            e["candidate_options"] = _call_json(
+                "architecture",
+                context + f"\n\nTHE OPEN SLOT: {key}\nBRIEF: {e['research_brief']}\n\n" + ARCH_STACK_OPTIONS,
+                log, progress, validate=lambda d, key=key: _v_options(d, key),
+                schema=arch_stack_options_schema(), stream_items=False,
+                item_label=f"options:{key}")["options"]
             _save()
 
         # 3. Plan: component slots (coverage checked here, not at assembly).
@@ -2958,6 +2997,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         result = {"architecture": data, "architecture_advisories": _advisories,
                   "artifact_revisions": revisions,
                   "gate_feedback": _clear_feedback(state, "architecture")}
+        # Undecided research_required slots are audited: one OPEN finding each.
+        # Attended runs additionally refuse to start items (node_items).
+        from . import architecture_decisions as _AD
+        _ledger = Ledger.from_dict(state.get("findings_ledger"))
+        _AD.raise_findings(_ledger, data)
+        result["findings_ledger"] = _ledger.to_dict()
         # Nested mutation is not a LangGraph state update. Return the changed
         # SRS explicitly so the resolution marker survives the checkpoint and
         # deterministic assembly, including --from architecture resumes.
@@ -2966,6 +3011,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         return result
 
     def node_items(state: GenState) -> dict:
+        if require_decisions:
+            from .architecture_decisions import require_decided
+            require_decided(state["architecture"])
         # Bulk proposal, code disposes (same doctrine as architecture): the
         # model chooses the module grouping - that IS design analysis, not
         # skeleton structure to derive - but every reference is constrained
@@ -2989,18 +3037,18 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             for spec, prior in zip(plan, state["items"]):
                 if spec["spec_id"] not in affected:
                     data.append(prior); continue
-                body = _call_json("items", _items_body_payload(state, spec), log, progress,
+                body = _call_json("items", _items_body_payload(state, spec) + _founder_stack_block(state), log, progress,
                                   validate=_items_body_validator(spec), schema=items_body_schema(),
                                   stream_items=False, item_label=f"{spec['spec_id']} surgical review fix")
                 data.append({**spec, "body_markdown": body["body_markdown"]})
         elif model_config.bulk_fills_enabled():
-            data = _call_json("items", _items_payload(state, req_ids), log, progress,
+            data = _call_json("items", _items_payload(state, req_ids) + _founder_stack_block(state), log, progress,
                               validate=_items_validator(req_ids), schema=items_schema(req_ids))
         else:
             # ADR-0022: plan the module grouping (one small call, references
             # enum-constrained, coverage validated), then author each spec
             # body in its own micro-call - a weak body fails one cheap call.
-            plan = _call_json("items", _items_plan_payload(state, req_ids), log, progress,
+            plan = _call_json("items", _items_plan_payload(state, req_ids) + _founder_stack_block(state), log, progress,
                               validate=_items_plan_validator(req_ids),
                               schema=items_plan_schema(req_ids), stream_items=False)
             if progress is not None:
