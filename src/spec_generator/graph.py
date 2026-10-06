@@ -2005,6 +2005,40 @@ def render_repair_proposal(proposal: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _dedupe_requirements(data: dict, ledger: Ledger) -> dict:
+    """Near-duplicate requirements (vmodel_contracts.text_qa). At or above REQ_MERGE_THRESHOLD the later one is
+    merged into the earlier, with provenance on the survivor (merged_from) and a ledger history entry. In the
+    review band an OPEN finding (srs.duplicate_requirement) goes to the founder. A requirement with no
+    comparable text marks the check incomplete: it never passes silently."""
+    reqs = [r for sec in ("functional", "non_functional") for r in data.get(sec) or []]
+    merged, merges = text_qa.merge_duplicate_requirements(reqs)
+    if merges:
+        data = {**data, **{sec: [r for r in merged if r.get("kind") == sec] for sec in ("functional", "non_functional")}}
+        for m in merges:
+            ledger.history.append({"event": "auto_merged_requirements", **m})
+            model_config._console_line(
+                f"     - srs.duplicate_requirement merged {m['requirement_id']} into {m['survivor']} (score {m['score']})")
+    pairs = text_qa.duplicate_requirement_pairs(merged)
+    by_id = {r["requirement_id"]: r for r in merged}
+    raised = set()
+    for pair in pairs["review"]:
+        a, b = by_id[pair["a"]], by_id[pair["b"]]
+        text = revision_of(f"{a.get('title')} {a.get('statement')} || {b.get('title')} {b.get('statement')}")
+        raised.add(ledger.add(
+            rule_id="srs.duplicate_requirement", rule_version="1", source="srs", kind="semantic",
+            targets=[pair["a"], pair["b"]], artifact_revision=text, scope="requirement",
+            evidence=[{"id": pair["a"], "sha256": revision_of(str(a.get("statement"))), "excerpt": str(a.get("statement"))[:400]},
+                      {"id": pair["b"], "sha256": revision_of(str(b.get("statement"))), "excerpt": str(b.get("statement"))[:400]}],
+            summary=f"{pair['a']} and {pair['b']} may be the same requirement (word overlap {pair['score']:.2f}); keep both or merge",
+            detail={"score": pair["score"]}))
+    ledger.retire_rule("srs.duplicate_requirement", raised, "SRS re-run no longer shows this pair as near-duplicate")
+    ledger.clear_incomplete("srs.duplicate_requirement")
+    if pairs["uncomparable"]:
+        ledger.mark_incomplete("srs.duplicate_requirement", "requirement has no comparable text",
+                               requirement_ids=pairs["uncomparable"])
+    return data
+
+
 def _check_ac_ids_stable(before: dict, after: dict) -> None:
     """Acceptance-criterion ids are numbered sequentially across the whole SRS. A repair that adds or removes a
     criterion shifts every later AC id, and tests are linked by criterion_id: they would silently point at the wrong
@@ -2216,7 +2250,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         fills = {}
         for slot in slots:
             rid = slot["requirement_id"]
-            if only is not None and rid not in only:
+            if only is not None and rid not in only and rid in done:  # an absorbed duplicate has no previous fill
                 fills[rid] = done[rid]
                 continue
             if only is None and rid in done:  # per-item resume: preserved from the crashed run
@@ -2299,6 +2333,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         data = _run_srs_fill_stage(state, feedback)
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
+        dedupe_ledger = Ledger.from_dict(state.get("findings_ledger"))
+        data = _dedupe_requirements(data, dedupe_ledger)
+        state = {**state, "findings_ledger": dedupe_ledger.to_dict()}
         # Retain original candidates before any semantic rewrite or deletion.
         # Schema validation still applies; accepting meaning is not permission
         # to bypass missing IDs/types or traceability.
@@ -2328,7 +2365,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if persist:
             persist("srs", data, {**state, "artifact_revisions": revisions,"semantic_reviews":reviews})
         return {"srs": data,"semantic_reviews":reviews, "guard_flags": state.get("guard_flags", []) + flags,
-                "artifact_revisions": revisions,
+                "artifact_revisions": revisions, "findings_ledger": state["findings_ledger"],
                 "gate_feedback": _clear_feedback(state, "srs")}
 
     def node_architecture(state: GenState) -> dict:
@@ -3189,6 +3226,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                          "excerpt": str(sl.get("statement") or "")[:400]}],
                 summary=f"{sl['need_id']} has no machine test and no validation item: nothing checks that it was met"))
         ledger.retire_rule("validation.uncovered_need", raised, "validation stage re-run covered or re-raised this need")
+        from . import provenance
+        provenance.raise_findings(ledger, {"needs": state.get("needs"), "srs": state.get("srs"),
+                                           "architecture": state.get("architecture"), "items": state.get("items"),
+                                           "tests": state.get("tests"), "validation": data}, state.get("intent_model"))
         if persist:
             persist("validation", data, state)
         if partials:
@@ -3356,6 +3397,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 data[section]=[originals[r['requirement_id']] if r.get('requirement_id') in accepted else r for r in data.get(section) or []]
         data.setdefault("session_id", state["intent_model"]["session_id"])
         data.setdefault("intent_model_ref", state["intent_model"]["session_id"])
+        if data is not state["srs"]:
+            data = _dedupe_requirements(data, ledger)
+            state = {**state, "findings_ledger": ledger.to_dict()}
         _check_ac_ids_stable(state["srs"], data)
         if data is state["srs"]:
             # spec/test-only repair: no SRS text changes, so there is nothing to approve - continue to items
