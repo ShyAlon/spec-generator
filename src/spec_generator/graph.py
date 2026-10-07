@@ -1113,7 +1113,7 @@ def _check_adr_driver_source(body: dict, intent_model: dict, conops: dict | None
         raise ModelStructureError("founder_decision_refs must be a list of exact item ids")
     sources=_decided_founder_sources(intent_model)
     text=" ".join(str(body.get(k) or "") for k in ("title","decision","rationale"))
-    normalize=lambda value: " ".join(str(value).casefold().replace("\"", "'").rstrip(". ").split())
+    normalize=lambda value: " ".join(str(value).casefold().replace("\\\"", "\"").replace("\"", "'").rstrip(". ").split())
     unknown=[ref for ref in refs if ref not in sources]
     if unknown:raise ModelStructureError(f"{body.get('decision_id','ADR')}: unknown or undecided founder decision refs: {unknown}")
     unrelated=[ref for ref in refs if normalize(sources[ref]["decision"]) not in normalize(text)]
