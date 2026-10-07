@@ -1,9 +1,8 @@
 """Founder decisions for research_required stack slots.
 
-Deterministic, no model calls. A research_required slot is open until the
-founder records a decision with a reason. Attended runs refuse to start the
-items stage while any slot is open; unattended runs raise an OPEN ledger
-finding per slot, so the gap is audited and blocks handoff.
+Deterministic state handling, no model calls. A technical slot is usable with
+an explicitly authored design default or a founder override. Only slots with
+neither remain open. Research pending is visible metadata, not founder homework.
 """
 from __future__ import annotations
 
@@ -24,7 +23,7 @@ def _slots(architecture: dict) -> list[dict]:
 
 
 def open_slots(architecture: dict) -> list[dict]:
-    return [d for d in _slots(architecture) if not d.get("founder_decision")]
+    return [d for d in _slots(architecture) if not d.get("founder_decision") and not d.get("technical_choice")]
 
 
 def architecture_revision(architecture: dict) -> str:
@@ -33,6 +32,7 @@ def architecture_revision(architecture: dict) -> str:
     body = copy.deepcopy(architecture or {})
     for d in body.get("stack_entry_dispositions") or []:
         d.pop("founder_decision", None)
+        d.pop("system_selection", None)
     raw = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
     return hashlib.sha256(raw).hexdigest()
 
@@ -46,21 +46,23 @@ def companion_for(architecture: dict) -> dict | None:
         "revision": architecture_revision(architecture),
         "slots": [{"key": d["key"], "brief": d.get("research_brief") or "",
                    "options": list(d.get("candidate_options") or []),
-                   "founder_decision": d.get("founder_decision")} for d in slots],
+                   "founder_decision": d.get("founder_decision"),
+                   "technical_choice": d.get("technical_choice"),
+                   "system_selection": d.get("system_selection")} for d in slots],
     }
 
 
 def apply_decisions(architecture: dict, decisions: dict[str, dict]) -> dict:
     """Return a copy with founder_decision set on the named research_required slots.
-    Unknown keys and blank text or reason are refused, never ignored."""
+    Unknown keys and blank choice text are refused. Override reasons are optional."""
     out = copy.deepcopy(architecture)
     by_key = {d["key"]: d for d in _slots(out)}
     for key, dec in decisions.items():
         if key not in by_key:
             raise ValueError(f"no research_required slot named {key!r}")
         text, reason = str(dec.get("text") or "").strip(), str(dec.get("reason") or "").strip()
-        if not text or not reason:
-            raise ValueError(f"slot {key!r}: both a decision and a reason are required")
+        if not text:
+            raise ValueError(f"slot {key!r}: a decision is required")
         by_key[key]["founder_decision"] = {"text": text, "reason": reason,
                                            "actor": str(dec.get("actor") or "founder"),
                                            "at": str(dec.get("at") or "")}
@@ -76,7 +78,15 @@ def merge_companion(architecture: dict, companion: dict | None) -> dict:
     if companion.get("revision") != architecture_revision(architecture):
         raise ValueError("saved architecture decisions belong to a different revision of the architecture")
     decided = {s["key"]: s["founder_decision"] for s in companion.get("slots") or [] if s.get("founder_decision")}
-    return apply_decisions(architecture, decided) if decided else architecture
+    out = apply_decisions(architecture, decided) if decided else copy.deepcopy(architecture)
+    saved = {s["key"]: s for s in companion.get("slots") or []}
+    for d in _slots(out):
+        selection = saved.get(d["key"], {}).get("system_selection")
+        if selection:
+            if not d.get("technical_choice") or selection != {"value": d["technical_choice"]["default_value"], "source": "architecture_default"}:
+                raise ValueError("saved system selection does not match the shown default")
+            d["system_selection"] = selection
+    return out
 
 
 def require_decided(architecture: dict) -> None:
@@ -86,8 +96,8 @@ def require_decided(architecture: dict) -> None:
         names = ", ".join(d["key"] for d in pending)
         raise UserFacingError(
             "stage 'items': the architecture still has undecided technology slots.",
-            f"the founder has not decided: {names}.",
-            "decide every open slot on the architecture gate (a decision and a reason), then continue.")
+            f"no usable design default or founder answer for: {names}.",
+            "update the technical-choice metadata or record an override, then continue.")
 
 
 def raise_findings(ledger, architecture: dict, session_revision: str | None = None) -> set[str]:
@@ -104,3 +114,12 @@ def raise_findings(ledger, architecture: dict, session_revision: str | None = No
                 str(d.get("research_brief") or "").encode()).hexdigest(), "excerpt": str(d.get("research_brief") or "")[:400]}]))
     ledger.retire_rule(DECISIONS_RULE, raised, "slot decided or removed by an architecture re-run")
     return raised
+
+
+def select_defaults(architecture: dict) -> dict:
+    """Use only explicitly authored defaults; never pick from candidate_options."""
+    out = copy.deepcopy(architecture)
+    for d in _slots(out):
+        if d.get("technical_choice") and not d.get("founder_decision"):
+            d["system_selection"] = {"value": d["technical_choice"]["default_value"], "source": "architecture_default"}
+    return out

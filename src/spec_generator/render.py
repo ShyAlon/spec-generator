@@ -44,6 +44,8 @@ def render_agents_md(
     for e in arch.stack_entry_dispositions:
         if e.status.value == "research_required" and e.founder_decision:
             L.append(f"- **{e.key}**: Decided by founder: {e.founder_decision.text} (reason: {e.founder_decision.reason})")
+        elif e.status.value == "research_required" and e.technical_choice:
+            L.append(f"- **{e.key}**: System design default: {e.technical_choice.default_value} (reason: {e.technical_choice.reason}; external research pending)")
         elif e.status.value == "research_required":
             L.append(f"- **{e.key}**: RESEARCH REQUIRED - {e.research_brief}")
         else:
@@ -291,6 +293,8 @@ def render_architecture(arch: ArchitectureOverview, greenfield: bool = False,
         for e in arch.stack_entry_dispositions:
             if e.status.value == "research_required" and e.founder_decision:
                 lines.append(f"- **{e.key}** - Decided by founder: {e.founder_decision.text} (reason: {e.founder_decision.reason})")
+            elif e.status.value == "research_required" and e.technical_choice:
+                lines.append(f"- **{e.key}**: System design default: {e.technical_choice.default_value} (reason: {e.technical_choice.reason}; external research pending)")
             elif e.status.value == "research_required":
                 lines.append(f"- **{e.key}** - RESEARCH REQUIRED: {e.research_brief}")
             else:

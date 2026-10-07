@@ -145,11 +145,18 @@ ARCH_STACK_ENTRY = """Decide ONE stack slot. Return exactly one legal JSON shape
 3. Genuine irrelevance: {status:"not_applicable", reason: non-empty string}. Use this rarely, only when the slot truly does not apply to the concept; the reason must argue why.
 An empty technology without an explicit status is illegal. A missing baseline fact does not make a slot not_applicable. If a concrete technology is grounded in baseline facts, cite every ref and copy the fact text verbatim. Otherwise baseline_refs is [] and the choice is new design or an authorized migration. Off-list concrete picks require a substantive justification."""
 
-ARCH_STACK_OPTIONS = """The founder must decide ONE open stack slot. Propose two or three distinct candidate answers
-the founder can pick from, each a short phrase naming a concrete approach or technology that fits the slot's
-brief and the requirements. These are proposals for the founder to accept or replace, not a decision: do not
-state a preference, and do not claim current facts (versions, prices, availability) you have not been given.
-Return STRICT JSON {options:[string, string, ...]} with 2 or 3 items."""
+ARCH_STACK_OPTIONS = """Frame ONE technical architecture choice for a non-technical founder.
+Return a proposed design default, never a founder answer or a researched recommendation.
+Use the supplied requirements, explicit founder constraints and baseline as binding evidence.
+Do not change a founder-required technology or preserved baseline fact. If a constraint makes an
+option illegal, exclude it. Never silently choose an answer to an OPEN/DEFERRED product input.
+Write a short plain-language title, one-sentence purpose, brief requirement-grounded reason,
+and two or three options: concrete value, plain-language label, one material implication/tradeoff.
+Set default_value explicitly to one option's value, not arbitrary first-option order.
+Cite real requirement_ids. No markdown, investigation instructions, prices, versions, or claims
+about current vendor capabilities: external research has NOT run. Code marks research pending.
+Return STRICT JSON {title,purpose,default_value,reason,requirement_ids,options:[{value,label,implication}]}.
+"""
 
 ARCH_COMPONENT_PLAN = """List the software components of this architecture. For each: a short
 unique name, the requirement ids (R-n) it realizes, the baseline refs proving where it already

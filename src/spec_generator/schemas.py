@@ -277,12 +277,17 @@ def arch_stack_entry_schema(valid_refs: list[str], technology_ids: list[str]) ->
             "oneOf": [concrete, research, excluded]}
 
 
-def arch_stack_options_schema() -> dict:
-    """Candidate answers for one research_required slot: two or three short strings."""
-    return {"type": "object",
-            "properties": {"options": {"type": "array", "minItems": 2, "maxItems": 3,
-                                       "items": {"type": "string", "minLength": 1}}},
-            "required": ["options"], "additionalProperties": False}
+def arch_stack_options_schema(requirement_ids: list[str] | None = None) -> dict:
+    from vmodel_contracts.architecture import TechnicalChoiceFraming
+    schema = TechnicalChoiceFraming.model_json_schema()
+    # Provenance/research status are code-owned, not model claims.
+    schema["properties"].pop("provenance")
+    schema["properties"].pop("research_status")
+    schema["required"] = list(schema["properties"])
+    schema["additionalProperties"] = False
+    if requirement_ids is not None:
+        schema["properties"]["requirement_ids"]["items"] = _enum_or_str(requirement_ids)
+    return schema
 
 
 def arch_component_plan_schema(requirement_ids: list[str], valid_refs: list[str]) -> dict:

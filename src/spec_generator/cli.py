@@ -329,6 +329,30 @@ def _write_decisions_companion(outdir: Path, architecture: dict) -> None:
     _atomic_write(path, json.dumps(companion, indent=2))
 
 
+def _update_architecture_metadata(graph, cfg, update):
+    """Preserve the checkpoint's producing node when changing metadata.
+
+    LangGraph cannot infer it reliably from a multi-channel update. Omitting
+    as_node can reschedule START; guessing architecture can rewind later work.
+    """
+    # Source node is observable in checkpoint versions even when update metadata
+    # has no writes field (current LangGraph serialization).
+    checkpoint = graph.checkpointer.get_tuple(cfg).checkpoint
+    seen = checkpoint.get("versions_seen") or {}
+    ranked = sorted((version, node) for node, channels in seen.items()
+                    if node != "__start__" for version in channels.values())
+    if ranked:
+        latest = ranked[-1][0]
+        nodes = {node for version, node in ranked if version == latest}
+    else:
+        nodes = {node for node in seen if node != "__start__"}
+    if len(nodes) != 1:
+        raise UserFacingError("Checkpoint metadata owner is ambiguous.",
+                              "cannot safely preserve its scheduled continuation.",
+                              "inspect the current checkpoint before updating technical choices.")
+    graph.update_state(cfg, update, as_node=next(iter(nodes)))
+
+
 def _apply_saved_architecture_decisions(graph, cfg, prior: dict, outdir: Path, persist):
     """Resume: fold the founder's saved decisions (written by the gate page) into the checkpoint
     so items and everything after read them. Does not re-run architecture."""
@@ -348,11 +372,43 @@ def _apply_saved_architecture_decisions(graph, cfg, prior: dict, outdir: Path, p
     ledger = Ledger.from_dict(prior.get("findings_ledger"))
     raise_findings(ledger, merged)
     update = {"architecture": merged, "findings_ledger": ledger.to_dict()}
-    graph.update_state(cfg, update, as_node="architecture")
+    _update_architecture_metadata(graph, cfg, update)
     state = {**prior, **update}
     persist("architecture", merged, state)
-    print("Founder decisions for architecture slots applied; continuing at the next stage.", file=sys.stderr)
+    print("Saved architecture choices applied; continuing at the next stage.", file=sys.stderr)
     return state
+
+
+def _refresh_technical_choices(graph, cfg, prior, outdir, persist, log, progress=None):
+    """Metadata only, resumable after each slot; never regenerate architecture."""
+    import copy
+    from .graph import _technical_choice_call
+    from .architecture_decisions import raise_findings
+    from .findings_ledger import Ledger
+    if not prior or not prior.get("architecture"):
+        raise UserFacingError("No saved architecture to update.", "existing checkpoint required.", "finish architecture before refreshing technical choices.")
+    if any(prior.get(k) for k in ("items", "tests", "manifest")):
+        raise UserFacingError("Technical choices already have downstream results.",
+                              "metadata refresh must not silently change built item specifications.",
+                              "review the downstream impact before changing this architecture.")
+    # Fold existing companion answers first so a refresh never replaces them.
+    prior = _apply_saved_architecture_decisions(graph, cfg, prior, outdir, persist)
+    architecture = copy.deepcopy(prior["architecture"])
+    for entry in architecture.get("stack_entry_dispositions") or []:
+        if entry.get("status") != "research_required" or entry.get("technical_choice") or entry.get("founder_decision"):
+            continue
+        entry["technical_choice"] = _technical_choice_call(prior, entry["key"], entry["research_brief"], log, progress)
+        entry["candidate_options"] = [o["value"] for o in entry["technical_choice"]["options"]]
+        ArchitectureOverview.model_validate(architecture)
+        ledger = Ledger.from_dict(prior.get("findings_ledger"))
+        raise_findings(ledger, architecture)
+        update = {"architecture": copy.deepcopy(architecture), "findings_ledger": ledger.to_dict()}
+        _update_architecture_metadata(graph, cfg, update)
+        prior = {**prior, **update}
+        persist("architecture", architecture, prior)
+    _write_decisions_companion(outdir, architecture)
+    print("Technical-choice metadata updated. Architecture generation was not rerun; no downstream stage started.", file=sys.stderr)
+    return prior
 
 
 def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
@@ -985,9 +1041,11 @@ def main() -> None:
                     help="apply the pending repair proposal (repair-proposal.md) and continue to items, tests, review")
     ap.add_argument("--reject-repair", action="store_true",
                     help="drop the pending repair proposal; the SRS stays as it was and findings stay open")
+    ap.add_argument("--refresh-technical-choices", action="store_true",
+                    help="targeted metadata-only framing for an existing architecture; may call the configured model per missing slot; never runs architecture/components/ADRs")
     ap.add_argument("--require-decisions", action="store_true",
-                    help="attended run: refuse to start items while a research_required stack slot has no founder decision "
-                         "(decision and reason). Off by default: unattended runs raise an open ledger finding per slot instead")
+                    help="attended run: require a usable technical design default or founder override before items. "
+                         "Off by default: slots with neither raise an open ledger finding")
     ap.add_argument("--export-handoff",action="store_true",help="zero-LLM validated coding-agent handoff from completed outputs")
     ap.add_argument("--preflight", action="store_true",
                     help="validate inputs and checkpoint compatibility without building a model or spending a call")
@@ -1235,6 +1293,9 @@ def main() -> None:
                 graph.update_state(cfg,{'srs':candidate,'semantic_reviews':reviews},as_node=_predecessor('architecture',args.review))
                 prior={**prior,'srs':candidate,'semantic_reviews':reviews}
                 print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
+    if args.refresh_technical_choices:
+        _refresh_technical_choices(graph, cfg, prior, outdir, persist_fn, log, bus)
+        return
     if resume:
         prior = _apply_saved_architecture_decisions(graph, cfg, prior, outdir, persist_fn)
     if resume:
