@@ -21,4 +21,5 @@ jobs:
           cache-dependency-path: |
             pyproject.toml
             uv.lock
+      - run: python -m pip install uv==0.12.19
       - run: ./scripts/test-local.sh

@@ -43,5 +43,10 @@ else
   "$chosen" -m venv .venv
 fi
 PYTHON=.venv/bin/python
-"$PYTHON" -m pip install -e '.[dev]'
+if ! command -v uv >/dev/null 2>&1; then
+  echo "Error: uv is required for a locked development environment." >&2
+  echo "Next: install uv, then rerun scripts/test-local.sh." >&2
+  exit 1
+fi
+uv sync --locked --extra dev --python "$PYTHON"
 "$PYTHON" -m pytest -q
