@@ -1,10 +1,10 @@
 # Vendored contracts
 
-`vmodel_contracts-0.27.0-py3-none-any.whl` was built from the clean
+`vmodel_contracts-0.27.2-py3-none-any.whl` was built from the clean
 `ShyAlon/vmodel-contracts` revision
-`865b8e7846b3c88d2a6a6c2baec94758c251591d` with `uv build --wheel`.
+`a649a4ea4bd80f930e5fe07ed94fe74886a42837` with `uv build --wheel`.
 
-SHA-256: `ddbda9ddf6885c3b326e0777a22f785218ee919cc7f0b0cd599d01c429573bad`.
+SHA-256: `7081549ad8cb67f392d755f01fc9342bfa2223b369ba0dc3c393df9cd3e2a98d`.
 
 It is the same approved contracts source, not a fork. `uv.lock` records the
 wheel hash. To update, build a clean approved contracts revision, record its

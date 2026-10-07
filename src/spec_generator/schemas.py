@@ -320,7 +320,7 @@ def arch_adr_plan_schema() -> dict:
     return {"type": "array", "items": slot}
 
 
-def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str], concept_ids: list[str]) -> dict:
+def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str], concept_ids: list[str], founder_decision_ids: list[str] | None = None) -> dict:
     """One ADR against its fixed slot. Ids, migration flag, and authorizations
     stay pipeline-owned; the model authors the decision substance."""
     return {"type": "object",
@@ -340,9 +340,10 @@ def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str], concept_i
                            "evidence": {"type": "array", "items": {"type": "string"}},
                            "affected_repositories": {"type": "array",
                                                      "items": _enum_or_str(repo_names)},
-                           "executes_concept_ids": {"type": "array", "items": _enum_or_str(concept_ids)}},
+                           "executes_concept_ids": {"type": "array", "items": _enum_or_str(concept_ids)},
+                           "founder_decision_refs": {"type": "array", "items": {"enum": founder_decision_ids} if founder_decision_ids else {"type":"string"}, "maxItems":len(founder_decision_ids or [])}},
             "required": ["title", "decision", "rationale", "driver", "options_considered",
-                         "baseline_refs", "evidence", "affected_repositories", "executes_concept_ids"],
+                         "baseline_refs", "evidence", "affected_repositories", "executes_concept_ids", "founder_decision_refs"],
             "additionalProperties": False}
 
 
