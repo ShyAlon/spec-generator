@@ -30,17 +30,33 @@ def test_review_band_pair_becomes_open_finding_and_reruns_replace_it():
     assert ledger.open_findings() == []
 
 
-def test_identical_requirements_merge_with_provenance_and_sections_stay_split():
+def test_identical_requirements_remain_separate_with_all_traceability():
+    import copy
     twin = {**R17, "requirement_id": "R-18", "need_ids": ["N-18"],
             "acceptance": [{"criterion_id": "AC-18", "statement": "Other check"}]}
     nf = req("R-30", "Speed", "The app shall respond quickly.", kind="non_functional")
+    original = {"functional": [R17, twin, OTHER], "non_functional": [nf]}
+    before = copy.deepcopy(original)
     ledger = Ledger()
-    out = graph._dedupe_requirements({"functional": [R17, twin, OTHER], "non_functional": [nf]}, ledger)
-    assert [r["requirement_id"] for r in out["functional"]] == ["R-17", "R-9"]
-    assert [r["requirement_id"] for r in out["non_functional"]] == ["R-30"]
-    survivor = out["functional"][0]
-    assert survivor["need_ids"] == ["N-17", "N-18"] and survivor["merged_from"][0]["requirement_id"] == "R-18"
-    assert any(h["event"] == "auto_merged_requirements" for h in ledger.history)
+    out = graph._dedupe_requirements(original, ledger)
+    assert out == before and original == before
+    assert any(f["targets"] == ["R-17", "R-18"] for f in ledger.open_findings())
+    assert ledger.gate()["blocked"]
+    assert not any(h["event"] == "auto_merged_requirements" for h in ledger.history)
+
+
+@__import__("pytest").mark.parametrize("first,second", [
+    ("The system shall permit guest access.", "The system shall not permit guest access."),
+    ("The system shall retain records for 7 days.", "The system shall retain records for 30 days."),
+])
+def test_opposite_or_different_numeric_limits_are_findings_not_merges(first, second):
+    data = {"functional": [req("R-1", "", first), req("R-2", "", second)], "non_functional": []}
+    ledger = Ledger()
+    assert graph._dedupe_requirements(data, ledger) == data
+    assert len(data["functional"]) == 2
+    finding = ledger.open_findings()[0]
+    assert finding["targets"] == ["R-1", "R-2"] and finding["detail"]["score"] == 1.0
+    assert ledger.gate()["blocked"]
 
 
 def test_requirement_without_text_marks_the_check_incomplete():
