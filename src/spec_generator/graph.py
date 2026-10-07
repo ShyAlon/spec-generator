@@ -758,15 +758,54 @@ def _specific_reason(reason: str) -> bool:
 
 
 def _founder_stack_block(state) -> str:
-    """Decided research_required slots are binding founder constraints for the items stage."""
-    decided = [d for d in ((state.get("architecture") or {}).get("stack_entry_dispositions") or [])
-               if d.get("status") == "research_required" and d.get("founder_decision")]
-    if not decided:
-        return ""
-    lines = [f"- {d['key']}: {d['founder_decision']['text']} (founder's reason: {d['founder_decision']['reason']})"
-             for d in decided]
-    return ("\n\nFOUNDER DECISIONS ON OPEN STACK SLOTS (binding; the founder chose these, do not substitute):\n"
-            + "\n".join(lines))
+    lines = []
+    for d in ((state.get("architecture") or {}).get("stack_entry_dispositions") or []):
+        if d.get("founder_decision"):
+            choice = d["founder_decision"]
+            lines.append(f"- {d['key']}: {choice['text']} (founder override; reason: {choice['reason']})")
+        elif d.get("technical_choice"):
+            choice = d["technical_choice"]
+            lines.append(f"- {d['key']}: {choice['default_value']} (system design default; {choice['reason']}; external research pending, not a verified vendor claim)")
+    return "\n\nARCHITECTURE TECHNICAL CHOICES (use these; founder override wins):\n" + "\n".join(lines) if lines else ""
+
+
+def _check_technical_choice_constraints(state, key, choice):
+    """Deterministic known technology/platform constraints, never semantic guesswork."""
+    from .tech_candidates import normalize_technology_alias
+    kind = _candidate_kind(key)
+    area = "framework" if kind in ("framework", "mobile_framework") else kind
+    for pref in (state.get("intent_model") or {}).get("tech_preferences") or []:
+        if pref.get("strength") != "required" or str(pref.get("area", "")).casefold() != area:
+            continue
+        named = str(pref.get("preference") or "").strip()
+        if tech_row(named):
+            wanted = normalize_technology_alias(named)
+            if any(normalize_technology_alias(o["value"]) != wanted for o in choice["options"]):
+                raise ValueError(f"technical choice conflicts with required {area}: {named}")
+    platforms = _product_platforms(state.get("intent_model") or {}) & {"ios", "android"}
+    if platforms and key == "ui_framework":
+        for option in choice["options"]:
+            row = tech_row(option["value"])
+            if row and ("backend" in row["kinds"] or ("any" not in row["platforms"] and not platforms & set(row["platforms"]))):
+                raise ValueError("technical choice conflicts with recorded product platform")
+
+
+def _technical_choice_call(state, key, brief, log, progress=None):
+    from .prompts import ARCH_STACK_OPTIONS
+    from .schemas import arch_stack_options_schema
+    from vmodel_contracts.architecture import technical_choice_data
+    req_ids = [r["requirement_id"] for sec in ("functional", "non_functional") for r in state["srs"].get(sec, [])]
+    context = {k: _prompt_view(state.get(k) or {}) for k in ("srs", "system_baseline", "intent_model", "conops")}
+    def validate(d):
+        try:
+            choice = technical_choice_data({**d, "provenance": "design_proposal", "research_status": "pending"}, req_ids)
+            _check_technical_choice_constraints(state, key, choice)
+            return choice
+        except ValueError as exc:
+            raise ModelStructureError(f"stack.{key}: {exc}") from exc
+    return _call_json("architecture", json.dumps(context) + f"\nSLOT: {key}\nINTERNAL RESEARCH BRIEF: {brief}\n" + ARCH_STACK_OPTIONS,
+                      log, progress, validate=validate, schema=arch_stack_options_schema(req_ids),
+                      stream_items=False, item_label=f"technical-choice:{key}")
 
 
 def _candidate_block(key: str, founder_techs: list[str]) -> str:
@@ -2462,6 +2501,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     kept = {"key": key, "status": status, "research_brief": brief}
                     if d.get("candidate_options"):
                         kept["candidate_options"] = [str(o) for o in d["candidate_options"]]
+                    for field in ("technical_choice", "system_selection", "founder_decision"):
+                        if d.get(field): kept[field] = d[field]
                     return kept
                 if status == "not_applicable":
                     reason = str(d.get("reason") or "").strip()
@@ -2595,27 +2636,14 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 stream_items=False, item_label=f"stack:{key}")
             _save()
 
-        # 2b. One small call per research_required slot: two or three candidate
-        # answers for the founder to pick from. Resumable per slot; a failure
-        # here costs one retried slot, never the stage.
-        def _v_options(d, key):
-            opts = [str(o).strip() for o in (d.get("options") or [])]
-            if not 2 <= len(opts) <= 3 or any(not o for o in opts):
-                raise ModelStructureError(f"stack.{key}: propose two or three non-empty options")
-            if len({o.casefold() for o in opts}) != len(opts):
-                raise ModelStructureError(f"stack.{key}: the options must be distinct")
-            return {"options": opts}
-
+        # One bounded framing call per unresolved technical slot. Old candidates
+        # alone are not defaults. Source research is explicitly still pending.
         for key in part["stack_keys"]:
             e = entries.get(key)
-            if not isinstance(e, dict) or e.get("status") != "research_required" or e.get("candidate_options"):
+            if not isinstance(e, dict) or e.get("status") != "research_required" or e.get("technical_choice") or e.get("founder_decision"):
                 continue
-            e["candidate_options"] = _call_json(
-                "architecture",
-                context + f"\n\nTHE OPEN SLOT: {key}\nBRIEF: {e['research_brief']}\n\n" + ARCH_STACK_OPTIONS,
-                log, progress, validate=lambda d, key=key: _v_options(d, key),
-                schema=arch_stack_options_schema(), stream_items=False,
-                item_label=f"options:{key}")["options"]
+            e["technical_choice"] = _technical_choice_call(state, key, e["research_brief"], log, progress)
+            e["candidate_options"] = [o["value"] for o in e["technical_choice"]["options"]]
             _save()
 
         # 3. Plan: component slots (coverage checked here, not at assembly).
@@ -3026,7 +3054,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 if spec["spec_id"] in done:  # per-item resume: preserved body
                     data.append(done[spec["spec_id"]])
                     continue
-                body = _call_json("items", _items_body_payload(state, spec), log, progress,
+                body = _call_json("items", _items_body_payload(state, spec) + _founder_stack_block(state), log, progress,
                                   validate=_items_body_validator(spec), schema=items_body_schema(),
                                   stream_items=False,
                                   item_label=((f"{spec['spec_id']} ({spec['slug']})"

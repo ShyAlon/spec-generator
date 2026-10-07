@@ -11,7 +11,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "Shy Alon" }]
 dynamic = ["version"]
 dependencies = [
-  "vmodel-contracts==0.27.2",
+  "vmodel-contracts==0.27.3",
   "langgraph>=0.2",
   "langgraph-checkpoint-sqlite>=2",
   "langchain-core>=0.3",
@@ -37,4 +37,4 @@ packages = ["src/spec_generator"]
 
 # The checked-in wheel is built from the approved contracts revision.
 [tool.uv.sources]
-vmodel-contracts = { path = "vendor/vmodel_contracts-0.27.2-py3-none-any.whl" }
+vmodel-contracts = { path = "vendor/vmodel_contracts-0.27.3-py3-none-any.whl" }
