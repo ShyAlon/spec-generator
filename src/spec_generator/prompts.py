@@ -180,12 +180,14 @@ ARCH_ADR_BODY = """Write ONE architecture decision record against its fixed slot
 decision itself, the rationale, its driver, the rejected options. Never use the ADR id as the
 decision (for example, "consolidate into ADR-2"); name the concrete architecture choice.
 Slots shown as research_required are unresolved: do not claim, imply, or select a technology for them.
-DRIVER DISCIPLINE (hard rule, checked mechanically): founder_constraint is legal ONLY when
-the founder's stated tech preferences in the context actually mandate this decision - name
-the preference in the text. When no founder preference is on record, the founder mandated
-nothing: pick the real driver (ecosystem_maturity | community_adoption | team_fit |
-simplicity) and never write founder-mandate language ('mandated by the founder', 'the
-founder's preference') under another driver.
+DRIVER DISCIPLINE (hard rule, checked mechanically): founder_constraint needs one of three sources:
+- A recorded founder technology preference, named in the ADR.
+- The founder-confirmed CONOPS concept, linked by its exact executes_concept_ids value.
+- A decided founder-register item with decision and reason, linked by exact founder_decision_refs id.
+For a register source, quote its recorded decision text verbatim in the rationale, then explain how
+this ADR implements it. Open, deferred, unknown or unrelated register items are not sources.
+Use [] for founder_decision_refs when this ADR does not use a register decision. Never invent a link.
+Without one of these sources use the real non-founder driver, not founder-mandate language.
 The rationale is load-bearing - why this option won. driver is exactly one of
 founder_constraint - the founder mandated/confined it, cite the preference; ecosystem_maturity;
 community_adoption; team_fit; simplicity), options_considered (the real leading alternatives
@@ -196,7 +198,7 @@ migration ADR - evidence (concrete justification for departing) and affected_rep
 affected_repositories empty.
 FORMAT CONTRACT (final instruction - overrides anything above that conflicts): return one
 STRICT JSON object {title, decision, rationale, driver, options_considered, baseline_refs,
-evidence, affected_repositories} - refs and repository names only from the supplied lists."""
+evidence, affected_repositories, executes_concept_ids, founder_decision_refs} - refs and repository names only from the supplied lists."""
 
 ARCH_NFR = """Write ONE non-functional position: the checkable stance this architecture takes
 for the given non-functional requirement (how the design makes the requirement observable -

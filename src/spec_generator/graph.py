@@ -940,7 +940,7 @@ def _merge_duplicate_adr_pair(slots: list[dict], bodies: dict, left_id: str, rig
         left_slot[key] = list(dict.fromkeys((left_slot.get(key) or []) + (right_slot.get(key) or [])))
     left_slot["migration"] = bool(left_slot.get("migration") or right_slot.get("migration"))
     for key in ("options_considered", "baseline_refs", "evidence", "affected_repositories",
-                "executes_concept_ids", "rejected"):
+                "executes_concept_ids", "founder_decision_refs", "rejected"):
         values = (left.get(key) or []) + (right.get(key) or [])
         # Dict/list values need structural identity, not hashability.
         seen=set(); merged=[]
@@ -1099,33 +1099,39 @@ def _check_baseline_reconciliation(arch: ArchitectureOverview, baseline: SystemB
             raise ModelStructureError(f"{d.decision_id} {d.title}: evidence/affected_repositories only belong on migration ADRs")
 
 
+def _decided_founder_sources(intent_model: dict) -> dict[str, dict]:
+    items=((intent_model.get("founder_register") or {}).get("items") or [])
+    return {str(item["item_id"]): item for item in items
+            if item.get("item_id") and item.get("status")=="decided"
+            and str(item.get("decision") or "").strip() and str(item.get("reason") or "").strip()}
+
+
+def _check_adr_driver_source(body: dict, intent_model: dict, conops: dict | None = None) -> None:
+    """Same source check before a partial save and at final assembly. Never infer refs."""
+    refs=body.get("founder_decision_refs") or []
+    if not isinstance(refs,list) or any(not isinstance(ref,str) for ref in refs):
+        raise ModelStructureError("founder_decision_refs must be a list of exact item ids")
+    sources=_decided_founder_sources(intent_model)
+    text=" ".join(str(body.get(k) or "") for k in ("title","decision","rationale"))
+    normalize=lambda value: " ".join(str(value).casefold().replace("\"", "'").rstrip(". ").split())
+    unknown=[ref for ref in refs if ref not in sources]
+    if unknown:raise ModelStructureError(f"{body.get('decision_id','ADR')}: unknown or undecided founder decision refs: {unknown}")
+    unrelated=[ref for ref in refs if normalize(sources[ref]["decision"]) not in normalize(text)]
+    if unrelated:raise ModelStructureError(f"{body.get('decision_id','ADR')}: cite the recorded decision text for founder decision refs: {unrelated}")
+    driver=body.get("driver")
+    if driver is None:raise ModelStructureError(f"{body.get('decision_id','ADR')}: no driver - classify why the chosen option won")
+    if driver != "founder_constraint":return
+    prefs=[str(p.get("preference") or "") for p in intent_model.get("tech_preferences") or [] if p.get("preference")]
+    selected=_selected_concept(conops)
+    concept=bool(selected and selected[0] in (body.get("executes_concept_ids") or []))
+    preference=any(normalize(pref) in normalize(text) for pref in prefs)
+    if not (concept or preference or refs):
+        raise ModelStructureError(f"{body.get('decision_id','ADR')} '{body.get('title','')}': driver founder_constraint requires an executes_concept_ids link to the founder-confirmed CONOPS concept, a named founder technology preference, or a founder_decision_refs link with its recorded decided founder-register decision quoted in the ADR")
+
+
 def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict, conops: dict | None = None) -> None:
-    """ADR-0021: no arbitrary decisions. The contract requires the FIELDS
-    present (driver nullable only for legacy migration); the stage requires a
-    REAL driver on every new decision. A founder_constraint must cite either
-    a recorded technology preference or the founder-confirmed CONOPS concept
-    through executes_concept_ids; those are distinct sources of constraint.
-    Options have no floor (founder call 2026-09-09): under a mandate, empty
-    is honest."""
-    prefs = [p.get("preference", "") for p in (intent_model.get("tech_preferences") or [])]
-    for d in arch.decisions:
-        if d.driver is None:
-            raise ModelStructureError(
-                f"{d.decision_id} '{d.title}': no driver - classify why the chosen option won "
-                f"(founder_constraint | ecosystem_maturity | community_adoption | team_fit | simplicity).")
-        if d.driver.value == "founder_constraint":
-            prefs = [p for p in prefs if p]
-            selected = _selected_concept(conops)
-            executes_confirmed_concept = bool(selected and selected[0] in d.executes_concept_ids)
-            text = (d.title + " " + d.decision + " " + d.rationale).lower()
-            cites_tech_preference = any(p.lower() in text for p in prefs)
-            if not executes_confirmed_concept and not cites_tech_preference:
-                basis = (("recorded technology preferences: " + ", ".join(prefs)) if prefs else
-                         "no recorded technology preference")
-                raise ModelStructureError(
-                    f"{d.decision_id} '{d.title}': driver founder_constraint requires either an "
-                    "executes_concept_ids link to the founder-confirmed CONOPS concept or a cited "
-                    f"technology preference ({basis})")
+    for decision in arch.decisions:
+        _check_adr_driver_source(decision.model_dump(mode="json"),intent_model,conops)
 
 
 def _validate_stack_plan(d: dict) -> dict:
@@ -2749,6 +2755,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                                       if slot["migration"] else []),
                             "executes_concept_ids": [str(x) for x in d.get("executes_concept_ids") or []],
                             "technology_selections": [],
+                            "founder_decision_refs": d.get("founder_decision_refs") or [],
                             "rejected": []}
                     if not body["title"] or not body["decision"] or not body["rationale"]:
                         raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
@@ -2784,27 +2791,10 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         raise ModelStructureError(
                             f"{slot['decision_id']} '{body['title']}': this code-owned CONOPS execution slot "
                             f"must declare these exact ids in executes_concept_ids: {missing_concepts}")
-                    # A founder_constraint
-                    # driver must cite its real source: either a technology
-                    # preference or the confirmed CONOPS concept. The latter is a
-                    # product/operations decision, not a technology preference.
+                    _check_adr_driver_source({**body,"decision_id":slot["decision_id"]},state["intent_model"],state.get("conops"))
                     adr_text = (body["title"] + " " + body["decision"] + " " + body["rationale"]).lower()
-                    founder_prefs = [str(p.get("preference", "")) for p in
-                                     (state["intent_model"].get("tech_preferences") or []) if p.get("preference")]
-                    if body["driver"] == "founder_constraint":
-                        selected = _selected_concept(state.get("conops"))
-                        executes_confirmed_concept = bool(selected and selected[0] in body["executes_concept_ids"])
-                        names_tech_preference = any(pref.lower() in adr_text for pref in founder_prefs)
-                        if not executes_confirmed_concept and not names_tech_preference:
-                            raise ModelStructureError(
-                                f"{slot['decision_id']} '{body['title']}': driver founder_constraint requires "
-                                "either executes_concept_ids linking the founder-confirmed CONOPS concept or "
-                                "the named founder technology preference. A CONOPS choice is a product/operations "
-                                "constraint, not a technology preference; link it instead of deleting it")
-                    elif _re.search(r"mandat\w* by the founder|founder(-|\')s? (mandate|preference|requirement|decision)", adr_text):
-                        raise ModelStructureError(
-                            f"{slot['decision_id']} '{body['title']}': the text claims a founder mandate but the "
-                            "driver is not founder_constraint - delete the mandate language or justify the driver")
+                    if body["driver"] != "founder_constraint" and _re.search(r"mandat\w* by the founder|founder(-|\')s? (mandate|preference|requirement|decision)", adr_text):
+                        raise ModelStructureError(f"{slot['decision_id']}: the text claims a founder mandate but the driver is not founder_constraint - use the real driver and source")
                     # Founder-NAMED technologies rejected here need a SPECIFIC
                     # reason (2026-09-13 founder decision) - vague verdicts
                     # re-ask this ADR call, far cheaper than an assembly re-plan.
@@ -2833,7 +2823,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     + json.dumps({k: (e.get("value") or e.get("status")) for k, e in entries.items()})
                     + lost_block + candidate_feedback + "\n\n" + ARCH_ADR_BODY + feedback,
                     log, progress, validate=_v_adr,
-                    schema=arch_adr_body_schema(valid_refs, repo_names, [__import__("vmodel_contracts").canonical_concept_id(str(o.get("name", ""))) for o in (state.get("conops") or {}).get("concept_options", [])]),
+                    schema=arch_adr_body_schema(valid_refs, repo_names, [__import__("vmodel_contracts").canonical_concept_id(str(o.get("name", ""))) for o in (state.get("conops") or {}).get("concept_options", [])], list(_decided_founder_sources(state["intent_model"]))),
                     stream_items=False, item_label=f"{did} {slot['slug']}")
                 _save()
 
