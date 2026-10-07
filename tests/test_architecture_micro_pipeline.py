@@ -22,7 +22,7 @@ from langchain_core.messages import AIMessage
 from spec_generator import model_config
 from spec_generator.cli import _make_partials
 from spec_generator.errors import UserFacingError
-from spec_generator.graph import (build_graph, _legacy_arch_fill, _merge_adr_slots,
+from spec_generator.graph import (build_graph, validated_architecture, _merge_adr_slots,
                                   _required_adr_slots, _validate_adr_plan,
                                   _validate_component_plan, _validate_stack_plan)
 from spec_generator.schemas import (arch_adr_plan_schema, arch_stack_entry_schema,
@@ -96,19 +96,16 @@ def test_component_plan_rejects_duplicates_and_uncovered_requirements():
         _validate_component_plan([{"name": "a", "requirement_ids": ["R-1"]}], ["R-1", "R-2"])
 
 
-def test_legacy_fill_heals_equal_maps_and_never_fabricates_grounding():
-    healed = _legacy_arch_fill({"stack": {"language": "Python"},
-                                "stack_baseline_refs": {"language": ["repo:x"]},
-                                "decisions": []})
-    assert healed["stack_entries"] == [
-        {"key": "language", "value": "Python", "baseline_refs": ["repo:x"],
-         "migration_adr_id": None}]
-    # the phi4 failure shape: mismatched maps heal with EMPTY refs - a
-    # migration marker, never invented grounding
-    healed = _legacy_arch_fill({"stack": {"language": "Python", "stack_baseline_refs": "x"},
-                                "stack_baseline_refs": {"language": ["repo:x"]},
-                                "decisions": []})
-    assert all(e["baseline_refs"] == [] for e in healed["stack_entries"])
+@pytest.mark.parametrize("refs", [{"language": ["repo:x"]}, {"wrong": ["repo:x"]}, None])
+def test_legacy_maps_stop_without_healing_or_mutating(refs):
+    import copy
+    from spec_generator.errors import UserFacingError
+    payload = {"stack": {"language": "Python"}, "decisions": []}
+    if refs is not None:payload["stack_baseline_refs"] = refs
+    before = copy.deepcopy(payload)
+    with pytest.raises(UserFacingError, match="automatic healing is disabled"):
+        validated_architecture(payload)
+    assert payload == before
 
 
 class _MicroModel:

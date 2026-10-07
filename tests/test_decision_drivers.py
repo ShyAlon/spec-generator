@@ -109,17 +109,17 @@ def test_gate_render_marks_legacy_driverless_decisions():
 
 def test_legacy_architecture_requires_identity_stage_restart():
     """Pre-identity architecture cannot invent ADR ownership during migration."""
-    from spec_generator.graph import _legacy_arch_fill
+    from spec_generator.graph import validated_architecture
     checkpointed = {"session_id": "s", "stack": {"language": "ts"},
                     "components": [{"name": "api", "responsibility": "serve"}],
                     "decisions": [{"decision_id": "ADR-1", "title": "t", "decision": "x", "rationale": "y"}]}
     with pytest.raises(Exception):
-        ArchitectureOverview.model_validate(_legacy_arch_fill(checkpointed))
+        validated_architecture(checkpointed)
 
 
-def test_legacy_arch_fill_never_overwrites_real_drivers():
-    from spec_generator.graph import _legacy_arch_fill
-    filled = _legacy_arch_fill(ARCH)
+def test_validated_architecture_preserves_real_drivers():
+    from spec_generator.graph import validated_architecture
+    filled = validated_architecture(_arch(ARCH).model_dump()).model_dump()
     assert filled["decisions"][0]["driver"] == "ecosystem_maturity"
     assert filled["decisions"][0]["options_considered"][0]["option"] == "Angular"
 

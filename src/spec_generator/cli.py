@@ -34,7 +34,7 @@ from vmodel_contracts import (
 from vmodel_contracts.runtime import artifacts_root
 
 from .errors import UserFacingError, run_cli
-from .graph import build_graph, checkpoint_serde, srs_document_data, _legacy_arch_fill
+from .graph import build_graph, checkpoint_serde, srs_document_data, validated_architecture
 from .progress import ProgressBus, stderr_printer
 from .repair import coerce_for_model, normalize_enums
 from .render import (render_agents_md, render_architecture, render_needs,
@@ -380,8 +380,8 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
             srs = SRSDocument.model_validate(coerce_for_model(doc, SRSDocument))
             _atomic_write(outdir / "srs.md", render_srs(srs))
         elif stage == "architecture":
-            body = _legacy_arch_fill({**data, "session_id": sid})  # pre-0.8.0 checkpoints lack the ADR-0021 fields
-            arch = ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
+            body = {**data, "session_id": sid}
+            arch = validated_architecture(body)
             lifecycle_event = architecture_lifecycle.finalize(body) if architecture_lifecycle else None
             _atomic_write(outdir / "architecture.json", json.dumps(_stamped(body), indent=2))
             _atomic_write(outdir / "architecture.md", render_architecture(arch, greenfield=greenfield, conops_present=conops_present))
@@ -1194,6 +1194,7 @@ def main() -> None:
         # do not replace it or rewrite historical lifecycle hashes.
         architecture_lifecycle.anchor_hash = stable_hash(prior["system_baseline"])
     if resume and prior.get("architecture"):
+        validated_architecture({**prior["architecture"], "session_id": sid})
         architecture_lifecycle.bootstrap_complete(
             prior["architecture"], prior.get("system_baseline") or baseline)
     baseline_changed = (resume and prior.get("system_baseline") is not None
@@ -1203,15 +1204,15 @@ def main() -> None:
         # Check a previously recorded continuation even if SQLite was already
         # reconnected before the crash. Never reseal an arbitrary partial.
         if (prior.get("architecture") and architecture_lifecycle.state.value == "partial"):
-            body = _legacy_arch_fill({**prior["architecture"], "session_id": sid})
-            ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
+            body = {**prior["architecture"], "session_id": sid}
+            validated_architecture(body)
             architecture_lifecycle.resume(next_artifact, content=body,
                 compatible_anchor_hashes=(stable_hash(baseline),))
         bounded_stage = _resume_after_bounded_stop(graph, cfg, prior)
         if bounded_stage:
             if bounded_stage == "architecture":
-                body = _legacy_arch_fill({**prior["architecture"], "session_id": sid})
-                ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
+                body = {**prior["architecture"], "session_id": sid}
+                validated_architecture(body)
                 architecture_lifecycle.resume(next_artifact, content=body,
                     compatible_anchor_hashes=(stable_hash(baseline),))
             destination = f"the requested '{args.to_stage}' boundary" if args.to_stage else "the full pipeline"
