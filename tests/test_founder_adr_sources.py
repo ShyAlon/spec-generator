@@ -32,3 +32,14 @@ def test_schema_enumerates_decided_refs_and_old_body_defaults():
 def test_invalid_and_blank_sources_stay_out_of_schema():
     for changes in ({'decision':''},{'reason':''},{'status':'decide_later'}):
         assert not _decided_founder_sources({'founder_register':{'items':[{**SOURCE,**changes}]}})
+
+
+@pytest.mark.parametrize('file',['adr17-escaped-source-a.json','adr17-escaped-source-b.json'])
+def test_literal_backslash_quote_source_echo_is_compared_without_changing_payload(file):
+    body=json.loads((Path(__file__).parent/'fixtures'/file).read_text())
+    original=json.dumps(body,sort_keys=True)
+    assert '\\"Tell us about it\\"' in body['rationale']
+    _check_adr_driver_source(body,INTENT)
+    assert json.dumps(body,sort_keys=True)==original
+    body['rationale']=body['rationale'].replace('Tell us about it','Tell them about it')
+    with pytest.raises(ModelStructureError):_check_adr_driver_source(body,INTENT)
