@@ -2018,26 +2018,18 @@ def render_repair_proposal(proposal: dict) -> str:
 
 
 def _dedupe_requirements(data: dict, ledger: Ledger) -> dict:
-    """Near-duplicate requirements (vmodel_contracts.text_qa). At or above REQ_MERGE_THRESHOLD the later one is
-    merged into the earlier, with provenance on the survivor (merged_from) and a ledger history entry. In the
-    review band an OPEN finding (srs.duplicate_requirement) goes to the founder. A requirement with no
-    comparable text marks the check incomplete: it never passes silently."""
+    """Flag every similar pair for founder review; never merge on lexical score.
+    Missing comparable text makes the check incomplete, not a silent pass.
+    """
     reqs = [r for sec in ("functional", "non_functional") for r in data.get(sec) or []]
-    merged, merges = text_qa.merge_duplicate_requirements(reqs)
-    if merges:
-        data = {**data, **{sec: [r for r in merged if r.get("kind") == sec] for sec in ("functional", "non_functional")}}
-        for m in merges:
-            ledger.history.append({"event": "auto_merged_requirements", **m})
-            model_config._console_line(
-                f"     - srs.duplicate_requirement merged {m['requirement_id']} into {m['survivor']} (score {m['score']})")
-    pairs = text_qa.duplicate_requirement_pairs(merged)
-    by_id = {r["requirement_id"]: r for r in merged}
+    pairs = text_qa.duplicate_requirement_pairs(reqs)
+    by_id = {r["requirement_id"]: r for r in reqs}
     raised = set()
-    for pair in pairs["review"]:
+    for pair in [*pairs["merge"], *pairs["review"]]:
         a, b = by_id[pair["a"]], by_id[pair["b"]]
         text = revision_of(f"{a.get('title')} {a.get('statement')} || {b.get('title')} {b.get('statement')}")
         raised.add(ledger.add(
-            rule_id="srs.duplicate_requirement", rule_version="1", source="srs", kind="semantic",
+            rule_id="srs.duplicate_requirement", rule_version="2", source="srs", kind="semantic",
             targets=[pair["a"], pair["b"]], artifact_revision=text, scope="requirement",
             evidence=[{"id": pair["a"], "sha256": revision_of(str(a.get("statement"))), "excerpt": str(a.get("statement"))[:400]},
                       {"id": pair["b"], "sha256": revision_of(str(b.get("statement"))), "excerpt": str(b.get("statement"))[:400]}],
