@@ -457,43 +457,27 @@ def _srs_fill_call(state: GenState, extra: str = ""):
     return payload, _validate, srs_fill_schema(slots)
 
 
-def _legacy_arch_fill(payload: dict) -> dict:
-    """Pre-0.8.0 checkpoints hold decisions without the ADR-0021 fields;
-    synthesize the honest legacy form (same rule as vmodel_contracts.migrate)
-    so resuming an old session past the architecture stage cannot crash
-    assembly. New production never takes this path: the stage validator
-    requires a real driver before state is written.
-
-    Pre-0.13.0 checkpoints hold the parallel maps (stack + stack_baseline_refs);
-    heal them into typed stack_entries. A MISSING refs map heals to empty refs
-    ("not recorded" - pre-grounding artifacts). A MISMATCHED refs map is the
-    2026-09-11 phi4 failure shape: its per-key refs cannot be trusted, so every
-    entry heals with refs [] - empty refs mark a migration choice and can never
-    fabricate baseline grounding; the reconciliation gate judges the result.
-    (The explicit `vmodel_contracts.migrate` path refuses this shape instead -
-    there, "re-run the stage" is an actionable answer.)"""
-    out = dict(payload)
-    if "stack_entries" not in out and "stack" in out:
-        stack = out.pop("stack") or {}
-        refs = out.pop("stack_baseline_refs", None)
-        if isinstance(refs, dict) and set(refs) == set(stack):
-            healed = [(k, v, refs[k] if isinstance(refs[k], list) else []) for k, v in stack.items()]
-        else:
-            healed = [(k, v, []) for k, v in stack.items()]
-        out["stack_entries"] = [
-            {"key": k, "value": v, "baseline_refs": [str(r) for r in rs], "migration_adr_id": None}
-            for k, v, rs in healed]
-    else:
-        out.pop("stack", None)
-        out.pop("stack_baseline_refs", None)
-    decisions = []
-    for d in out.get("decisions") or []:
-        dd = dict(d)
-        dd.setdefault("driver", None)
-        dd.setdefault("options_considered", [])
-        decisions.append(dd)
-    out["decisions"] = decisions
-    return out
+def validated_architecture(payload: dict) -> ArchitectureOverview:
+    """Validate saved/current state without synthesizing historical fields."""
+    from .errors import UserFacingError
+    from vmodel_contracts import check_compatible
+    try:
+        if payload.get("contract_version"):
+            check_compatible(payload)
+        if "stack" in payload or "stack_baseline_refs" in payload:
+            raise ValueError("legacy parallel stack maps are not supported")
+        for decision in payload.get("decisions") or []:
+            if "driver" not in decision or "options_considered" not in decision:
+                raise ValueError("architecture decision lacks driver or options_considered")
+        return ArchitectureOverview.model_validate(payload)
+    except ValueError as exc:
+        raise UserFacingError(
+            "Architecture checkpoint is incompatible; automatic healing is disabled.",
+            str(exc),
+            "Keep the original artifacts. Explicitly migrate a compatible architecture JSON with "
+            "python -m vmodel_contracts.migrate, then rerun architecture into a new output "
+            "directory. A migrated JSON does not rewrite the saved checkpoint.",
+        ) from exc
 
 
 def _baseline_vocab(baseline: SystemBaseline) -> str:
@@ -3481,7 +3465,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         srs = SRSDocument.model_validate(srs_document_data(state["intent_model"], state["srs"]))
         # the flat view feeds the existing traceability math unchanged
         reqs = RequirementSet(session_id=sid, requirements=srs.requirements())
-        arch = ArchitectureOverview.model_validate(_legacy_arch_fill(state["architecture"]))
+        arch = validated_architecture(state["architecture"])
         items = [ItemSpec.model_validate(i) for i in state["items"]]
         tests = [AcceptanceTest.model_validate(t) for t in state["tests"]]
         validation = (ValidationPlan.model_validate({"session_id": sid, **state["validation"]})

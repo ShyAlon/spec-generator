@@ -37,7 +37,8 @@ def test_cli_crash_retry_reseals_without_repeating_architecture(tmp_path,monkeyp
  conn=sqlite3.connect(outdir/"checkpoints.sqlite",check_same_thread=False)
  first=build_graph(UsageLog("s"),checkpointer=SqliteSaver(conn,serde=checkpoint_serde()),stop_after="architecture")
  state=first.invoke({"intent_model":dict(INTENT),"system_baseline":old},cfg)
- body=cli._legacy_arch_fill({**state["architecture"],"session_id":"s"})
+ body={**state["architecture"],"session_id":"s"}
+ cli.validated_architecture(body)
  life=ArchitectureLifecycle(outdir,"s",old);life.bootstrap_complete(body,old)
  if legacy_anchor:life.anchor_hash=stable_hash(new)
  if recorded_resume:life.resume("items")
