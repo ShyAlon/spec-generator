@@ -11,7 +11,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "Shy Alon" }]
 dynamic = ["version"]
 dependencies = [
-  "vmodel-contracts @ git+https://github.com/ShyAlon/vmodel-contracts.git@865b8e7846b3c88d2a6a6c2baec94758c251591d",
+  "vmodel-contracts==0.27.0",
   "langgraph>=0.2",
   "langgraph-checkpoint-sqlite>=2",
   "langchain-core>=0.3",
@@ -34,3 +34,7 @@ allow-direct-references = true
 packages = ["src/spec_generator"]
 
 
+
+# The checked-in wheel is built from the approved contracts revision.
+[tool.uv.sources]
+vmodel-contracts = { path = "vendor/vmodel_contracts-0.27.0-py3-none-any.whl" }

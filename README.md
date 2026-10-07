@@ -45,7 +45,7 @@ from checkpoint state at startup (state is authoritative, zero stages re-run).
 ## Run
 
 ```bash
-pip install -e .[dev]
+uv sync --locked --extra dev
 export DEEPSEEK_API_KEY=...
 python -m spec_generator.cli out/<session>/intent_model.json
 ```
@@ -273,7 +273,7 @@ The contracts README is the canonical transition and guard reference.
 
 ### Local CI test
 
-Run `./scripts/test-local.sh` from any directory. It creates a reusable `.venv`, installs the development dependencies and runs the same tests as the PR workflow using Python 3.12. Install Python 3.12 first, and make sure your Git authentication can read private `ShyAlon/vmodel-contracts` where it is a dependency.
+Run `./scripts/test-local.sh` from any directory. It creates a reusable `.venv`, installs the development dependencies from `uv.lock` without changing it, and runs the same tests as the PR workflow using Python 3.12. Install Python 3.12 and uv first. Contracts 0.27.0 is installed from the checked-in wheel in `vendor/`, so installing this repository needs no private Git authentication. Package downloads still need network access on a fresh machine. For a deliberate pip installation rather than the locked development environment, first install `vendor/vmodel_contracts-0.27.0-py3-none-any.whl`, then this project. A bare pip install cannot use uv source overrides.
 
 For a standalone wheel build of this repository, run `./scripts/build-local.sh` (requires Python 3.12 and pip). This writes to `dist/` and does not publish or deploy anything.
 
