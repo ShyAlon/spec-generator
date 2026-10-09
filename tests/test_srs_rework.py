@@ -6,7 +6,7 @@ from spec_generator.srs_rework import prepare_rework
 
 
 def data():
-    intent={'session_id':'fake','problem_statement':'People record tasks','constraints':[],'assumptions':[],'glossary':{},'target_users':['People'],'core_value_proposition':'Record tasks','stakeholder_needs':[],'in_scope':['Task records'],'out_of_scope':[],'source_turns':{}}
+    intent={'session_id':'fake','problem_statement':'People record tasks','constraints':[],'assumptions':[],'glossary':{},'target_users':['People'],'core_value_proposition':'Record tasks','stakeholder_needs':[{'need_id':'SN-1','statement':'People need task evidence','kind':'functional','source_turns':[0]}],'in_scope':['Task records'],'out_of_scope':[],'source_turns':{}}
     req={'requirement_id':'R-1','title':'Task evidence','statement':'The system shall use SQLite to record task evidence.',
          'priority':'must','kind':'functional','acceptance':[{'criterion_id':'AC-1','statement':'Task evidence is recorded.'}],
          'need_ids':['N-1'],'intent_fields':['problem_statement']}
