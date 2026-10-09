@@ -1283,7 +1283,7 @@ requires-dist = [
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2" },
     { name = "pydantic", specifier = ">=2.6,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "vmodel-contracts", path = "vendor/vmodel_contracts-0.27.3-py3-none-any.whl" },
+    { name = "vmodel-contracts", path = "vendor/vmodel_contracts-0.28.0-py3-none-any.whl" },
 ]
 provides-extras = ["anthropic", "dev"]
 
@@ -1572,14 +1572,14 @@ wheels = [
 
 [[package]]
 name = "vmodel-contracts"
-version = "0.27.3"
-source = { path = "vendor/vmodel_contracts-0.27.3-py3-none-any.whl" }
+version = "0.28.0"
+source = { path = "vendor/vmodel_contracts-0.28.0-py3-none-any.whl" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
 wheels = [
-    { filename = "vmodel_contracts-0.27.3-py3-none-any.whl", hash = "sha256:cb65296694b933e5ec49de471e7f39e93b7cb29be94c4b7fd6061ffc8cc8f783" },
+    { filename = "vmodel_contracts-0.28.0-py3-none-any.whl", hash = "sha256:128cc0e8a3abda204d107708fe7ade1db072d3a93a9349bbfd9e0bf8b96c9a84" },
 ]
 
 [package.metadata]
