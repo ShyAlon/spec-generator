@@ -2199,7 +2199,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 review: bool = False, persist=None, partials=None,
                 only_stage: str | None = None, stop_after: str | None = None,
                 expert_opinion: bool = False, grounding=None,
-                require_decisions: bool = False):
+                require_decisions: bool = False, stop_fence=None, stop_generation=None):
     """persist(stage, data, state): optional side-effect hook fired after each
     authoring stage completes - the CLI uses it to write the bundle
     incrementally, so a late failure leaves all completed work on disk.
@@ -2210,6 +2210,16 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     bodies, tests fills) - completed items are preserved on crash/Ctrl+C and
     skipped on rerun, the same way completed stages already are."""
 
+    if stop_fence is not None:
+        if type(stop_generation) is not int:
+            raise ValueError("explicit Stop generation required")
+        from .stop_publication import publication_guard, FencedSink, FencedCheckpointer
+        publish = publication_guard(stop_fence, stop_generation)
+        stop_fence.check(stop_generation)
+        if persist is not None: persist = FencedSink(persist, publish)
+        if partials is not None: partials = FencedSink(partials, publish)
+        if checkpointer is not None: checkpointer = FencedCheckpointer(checkpointer, publish)
+
     def _wrap(stage: str, label: str, detail=None):
         """detail: a string, or a callable(state) -> str. A callable resolves at
         node start, so the opening line can carry the stage's INPUT cardinality
@@ -2218,10 +2228,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         before the call."""
         def deco(fn):
             def inner(state: GenState) -> dict:
+                if stop_fence is not None: stop_fence.check(stop_generation)
                 d = detail(state) if callable(detail) else detail
                 with track(progress, stage, label, d):
                     try:
-                        return fn(state)
+                        result = fn(state)
+                        if stop_fence is not None: stop_fence.check(stop_generation)
+                        return result
                     except ValidationError as exc:
                         raise _stage_validation_error(stage, exc) from exc
                     except (ModelStructureError, KeyError, TypeError) as exc:

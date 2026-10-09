@@ -42,6 +42,12 @@ from .render import (render_agents_md, render_architecture, render_needs,
 from .telemetry import UsageLog, jsonl_sink
 
 
+def _append_audit(path,record):
+    from .stop_fence import guarded_publish
+    def append():
+        with path.open("a") as fh:fh.write(json.dumps(record)+"\n")
+    guarded_publish(append)
+
 def _validate_gate_edit(gate: str, edited: dict, intent: dict) -> None:
     """A hand edit must satisfy the same contract the assembly enforces - a
     gate can never push contract-breaking state downstream."""
@@ -113,10 +119,13 @@ def _backfill_persist(persist, values: dict) -> list[str]:
 
 def _atomic_write(path: Path, text: str) -> None:
     """tmp + rename: a crash mid-write can never leave a torn artifact."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+    from .stop_fence import guarded_publish
+    def write():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    guarded_publish(write)
 
 
 def _decided_review_on_disk(path: Path, semantic: dict) -> bool:
@@ -179,7 +188,9 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
             if p.exists():
                 p.unlink()
 
-    return _Partials()
+    from .stop_fence import guarded_publish
+    from .stop_publication import FencedSink
+    return FencedSink(_Partials(),guarded_publish)
 
 
 # partial files invalidated by --from <stage> (that stage and everything after)
@@ -480,7 +491,9 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
         _atomic_write(outdir / "repair-proposal.md", text)
     _persist.repair_proposal = _repair_proposal_files
     _persist.ledger = lambda data: _atomic_write(outdir / "findings-ledger.json", json.dumps(data, indent=2))
-    return _persist
+    from .stop_fence import guarded_publish
+    from .stop_publication import FencedSink
+    return FencedSink(_persist,guarded_publish)
 
 
 STAGE_ORDER = ("needs", "srs", "architecture", "items", "tests", "validation", "review", "assemble")
@@ -660,9 +673,9 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             md += "\n\n## Review advisories\n" + "\n".join(
                 f"- {a['left_id']} {a['left_slug']} and {a['right_id']} {a['right_slug']}: {a['reason']}. Nothing was merged; decide at this gate."
                 for a in advisories)
-        (outdir / f"gate_{gate}.md").write_text(md)
-        (outdir / f"gate_{gate}.json").write_text(json.dumps(artifact, indent=2))
-        (outdir / f"gate_{gate}.advisories.json").write_text(json.dumps({"gate":gate,"advisories":advisories},indent=2))
+        _atomic_write(outdir / f"gate_{gate}.md",md)
+        _atomic_write(outdir / f"gate_{gate}.json",json.dumps(artifact, indent=2))
+        _atomic_write(outdir / f"gate_{gate}.advisories.json",json.dumps({"gate":gate,"advisories":advisories},indent=2))
         print(f"\n===== REVIEW GATE: the {title} =====\n", file=sys.stderr)
         print(md, file=sys.stderr)
         if advisories:
@@ -672,7 +685,7 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             action = "a"
             record={"event":"gate.auto_decision", "gate":gate, "action":"accept", "mode":"hands_free",
                     "artifact":f"gate_{gate}.json", "advisory_count":len(advisories)}
-            with (outdir/"audit.jsonl").open("a") as fh: fh.write(json.dumps(record)+"\n")
+            _append_audit(outdir/"audit.jsonl",record)
             print(f"boundary=hands-free-gate gate={gate} action=accept advisories={len(advisories)} decision=continue", file=sys.stderr)
         else:
             from vmodel_contracts.decisions import emit_decision,founder_decision
@@ -1050,6 +1063,11 @@ def main() -> None:
     ap.add_argument("--preflight", action="store_true",
                     help="validate inputs and checkpoint compatibility without building a model or spending a call")
     args = ap.parse_args()
+    from .cooperative_run import cli_stop_binding
+    if cli_stop_binding() is not None and (args.only_stage or args.reconcile_artifacts or args.export_handoff):
+        raise UserFacingError("this auxiliary CLI mode has no cooperative Stop binding",
+                              "its separate publication paths are not reviewed",
+                              "use the normal job-bound producer path; no work was started")
     if bool(args.only_stage) != bool(args.source_artifacts):
         ap.error("--only-stage and --source-artifacts must be used together")
     if args.only_stage and args.from_stage:
@@ -1201,7 +1219,11 @@ def main() -> None:
     persist_fn = _make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
                                conops_present=conops is not None,
                                architecture_lifecycle=architecture_lifecycle)
-    graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding, require_decisions=args.require_decisions,
+    from .cooperative_run import cli_stop_binding
+    stop_binding=cli_stop_binding()
+    graph = build_graph(log, stop_fence=stop_binding[0] if stop_binding else None,
+                        stop_generation=stop_binding[1] if stop_binding else None,
+                        checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding, require_decisions=args.require_decisions,
                         persist=persist_fn,
                         partials=partials, stop_after=args.to_stage)
     from . import model_config as _mc
@@ -1383,8 +1405,7 @@ def main() -> None:
         if args.expert_opinion:
             opinions=(graph.get_state(cfg).values.get("expert_opinions") or [])
             _atomic_write(outdir / "expert-opinions.json",json.dumps({"mode":"simulated_expert_opinion","founder_approved":False,"human_review_required":True,"decisions":opinions},indent=2))
-            with (outdir / "audit.jsonl").open("a") as fh:
-                for opinion in opinions: fh.write(json.dumps({"event":"gate.simulated_expert_opinion",**opinion,"founder_approved":False})+"\n")
+            for opinion in opinions:_append_audit(outdir/"audit.jsonl",{"event":"gate.simulated_expert_opinion",**opinion,"founder_approved":False})
     else:
         result = graph.invoke(None, cfg) if resume else graph.invoke(
             {"intent_model": intent, "system_baseline": baseline, "conops": conops}, cfg)
@@ -1438,21 +1459,21 @@ def main() -> None:
                                                        for x in b.get("punch_list") or []])
 
 
-    (outdir / "needs.md").write_text(render_needs(needs))
+    _atomic_write((outdir / "needs.md"),render_needs(needs))
     srs = SRSDocument.model_validate(coerce_for_model(b["_srs"], SRSDocument))
-    (outdir / "srs.md").write_text(render_srs(srs))
-    (outdir / "architecture.md").write_text(
+    _atomic_write((outdir / "srs.md"),render_srs(srs))
+    _atomic_write(outdir / "architecture.md",
         render_architecture(arch, greenfield=baseline["mode"] == "greenfield",
                             conops_present=conops is not None))
-    (outdir / "architecture.json").write_text(arch.model_dump_json(indent=2))
+    _atomic_write((outdir / "architecture.json"),arch.model_dump_json(indent=2))
     for i in items:
-        (outdir / "specs" / f"{i.spec_id}.md").write_text(render_spec_file(i))
-    (outdir / "AGENTS.md").write_text(render_agents_md(arch, items, manifest, punch))
-    (outdir / "traceability.json").write_text(json.dumps(b["traceability"], indent=2))
-    (outdir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
-    (outdir / "tests.json").write_text(json.dumps(b["_tests"], indent=2))
+        _atomic_write((outdir / "specs" / f"{i.spec_id}.md"),render_spec_file(i))
+    _atomic_write((outdir / "AGENTS.md"),render_agents_md(arch, items, manifest, punch))
+    _atomic_write((outdir / "traceability.json"),json.dumps(b["traceability"], indent=2))
+    _atomic_write((outdir / "manifest.json"),manifest.model_dump_json(indent=2))
+    _atomic_write((outdir / "tests.json"),json.dumps(b["_tests"], indent=2))
     if b.get("_validation"):
-        (outdir / "validation.json").write_text(json.dumps(b["_validation"], indent=2))
+        _atomic_write((outdir / "validation.json"),json.dumps(b["_validation"], indent=2))
 
     refresh_docs(outdir, intent=intent, conops=conops, event="assemble", state=result)
     if result.get("violations"):

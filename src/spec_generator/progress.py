@@ -47,6 +47,9 @@ class ProgressBus:
         self._subscribers.append(fn)
 
     def emit(self, event: ProgressEvent) -> None:
+        from .stop_fence import check_execution,StopRequested
+        try:check_execution()
+        except StopRequested:return
         for fn in self._subscribers:
             try:
                 fn(event)

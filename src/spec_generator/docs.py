@@ -140,6 +140,11 @@ def _root(spec):
     return spec.parent if spec.name == 'spec' else spec
 
 def refresh_docs(spec, intent=None, conops=None, event=None, state=None, invalidate=None, start=False):
+    from .stop_fence import guarded_publish
+    return guarded_publish(lambda:_refresh_docs(spec,intent,conops,event,state,invalidate,start))
+
+
+def _refresh_docs(spec, intent=None, conops=None, event=None, state=None, invalidate=None, start=False):
     """Single writer for incremental, resume, explicit-stage and final output."""
     spec=Path(spec); root=_root(spec); docs=root/'docs'; ledger=_read(spec/'docs-state.json',{})
     stages=ledger.setdefault('status',{}); snapshots=ledger.setdefault('snapshots',{}); changes=ledger.setdefault('changes',[])
@@ -215,6 +220,11 @@ def history_exists(spec):
     return bool(_read(Path(spec)/'review-history.json', []))
 
 def archive_review(spec, record, intent=None):
+    from .stop_fence import guarded_publish
+    return guarded_publish(lambda:_archive_review(spec,record,intent))
+
+
+def _archive_review(spec, record, intent=None):
     state=record.get('state');record={k:v for k,v in record.items() if k!='state'}
     history=_read(Path(spec)/'review-history.json',[])
     # Stable round identity makes a resume retry idempotent.

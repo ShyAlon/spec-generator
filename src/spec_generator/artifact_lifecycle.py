@@ -11,7 +11,12 @@ import json
 from pathlib import Path
 
 from vmodel_contracts import (ArtifactState, LifecycleEvent, LifecycleTransition,
-                              append_lifecycle_event)
+                              append_lifecycle_event as _append_lifecycle_event)
+
+
+def append_lifecycle_event(path,event):
+    from .stop_fence import guarded_publish
+    return guarded_publish(lambda:_append_lifecycle_event(path,event))
 
 
 def stable_hash(value) -> str:
