@@ -68,3 +68,6 @@ Targeted12/full886 pass, diff check clean. No installed execution session/genera
 StopFence optionally requires typed authenticated installed anchor and pinned unchanged bytes. Initializes later execution generation from exact binding, keeps Stop as one-way requested marker at anchor generation+1, rejects stale/false/conflicting/removed markers and changed/missing anchors. An anchor namespace without explicit binding cannot fall back to legacy generation1. Existing non-lineage behavior unchanged. No production caller switched, writer/installation route or public restart added; installation must authenticate expected binding separately.
 
 Full generator896 pass with current contracts source; targeted prior21 before extra fallback regression.
+
+## Coordinated anchor contracts wheel refresh
+Rebuilt vendor contracts wheel from contracts95b41c1 with private execution-anchor module. SHA256 bc8cb30c63719e106451d514532b28a30d8e69fbcce8a771121eab2369f0391e, version0.28.0 unchanged. Offline uv lock regeneration/check and project wheel build passed, diff check clean. This records build/lock checks only; clean installed current four-wheel context verification is next, not claimed complete. Frozen v3 untouched, no deployment. Existing PR description correctly records pre-refresh packaged limitation at creation time.

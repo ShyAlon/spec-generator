@@ -1,3 +1,3 @@
 # Recovery contracts wheel
 
-Built offline from current recovered contracts commit `5bdc1a0ec536c29daefc2ad344bace1b4568db5b` using uv build --offline --wheel. Version0.28.0. SHA256 `128cc0e8a3abda204d107708fe7ade1db072d3a93a9349bbfd9e0bf8b96c9a84`. This is new recovery build evidence, not original wheel history. Earlier vendor records remain historical. UV source selects this wheel; pip installs require this wheel before project installation. No release/deployment certification.
+Built offline from recovered contracts commit `95b41c14f83b4d992555bb42281068f83aae1ca9` with `uv build --offline --wheel`. Version 0.28.0, SHA256 `bc8cb30c63719e106451d514532b28a30d8e69fbcce8a771121eab2369f0391e`. Contains the private execution-anchor reader. This replaces the earlier recovery vendor wheel; earlier provenance remains in Git history. It is not a release or deployment certification. UV selects this wheel; install it before the project with pip.
