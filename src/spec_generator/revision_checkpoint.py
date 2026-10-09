@@ -191,3 +191,45 @@ def seed_lineage_revision_checkpoint(*,source,lineage,change_request,graph,confi
     return {'destination_checkpoint':saved.config,'semantic_session_id':lineage['semantic_session_id'],
         'execution_session_id':lineage['execution_session_id'],'checkpoint_seeded':True,
         'source_mutated':False,'installed':False,'dispatch_started':False}
+
+
+def stage_reviewed_lineage_checkpoint(*,source,proposal_result,lineage,change_request,graph,config):
+    """Seed validated proposal state at its phase boundary, never invoke graph.
+
+    This is isolated checkpoint staging only. It does not accept the regenerated
+    gate, create execution authority or dispatch downstream work. Caller supplies
+    pinned source/proposal evidence and destination containment under exclusion.
+    """
+    # Validate source, identities and empty destination through the same lineage
+    # rules without writing it first. The staging graph is a private probe which
+    # records the requested seed in memory, not a persistent session.
+    class Probe:
+        def __init__(self):self.values={}
+        def get_state(self,configuration):
+            from types import SimpleNamespace
+            return SimpleNamespace(values=self.values,next=(),config=configuration)
+        def update_state(self,configuration,values,as_node):self.values=deepcopy(values)
+    probe=Probe()
+    seed_lineage_revision_checkpoint(source=source,lineage=lineage,change_request=change_request,graph=probe,config=config)
+    validated=validate_revision_output(source=source,result=proposal_result,phase=lineage['phase'],
+        change_request=change_request,session_id=lineage['semantic_session_id'])
+    if validated['artifact_sha256']!=lineage.get('regenerated_artifact_sha256'):
+        raise ValueError('proposal artifact differs from reviewed lineage digest')
+    if proposal_result.get('expert_opinions',[])!=probe.values.get('expert_opinions',[]):
+        raise ValueError('proposal retained unreviewed expert decisions')
+    from .stop_fence import check_execution
+    check_execution();existing=graph.get_state(config)
+    if existing.values or existing.next:raise ValueError('fresh staged destination must be empty')
+    # Start from cleared approved seed rather than copying unknown proposal
+    # channels, pending writes or old checkpoint metadata into the new thread.
+    state=deepcopy(probe.values);state['gate_feedback'].pop(lineage['phase'],None)
+    state[lineage['phase']]=deepcopy(validated['artifact'])
+    graph.update_state(config,state,as_node=lineage['phase'])
+    check_execution();saved=graph.get_state(config)
+    if (saved.values.get(lineage['phase'])!=validated['artifact']
+        or saved.values.get('intent_model')!=probe.values['intent_model']
+        or saved.values.get('gate_feedback',{}).get(lineage['phase'])):
+        raise ValueError('staged reviewed checkpoint readback mismatch')
+    return {'destination_checkpoint':saved.config,'artifact_sha256':validated['artifact_sha256'],
+        'semantic_session_id':lineage['semantic_session_id'],'execution_session_id':lineage['execution_session_id'],
+        'requires_fresh_gate_review':True,'installed':False,'dispatch_started':False}
