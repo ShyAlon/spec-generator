@@ -33,6 +33,15 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
     if phase not in runtime.models:raise ValueError('explicit revision phase model required')
     expected_binding=(owner,capability.task_id,runtime.worker_binding[2] if runtime.worker_binding else None,generation,str(root))
     if runtime.worker_binding!=expected_binding:raise ValueError('revision runtime belongs to another worker')
+    anchor=getattr(fence,'_execution_anchor',None)
+    if generation>1:
+        if (anchor is None or anchor.owner_id!=owner or anchor.task_id!=capability.task_id
+            or anchor.execution_session_id!=capability.session_id or anchor.generation!=generation):
+            raise ValueError('installed proposal semantic/execution binding required')
+        semantic_session_id=anchor.semantic_session_id
+    else:
+        if anchor is not None:raise ValueError('legacy proposal must not carry later-generation anchor')
+        semantic_session_id=capability.session_id
     source_path=root/'spec'/'checkpoints.sqlite'
     config={'configurable':{'thread_id':capability.session_id}}
     def source():
@@ -40,7 +49,7 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
         from .revision_source import read_closed_checkpoint
         return read_closed_checkpoint(source_path,session_id=capability.session_id,expected_checkpoint_id=checkpoint_id)
     original=source()
-    prepare_revision_seed(source=original,phase=phase,change_request=change_request,session_id=capability.session_id)
+    prepare_revision_seed(source=original,phase=phase,change_request=change_request,session_id=semantic_session_id)
     parent=root/'spec'/'revision-proposals'
     if parent.resolve()!=parent:raise ValueError('unsafe revision proposal directory')
     guarded_publish(lambda:parent.mkdir(exist_ok=True))
@@ -54,7 +63,7 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
         graph=(graph_factory or build_graph)(log,checkpointer=saver,progress=progress,
             review=False,stop_after=phase,stop_fence=fence,stop_generation=generation)
         seed_fresh_revision_checkpoint(source=original,source_checkpoint_id=checkpoint_id,expected_checkpoint_id=checkpoint_id,
-            phase=phase,change_request=change_request,session_id=capability.session_id,graph=graph,config=config)
+            phase=phase,change_request=change_request,session_id=semantic_session_id,execution_session_id=capability.session_id,graph=graph,config=config)
         result=graph.invoke(None,config)
         fence.check(generation)
         # Graph SRS channel is a freshly assembled body, while on-disk artifacts
@@ -65,7 +74,7 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
             from .graph import srs_document_data
             result={**result,'srs':SRSDocument.model_validate(srs_document_data(result['intent_model'],result['srs'])).model_dump(mode='json')}
         proposal=validate_revision_output(source=original,result=result,phase=phase,
-            change_request=change_request,session_id=capability.session_id)
+            change_request=change_request,session_id=semantic_session_id)
         # This detects source drift, not an atomic evidence CAS. Commit remains
         # disabled until the owner-side transaction compares the full evidence.
         if source()!=original:raise ValueError('source checkpoint content changed during revision')

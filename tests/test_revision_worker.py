@@ -120,3 +120,54 @@ def test_real_generator_graph_revision_consumes_feedback_and_stops_at_srs(tmp_pa
             change_request='Describe offline behavior',validate_authority=lambda:None,log=SimpleNamespace(record=lambda *args:None))
     assert messages and any('Describe offline behavior' in text for text in messages)
     assert proposal['phase']=='srs' and not proposal['committed']
+
+
+def setup_later_generation(tmp_path,*,anchor_task='task'):
+    import json
+    from vmodel_contracts.execution_anchor import ExecutionAnchor
+    cap,old,runtime,cid,state=setup(tmp_path)
+    root=old.parent/'execution2';old.rename(root);cap.session_id='execution2';cap.generation=2
+    conn=sqlite3.connect(root/'spec'/'checkpoints.sqlite');saver=SqliteSaver(conn,serde=checkpoint_serde())
+    from langgraph.checkpoint.base import empty_checkpoint
+    cp=empty_checkpoint();cp['channel_values']=state
+    saved=saver.put({'configurable':{'thread_id':'execution2','checkpoint_ns':''}},cp,{'source':'input','step':0,'parents':{}},{})
+    conn.close()
+    runtime=JobRuntime({'srs':StageModel('fake','fake')},str(root/'calls.jsonl'),lambda text:None)
+    runtime.bind_worker(owner_id=cap.scope.owner_id,task_id='task',job_id='job',generation=2,session_root=root)
+    anchor=ExecutionAnchor(cap.scope.owner_id,anchor_task,'execution2','s',2,'a'*64,'test-installation')
+    (root/'execution-generation.json').write_text(json.dumps(anchor.document()))
+    fence=StopFence(root/'interview'/'stop-request.json',execution_anchor=anchor)
+    return cap,root,runtime,saved['configurable']['checkpoint_id'],state,fence
+
+
+def test_later_generation_proposal_preserves_original_semantic_ids(tmp_path):
+    cap,root,runtime,cid,state,fence=setup_later_generation(tmp_path)
+    before=(root/'spec'/'checkpoints.sqlite').read_bytes()
+    with job_runtime(runtime),cli_execution(fence,None):
+        proposal=run_revision_proposal(capability=cap,session_root=root,checkpoint_id=cid,phase='srs',
+            change_request='Describe offline behavior',validate_authority=lambda:None,log=None,graph_factory=factory(state))
+    assert proposal['session_id']=='execution2' and proposal['generation']==2
+    assert proposal['artifact']['session_id']=='s' and proposal['artifact']['intent_model_ref']=='s'
+    assert before==(root/'spec'/'checkpoints.sqlite').read_bytes()
+    assert not proposal['committed']
+
+
+def test_later_generation_proposal_rejects_wrong_installed_task(tmp_path):
+    cap,root,runtime,cid,state,fence=setup_later_generation(tmp_path,anchor_task='foreign')
+    with job_runtime(runtime),cli_execution(fence,None):
+        with pytest.raises(ValueError,match='semantic/execution binding'):
+            run_revision_proposal(capability=cap,session_root=root,checkpoint_id=cid,phase='srs',
+                change_request='Describe offline behavior',validate_authority=lambda:None,log=None,graph_factory=factory(state))
+    assert not (root/'spec'/'revision-proposals').exists()
+
+
+def test_unanchored_ad_hoc_later_generation_refuses_proposal(tmp_path):
+    cap,root,runtime,cid,state=setup(tmp_path);cap.generation=2
+    runtime=JobRuntime({'srs':StageModel('fake','fake')},str(root/'calls.jsonl'),lambda text:None)
+    runtime.bind_worker(owner_id=cap.scope.owner_id,task_id='task',job_id='job',generation=2,session_root=root)
+    fence=StopFence(root/'interview'/'stop-request.json');fence.generation=2
+    with job_runtime(runtime),cli_execution(fence,None):
+        with pytest.raises(ValueError,match='semantic/execution binding'):
+            run_revision_proposal(capability=cap,session_root=root,checkpoint_id=cid,phase='srs',
+                change_request='Describe offline behavior',validate_authority=lambda:None,log=None,graph_factory=factory(state))
+    assert not (root/'spec'/'revision-proposals').exists()
