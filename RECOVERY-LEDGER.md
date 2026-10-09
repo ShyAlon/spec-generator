@@ -11,3 +11,6 @@ Validation: full current tracked suite767 passed. Additional lost-unit test asse
 Recovered missing initial attempt admission/wire/runtime fixtures and chronological transport tests from archived source writes. Preserved real SDK serialization and fake-only transport assertions. Expanded suite810 passed; no production change in this test unit. Further Stop and publication tests/build assets remain open.
 
 Recovered initial Stop fence tests; current shared same-host writer is asserted STOP_REQUESTED while active, not falsely quiescent in a second reader. Targeted Stop tests passed (engine4, generator6 including publication/late-thread guards). Further chronological Stop test additions remain to recover.
+
+## Chronological Stop regression recovery
+Recovered later source-written Stop/registry/publication test additions. Duplicate writer expects current distinct SessionWriterBusy exception; no false Stop completion. Full expanded suites at this checkpoint: engine643 passed,2 warnings; generator816 passed. These are reconstructed current suites, not an assertion of complete pre-loss equivalence.
