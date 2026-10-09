@@ -102,3 +102,56 @@ def test_checkpoint_seed_refuses_unbound_execution():
     with pytest.raises(ValueError,match='bound cooperative'):
         seed_fresh_revision_checkpoint(source=source(),source_checkpoint_id='prior',expected_checkpoint_id='prior',
             phase='srs',change_request='Change',session_id='s',graph=None,config={})
+
+
+def regenerated():
+    state=source();seed=prepare_revision_seed(source=state,phase='srs',change_request='Change behavior',session_id='s')['seed']
+    seed['srs']=deepcopy(state['srs']);seed['gate_feedback']={}
+    return state,seed
+
+
+def test_typed_regenerated_srs_is_proposal_only_with_content_digest():
+    from spec_generator.revision_checkpoint import validate_revision_output
+    state,result=regenerated();before=deepcopy(state)
+    proposal=validate_revision_output(source=state,result=result,phase='srs',change_request='Change behavior',session_id='s')
+    assert state==before and len(proposal['artifact_sha256'])==64 and proposal['typed_and_trace_validated']
+    assert proposal['requires_fresh_review'] and not proposal['founder_accepted'] and not proposal['committed']
+
+
+@pytest.mark.parametrize('mutation',[lambda r:r['intent_model'].update(problem_statement='Unreviewed change'),
+    lambda r:r['srs'].update(session_id='other'),lambda r:r['srs']['functional'][0].update(need_ids=['N-99']),
+    lambda r:r.update(items=[{'old':True}]),lambda r:r.update(gate_feedback={'srs':'not consumed'}),
+    lambda r:r['srs'].update(contract_version='0.16.0')])
+def test_regenerated_output_rejects_unapproved_upstream_identity_trace_or_old_output(mutation):
+    from spec_generator.revision_checkpoint import validate_revision_output
+    state,result=regenerated();mutation(result)
+    with pytest.raises(ValueError):validate_revision_output(source=state,result=result,phase='srs',change_request='Change behavior',session_id='s')
+
+
+def architecture_result():
+    from vmodel_contracts import ArchitectureOverview
+    state=source();state['architecture']=ArchitectureOverview.model_validate(PAYLOADS['architecture']).model_dump(mode='json')
+    result=prepare_revision_seed(source=state,phase='architecture',change_request='Review storage',session_id='s')['seed']
+    result['gate_feedback']={}
+    return state,result
+
+
+def test_regenerated_architecture_validates_baseline_and_founder_source_without_healing():
+    from spec_generator.revision_checkpoint import validate_revision_output
+    state,result=architecture_result()
+    proposal=validate_revision_output(source=state,result=result,phase='architecture',change_request='Review storage',session_id='s')
+    assert proposal['typed_and_trace_validated'] and not proposal['founder_accepted']
+
+
+@pytest.mark.parametrize('mutation',[
+    lambda r:r['architecture'].update(baseline_id='other'),
+    lambda r:r['architecture']['components'][0].update(requirement_ids=['R-99']),
+    lambda r:r['architecture']['components'][0].update(baseline_refs=['repo:foreign']),
+    lambda r:r['architecture']['decisions'][0].update(founder_decision_refs=['F-unknown']),
+    lambda r:r['architecture']['decisions'][0].update(driver='founder_constraint'),
+    lambda r:r['architecture'].update(stack={})])
+def test_architecture_revision_rejects_unbound_identity_trace_baseline_or_founder_claim(mutation):
+    from spec_generator.revision_checkpoint import validate_revision_output
+    state,result=architecture_result();mutation(result)
+    with pytest.raises(Exception):
+        validate_revision_output(source=state,result=result,phase='architecture',change_request='Review storage',session_id='s')

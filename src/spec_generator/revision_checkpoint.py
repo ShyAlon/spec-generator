@@ -9,7 +9,7 @@ from vmodel_contracts import IntentModel,StakeholderNeedsSet,SystemBaseline,SRSD
 
 def prepare_revision_seed(*,source,phase,change_request,session_id):
     from .cli import _CLEAR_DOWNSTREAM,_predecessor,_rerun_missing_prerequisite
-    from .graph import srs_document_data,validated_architecture
+    from .graph import srs_document_data,validated_architecture,_check_baseline_reconciliation,_check_decision_drivers
     if phase not in ('srs','architecture'):
         raise ValueError('closed phase guidance adapter unavailable')
     if not isinstance(change_request,str) or not change_request.strip() or len(change_request)>20000:
@@ -45,6 +45,8 @@ def prepare_revision_seed(*,source,phase,change_request,session_id):
         if not isinstance(old_architecture,dict):raise ValueError('reviewed source architecture required')
         check_compatible(old_architecture)
         architecture=validated_architecture(old_architecture)
+        _check_baseline_reconciliation(architecture,SystemBaseline.model_validate(seed['system_baseline']))
+        _check_decision_drivers(architecture,intent,seed.get('conops'))
         if architecture.session_id!=session_id or architecture.baseline_id!=seed['system_baseline']['baseline_id']:
             raise ValueError('architecture source basis mismatch')
         req_ids={r.requirement_id for r in typed.functional+typed.non_functional}
@@ -92,3 +94,54 @@ def seed_fresh_revision_checkpoint(*,source,source_checkpoint_id,expected_checkp
         raise ValueError('revision feedback checkpoint was not durably stored')
     return {**prepared,'destination_checkpoint':saved.config,'checkpoint_seeded':True,
         'producer_invoked':False}
+
+
+def validate_revision_output(*,source,result,phase,change_request,session_id):
+    """Reject a proposal that drifts upstream or fails typed/trace boundaries.
+
+    Validation produces no approval and never publishes the result. A following
+    CAS must still compare fresh source/checkpoint/artifact evidence.
+    """
+    import hashlib,json
+    from .graph import srs_document_data,validated_architecture,_check_baseline_reconciliation,_check_decision_drivers
+    prepared=prepare_revision_seed(source=source,phase=phase,change_request=change_request,session_id=session_id)
+    if not isinstance(result,dict):raise ValueError('revision graph output required')
+    for key in ('intent_model','needs','system_baseline','conops'):
+        if result.get(key)!=prepared['seed'].get(key):
+            raise ValueError('revision changed approved upstream '+key)
+    if phase=='architecture' and result.get('srs')!=source.get('srs'):
+        raise ValueError('architecture revision changed approved SRS')
+    if result.get('gate_feedback',{}).get(phase):
+        raise ValueError('revision founder guidance was not consumed')
+    # Stop at the edited phase. Downstream artifacts must never be mistaken for
+    # approved regenerated products from a previous checkpoint/generation.
+    downstream=('architecture','items','tests','validation','bundle') if phase=='srs' else ('items','tests','validation','bundle')
+    if any(result.get(key) not in (None,[],{}) for key in downstream):
+        raise ValueError('revision produced or retained unreviewed downstream output')
+    document=result.get('srs' if phase=='srs' else 'architecture')
+    if not isinstance(document,dict):raise ValueError('typed regenerated phase artifact required')
+    check_compatible(document)
+    needs={n['need_id'] for n in prepared['seed']['needs']['needs']}
+    intent=prepared['seed']['intent_model']
+    if phase=='srs':
+        typed=SRSDocument.model_validate(srs_document_data(intent,document))
+        if typed.session_id!=session_id or typed.intent_model_ref!=session_id:raise ValueError('regenerated SRS identity mismatch')
+        for requirement in typed.functional+typed.non_functional:
+            if not set(requirement.need_ids)<=needs or any(key not in intent for key in requirement.intent_fields):
+                raise ValueError('regenerated SRS trace mismatch')
+        normalized=typed.model_dump(mode='json')
+    else:
+        typed=validated_architecture(document)
+        _check_baseline_reconciliation(typed,SystemBaseline.model_validate(prepared['seed']['system_baseline']))
+        _check_decision_drivers(typed,intent,result.get('conops'))
+        if typed.session_id!=session_id or typed.baseline_id!=prepared['seed']['system_baseline']['baseline_id']:
+            raise ValueError('regenerated architecture identity mismatch')
+        srs=SRSDocument.model_validate(srs_document_data(intent,source['srs']))
+        ids={r.requirement_id for r in srs.functional+srs.non_functional}
+        if any(not set(c.requirement_ids)<=ids for c in typed.components):
+            raise ValueError('regenerated architecture trace mismatch')
+        normalized=typed.model_dump(mode='json')
+    return {'phase':phase,'artifact':normalized,
+        'artifact_sha256':hashlib.sha256(json.dumps(normalized,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
+        'typed_and_trace_validated':True,'requires_fresh_review':True,
+        'founder_accepted':False,'committed':False,'dispatch_started':False}
