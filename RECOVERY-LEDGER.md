@@ -9,3 +9,5 @@ Validation: full current tracked suite767 passed. Additional lost-unit test asse
 
 ## Admission/runtime/wire regression tests
 Recovered missing initial attempt admission/wire/runtime fixtures and chronological transport tests from archived source writes. Preserved real SDK serialization and fake-only transport assertions. Expanded suite810 passed; no production change in this test unit. Further Stop and publication tests/build assets remain open.
+
+Recovered initial Stop fence tests; current shared same-host writer is asserted STOP_REQUESTED while active, not falsely quiescent in a second reader. Targeted Stop tests passed (engine4, generator6 including publication/late-thread guards). Further chronological Stop test additions remain to recover.
