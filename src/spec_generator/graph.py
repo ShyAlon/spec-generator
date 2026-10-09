@@ -457,27 +457,43 @@ def _srs_fill_call(state: GenState, extra: str = ""):
     return payload, _validate, srs_fill_schema(slots)
 
 
-def validated_architecture(payload: dict) -> ArchitectureOverview:
-    """Validate saved/current state without synthesizing historical fields."""
-    from .errors import UserFacingError
-    from vmodel_contracts import check_compatible
-    try:
-        if payload.get("contract_version"):
-            check_compatible(payload)
-        if "stack" in payload or "stack_baseline_refs" in payload:
-            raise ValueError("legacy parallel stack maps are not supported")
-        for decision in payload.get("decisions") or []:
-            if "driver" not in decision or "options_considered" not in decision:
-                raise ValueError("architecture decision lacks driver or options_considered")
-        return ArchitectureOverview.model_validate(payload)
-    except ValueError as exc:
-        raise UserFacingError(
-            "Architecture checkpoint is incompatible; automatic healing is disabled.",
-            str(exc),
-            "Keep the original artifacts. Explicitly migrate a compatible architecture JSON with "
-            "python -m vmodel_contracts.migrate, then rerun architecture into a new output "
-            "directory. A migrated JSON does not rewrite the saved checkpoint.",
-        ) from exc
+def _legacy_arch_fill(payload: dict) -> dict:
+    """Pre-0.8.0 checkpoints hold decisions without the ADR-0021 fields;
+    synthesize the honest legacy form (same rule as vmodel_contracts.migrate)
+    so resuming an old session past the architecture stage cannot crash
+    assembly. New production never takes this path: the stage validator
+    requires a real driver before state is written.
+
+    Pre-0.13.0 checkpoints hold the parallel maps (stack + stack_baseline_refs);
+    heal them into typed stack_entries. A MISSING refs map heals to empty refs
+    ("not recorded" - pre-grounding artifacts). A MISMATCHED refs map is the
+    2026-09-11 phi4 failure shape: its per-key refs cannot be trusted, so every
+    entry heals with refs [] - empty refs mark a migration choice and can never
+    fabricate baseline grounding; the reconciliation gate judges the result.
+    (The explicit `vmodel_contracts.migrate` path refuses this shape instead -
+    there, "re-run the stage" is an actionable answer.)"""
+    out = dict(payload)
+    if "stack_entries" not in out and "stack" in out:
+        stack = out.pop("stack") or {}
+        refs = out.pop("stack_baseline_refs", None)
+        if isinstance(refs, dict) and set(refs) == set(stack):
+            healed = [(k, v, refs[k] if isinstance(refs[k], list) else []) for k, v in stack.items()]
+        else:
+            healed = [(k, v, []) for k, v in stack.items()]
+        out["stack_entries"] = [
+            {"key": k, "value": v, "baseline_refs": [str(r) for r in rs], "migration_adr_id": None}
+            for k, v, rs in healed]
+    else:
+        out.pop("stack", None)
+        out.pop("stack_baseline_refs", None)
+    decisions = []
+    for d in out.get("decisions") or []:
+        dd = dict(d)
+        dd.setdefault("driver", None)
+        dd.setdefault("options_considered", [])
+        decisions.append(dd)
+    out["decisions"] = decisions
+    return out
 
 
 def _baseline_vocab(baseline: SystemBaseline) -> str:
@@ -758,54 +774,15 @@ def _specific_reason(reason: str) -> bool:
 
 
 def _founder_stack_block(state) -> str:
-    lines = []
-    for d in ((state.get("architecture") or {}).get("stack_entry_dispositions") or []):
-        if d.get("founder_decision"):
-            choice = d["founder_decision"]
-            lines.append(f"- {d['key']}: {choice['text']} (founder override; reason: {choice['reason']})")
-        elif d.get("technical_choice"):
-            choice = d["technical_choice"]
-            lines.append(f"- {d['key']}: {choice['default_value']} (system design default; {choice['reason']}; external research pending, not a verified vendor claim)")
-    return "\n\nARCHITECTURE TECHNICAL CHOICES (use these; founder override wins):\n" + "\n".join(lines) if lines else ""
-
-
-def _check_technical_choice_constraints(state, key, choice):
-    """Deterministic known technology/platform constraints, never semantic guesswork."""
-    from .tech_candidates import normalize_technology_alias
-    kind = _candidate_kind(key)
-    area = "framework" if kind in ("framework", "mobile_framework") else kind
-    for pref in (state.get("intent_model") or {}).get("tech_preferences") or []:
-        if pref.get("strength") != "required" or str(pref.get("area", "")).casefold() != area:
-            continue
-        named = str(pref.get("preference") or "").strip()
-        if tech_row(named):
-            wanted = normalize_technology_alias(named)
-            if any(normalize_technology_alias(o["value"]) != wanted for o in choice["options"]):
-                raise ValueError(f"technical choice conflicts with required {area}: {named}")
-    platforms = _product_platforms(state.get("intent_model") or {}) & {"ios", "android"}
-    if platforms and key == "ui_framework":
-        for option in choice["options"]:
-            row = tech_row(option["value"])
-            if row and ("backend" in row["kinds"] or ("any" not in row["platforms"] and not platforms & set(row["platforms"]))):
-                raise ValueError("technical choice conflicts with recorded product platform")
-
-
-def _technical_choice_call(state, key, brief, log, progress=None):
-    from .prompts import ARCH_STACK_OPTIONS
-    from .schemas import arch_stack_options_schema
-    from vmodel_contracts.architecture import technical_choice_data
-    req_ids = [r["requirement_id"] for sec in ("functional", "non_functional") for r in state["srs"].get(sec, [])]
-    context = {k: _prompt_view(state.get(k) or {}) for k in ("srs", "system_baseline", "intent_model", "conops")}
-    def validate(d):
-        try:
-            choice = technical_choice_data({**d, "provenance": "design_proposal", "research_status": "pending"}, req_ids)
-            _check_technical_choice_constraints(state, key, choice)
-            return choice
-        except ValueError as exc:
-            raise ModelStructureError(f"stack.{key}: {exc}") from exc
-    return _call_json("architecture", json.dumps(context) + f"\nSLOT: {key}\nINTERNAL RESEARCH BRIEF: {brief}\n" + ARCH_STACK_OPTIONS,
-                      log, progress, validate=validate, schema=arch_stack_options_schema(req_ids),
-                      stream_items=False, item_label=f"technical-choice:{key}")
+    """Decided research_required slots are binding founder constraints for the items stage."""
+    decided = [d for d in ((state.get("architecture") or {}).get("stack_entry_dispositions") or [])
+               if d.get("status") == "research_required" and d.get("founder_decision")]
+    if not decided:
+        return ""
+    lines = [f"- {d['key']}: {d['founder_decision']['text']} (founder's reason: {d['founder_decision']['reason']})"
+             for d in decided]
+    return ("\n\nFOUNDER DECISIONS ON OPEN STACK SLOTS (binding; the founder chose these, do not substitute):\n"
+            + "\n".join(lines))
 
 
 def _candidate_block(key: str, founder_techs: list[str]) -> str:
@@ -963,7 +940,7 @@ def _merge_duplicate_adr_pair(slots: list[dict], bodies: dict, left_id: str, rig
         left_slot[key] = list(dict.fromkeys((left_slot.get(key) or []) + (right_slot.get(key) or [])))
     left_slot["migration"] = bool(left_slot.get("migration") or right_slot.get("migration"))
     for key in ("options_considered", "baseline_refs", "evidence", "affected_repositories",
-                "executes_concept_ids", "founder_decision_refs", "rejected"):
+                "executes_concept_ids", "rejected"):
         values = (left.get(key) or []) + (right.get(key) or [])
         # Dict/list values need structural identity, not hashability.
         seen=set(); merged=[]
@@ -1122,39 +1099,33 @@ def _check_baseline_reconciliation(arch: ArchitectureOverview, baseline: SystemB
             raise ModelStructureError(f"{d.decision_id} {d.title}: evidence/affected_repositories only belong on migration ADRs")
 
 
-def _decided_founder_sources(intent_model: dict) -> dict[str, dict]:
-    items=((intent_model.get("founder_register") or {}).get("items") or [])
-    return {str(item["item_id"]): item for item in items
-            if item.get("item_id") and item.get("status")=="decided"
-            and str(item.get("decision") or "").strip() and str(item.get("reason") or "").strip()}
-
-
-def _check_adr_driver_source(body: dict, intent_model: dict, conops: dict | None = None) -> None:
-    """Same source check before a partial save and at final assembly. Never infer refs."""
-    refs=body.get("founder_decision_refs") or []
-    if not isinstance(refs,list) or any(not isinstance(ref,str) for ref in refs):
-        raise ModelStructureError("founder_decision_refs must be a list of exact item ids")
-    sources=_decided_founder_sources(intent_model)
-    text=" ".join(str(body.get(k) or "") for k in ("title","decision","rationale"))
-    normalize=lambda value: " ".join(str(value).casefold().replace("\\\"", "\"").replace("\"", "'").rstrip(". ").split())
-    unknown=[ref for ref in refs if ref not in sources]
-    if unknown:raise ModelStructureError(f"{body.get('decision_id','ADR')}: unknown or undecided founder decision refs: {unknown}")
-    unrelated=[ref for ref in refs if normalize(sources[ref]["decision"]) not in normalize(text)]
-    if unrelated:raise ModelStructureError(f"{body.get('decision_id','ADR')}: cite the recorded decision text for founder decision refs: {unrelated}")
-    driver=body.get("driver")
-    if driver is None:raise ModelStructureError(f"{body.get('decision_id','ADR')}: no driver - classify why the chosen option won")
-    if driver != "founder_constraint":return
-    prefs=[str(p.get("preference") or "") for p in intent_model.get("tech_preferences") or [] if p.get("preference")]
-    selected=_selected_concept(conops)
-    concept=bool(selected and selected[0] in (body.get("executes_concept_ids") or []))
-    preference=any(normalize(pref) in normalize(text) for pref in prefs)
-    if not (concept or preference or refs):
-        raise ModelStructureError(f"{body.get('decision_id','ADR')} '{body.get('title','')}': driver founder_constraint requires an executes_concept_ids link to the founder-confirmed CONOPS concept, a named founder technology preference, or a founder_decision_refs link with its recorded decided founder-register decision quoted in the ADR")
-
-
 def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict, conops: dict | None = None) -> None:
-    for decision in arch.decisions:
-        _check_adr_driver_source(decision.model_dump(mode="json"),intent_model,conops)
+    """ADR-0021: no arbitrary decisions. The contract requires the FIELDS
+    present (driver nullable only for legacy migration); the stage requires a
+    REAL driver on every new decision. A founder_constraint must cite either
+    a recorded technology preference or the founder-confirmed CONOPS concept
+    through executes_concept_ids; those are distinct sources of constraint.
+    Options have no floor (founder call 2026-09-09): under a mandate, empty
+    is honest."""
+    prefs = [p.get("preference", "") for p in (intent_model.get("tech_preferences") or [])]
+    for d in arch.decisions:
+        if d.driver is None:
+            raise ModelStructureError(
+                f"{d.decision_id} '{d.title}': no driver - classify why the chosen option won "
+                f"(founder_constraint | ecosystem_maturity | community_adoption | team_fit | simplicity).")
+        if d.driver.value == "founder_constraint":
+            prefs = [p for p in prefs if p]
+            selected = _selected_concept(conops)
+            executes_confirmed_concept = bool(selected and selected[0] in d.executes_concept_ids)
+            text = (d.title + " " + d.decision + " " + d.rationale).lower()
+            cites_tech_preference = any(p.lower() in text for p in prefs)
+            if not executes_confirmed_concept and not cites_tech_preference:
+                basis = (("recorded technology preferences: " + ", ".join(prefs)) if prefs else
+                         "no recorded technology preference")
+                raise ModelStructureError(
+                    f"{d.decision_id} '{d.title}': driver founder_constraint requires either an "
+                    "executes_concept_ids link to the founder-confirmed CONOPS concept or a cited "
+                    f"technology preference ({basis})")
 
 
 def _validate_stack_plan(d: dict) -> dict:
@@ -2199,7 +2170,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 review: bool = False, persist=None, partials=None,
                 only_stage: str | None = None, stop_after: str | None = None,
                 expert_opinion: bool = False, grounding=None,
-                require_decisions: bool = False):
+                require_decisions: bool = False, stop_fence=None, stop_generation=None):
     """persist(stage, data, state): optional side-effect hook fired after each
     authoring stage completes - the CLI uses it to write the bundle
     incrementally, so a late failure leaves all completed work on disk.
@@ -2210,6 +2181,16 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
     bodies, tests fills) - completed items are preserved on crash/Ctrl+C and
     skipped on rerun, the same way completed stages already are."""
 
+    if stop_fence is not None:
+        if type(stop_generation) is not int:
+            raise ValueError("explicit Stop generation required")
+        from .stop_publication import publication_guard, FencedSink, FencedCheckpointer
+        publish = publication_guard(stop_fence, stop_generation)
+        stop_fence.check(stop_generation)
+        if persist is not None: persist = FencedSink(persist, publish)
+        if partials is not None: partials = FencedSink(partials, publish)
+        if checkpointer is not None: checkpointer = FencedCheckpointer(checkpointer, publish)
+
     def _wrap(stage: str, label: str, detail=None):
         """detail: a string, or a callable(state) -> str. A callable resolves at
         node start, so the opening line can carry the stage's INPUT cardinality
@@ -2218,10 +2199,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         before the call."""
         def deco(fn):
             def inner(state: GenState) -> dict:
+                if stop_fence is not None: stop_fence.check(stop_generation)
                 d = detail(state) if callable(detail) else detail
                 with track(progress, stage, label, d):
                     try:
-                        return fn(state)
+                        result = fn(state)
+                        if stop_fence is not None: stop_fence.check(stop_generation)
+                        return result
                     except ValidationError as exc:
                         raise _stage_validation_error(stage, exc) from exc
                     except (ModelStructureError, KeyError, TypeError) as exc:
@@ -2501,8 +2485,6 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     kept = {"key": key, "status": status, "research_brief": brief}
                     if d.get("candidate_options"):
                         kept["candidate_options"] = [str(o) for o in d["candidate_options"]]
-                    for field in ("technical_choice", "system_selection", "founder_decision"):
-                        if d.get(field): kept[field] = d[field]
                     return kept
                 if status == "not_applicable":
                     reason = str(d.get("reason") or "").strip()
@@ -2636,14 +2618,27 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 stream_items=False, item_label=f"stack:{key}")
             _save()
 
-        # One bounded framing call per unresolved technical slot. Old candidates
-        # alone are not defaults. Source research is explicitly still pending.
+        # 2b. One small call per research_required slot: two or three candidate
+        # answers for the founder to pick from. Resumable per slot; a failure
+        # here costs one retried slot, never the stage.
+        def _v_options(d, key):
+            opts = [str(o).strip() for o in (d.get("options") or [])]
+            if not 2 <= len(opts) <= 3 or any(not o for o in opts):
+                raise ModelStructureError(f"stack.{key}: propose two or three non-empty options")
+            if len({o.casefold() for o in opts}) != len(opts):
+                raise ModelStructureError(f"stack.{key}: the options must be distinct")
+            return {"options": opts}
+
         for key in part["stack_keys"]:
             e = entries.get(key)
-            if not isinstance(e, dict) or e.get("status") != "research_required" or e.get("technical_choice") or e.get("founder_decision"):
+            if not isinstance(e, dict) or e.get("status") != "research_required" or e.get("candidate_options"):
                 continue
-            e["technical_choice"] = _technical_choice_call(state, key, e["research_brief"], log, progress)
-            e["candidate_options"] = [o["value"] for o in e["technical_choice"]["options"]]
+            e["candidate_options"] = _call_json(
+                "architecture",
+                context + f"\n\nTHE OPEN SLOT: {key}\nBRIEF: {e['research_brief']}\n\n" + ARCH_STACK_OPTIONS,
+                log, progress, validate=lambda d, key=key: _v_options(d, key),
+                schema=arch_stack_options_schema(), stream_items=False,
+                item_label=f"options:{key}")["options"]
             _save()
 
         # 3. Plan: component slots (coverage checked here, not at assembly).
@@ -2767,7 +2762,6 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                                                       if slot["migration"] else []),
                             "executes_concept_ids": [str(x) for x in d.get("executes_concept_ids") or []],
                             "technology_selections": [],
-                            "founder_decision_refs": d.get("founder_decision_refs") or [],
                             "rejected": []}
                     if not body["title"] or not body["decision"] or not body["rationale"]:
                         raise ModelStructureError(f"{slot['decision_id']}: title, decision and rationale are all required")
@@ -2803,10 +2797,27 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         raise ModelStructureError(
                             f"{slot['decision_id']} '{body['title']}': this code-owned CONOPS execution slot "
                             f"must declare these exact ids in executes_concept_ids: {missing_concepts}")
-                    _check_adr_driver_source({**body,"decision_id":slot["decision_id"]},state["intent_model"],state.get("conops"))
+                    # A founder_constraint
+                    # driver must cite its real source: either a technology
+                    # preference or the confirmed CONOPS concept. The latter is a
+                    # product/operations decision, not a technology preference.
                     adr_text = (body["title"] + " " + body["decision"] + " " + body["rationale"]).lower()
-                    if body["driver"] != "founder_constraint" and _re.search(r"mandat\w* by the founder|founder(-|\')s? (mandate|preference|requirement|decision)", adr_text):
-                        raise ModelStructureError(f"{slot['decision_id']}: the text claims a founder mandate but the driver is not founder_constraint - use the real driver and source")
+                    founder_prefs = [str(p.get("preference", "")) for p in
+                                     (state["intent_model"].get("tech_preferences") or []) if p.get("preference")]
+                    if body["driver"] == "founder_constraint":
+                        selected = _selected_concept(state.get("conops"))
+                        executes_confirmed_concept = bool(selected and selected[0] in body["executes_concept_ids"])
+                        names_tech_preference = any(pref.lower() in adr_text for pref in founder_prefs)
+                        if not executes_confirmed_concept and not names_tech_preference:
+                            raise ModelStructureError(
+                                f"{slot['decision_id']} '{body['title']}': driver founder_constraint requires "
+                                "either executes_concept_ids linking the founder-confirmed CONOPS concept or "
+                                "the named founder technology preference. A CONOPS choice is a product/operations "
+                                "constraint, not a technology preference; link it instead of deleting it")
+                    elif _re.search(r"mandat\w* by the founder|founder(-|\')s? (mandate|preference|requirement|decision)", adr_text):
+                        raise ModelStructureError(
+                            f"{slot['decision_id']} '{body['title']}': the text claims a founder mandate but the "
+                            "driver is not founder_constraint - delete the mandate language or justify the driver")
                     # Founder-NAMED technologies rejected here need a SPECIFIC
                     # reason (2026-09-13 founder decision) - vague verdicts
                     # re-ask this ADR call, far cheaper than an assembly re-plan.
@@ -2835,7 +2846,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     + json.dumps({k: (e.get("value") or e.get("status")) for k, e in entries.items()})
                     + lost_block + candidate_feedback + "\n\n" + ARCH_ADR_BODY + feedback,
                     log, progress, validate=_v_adr,
-                    schema=arch_adr_body_schema(valid_refs, repo_names, [__import__("vmodel_contracts").canonical_concept_id(str(o.get("name", ""))) for o in (state.get("conops") or {}).get("concept_options", [])], list(_decided_founder_sources(state["intent_model"]))),
+                    schema=arch_adr_body_schema(valid_refs, repo_names, [__import__("vmodel_contracts").canonical_concept_id(str(o.get("name", ""))) for o in (state.get("conops") or {}).get("concept_options", [])]),
                     stream_items=False, item_label=f"{did} {slot['slug']}")
                 _save()
 
@@ -3054,7 +3065,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 if spec["spec_id"] in done:  # per-item resume: preserved body
                     data.append(done[spec["spec_id"]])
                     continue
-                body = _call_json("items", _items_body_payload(state, spec) + _founder_stack_block(state), log, progress,
+                body = _call_json("items", _items_body_payload(state, spec), log, progress,
                                   validate=_items_body_validator(spec), schema=items_body_schema(),
                                   stream_items=False,
                                   item_label=((f"{spec['spec_id']} ({spec['slug']})"
@@ -3493,7 +3504,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         srs = SRSDocument.model_validate(srs_document_data(state["intent_model"], state["srs"]))
         # the flat view feeds the existing traceability math unchanged
         reqs = RequirementSet(session_id=sid, requirements=srs.requirements())
-        arch = validated_architecture(state["architecture"])
+        arch = ArchitectureOverview.model_validate(_legacy_arch_fill(state["architecture"]))
         items = [ItemSpec.model_validate(i) for i in state["items"]]
         tests = [AcceptanceTest.model_validate(t) for t in state["tests"]]
         validation = (ValidationPlan.model_validate({"session_id": sid, **state["validation"]})

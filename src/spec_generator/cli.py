@@ -34,12 +34,19 @@ from vmodel_contracts import (
 from vmodel_contracts.runtime import artifacts_root
 
 from .errors import UserFacingError, run_cli
-from .graph import build_graph, checkpoint_serde, srs_document_data, validated_architecture
+from .graph import build_graph, checkpoint_serde, srs_document_data, _legacy_arch_fill
 from .progress import ProgressBus, stderr_printer
 from .repair import coerce_for_model, normalize_enums
 from .render import (render_agents_md, render_architecture, render_needs,
                      render_srs, render_spec_file)
 from .telemetry import UsageLog, jsonl_sink
+
+
+def _append_audit(path,record):
+    from .stop_fence import guarded_publish
+    def append():
+        with path.open("a") as fh:fh.write(json.dumps(record)+"\n")
+    guarded_publish(append)
 
 
 def _validate_gate_edit(gate: str, edited: dict, intent: dict) -> None:
@@ -113,10 +120,13 @@ def _backfill_persist(persist, values: dict) -> list[str]:
 
 def _atomic_write(path: Path, text: str) -> None:
     """tmp + rename: a crash mid-write can never leave a torn artifact."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+    from .stop_fence import guarded_publish
+    def write():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    guarded_publish(write)
 
 
 def _decided_review_on_disk(path: Path, semantic: dict) -> bool:
@@ -179,7 +189,9 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
             if p.exists():
                 p.unlink()
 
-    return _Partials()
+    from .stop_fence import guarded_publish
+    from .stop_publication import FencedSink
+    return FencedSink(_Partials(),guarded_publish)
 
 
 # partial files invalidated by --from <stage> (that stage and everything after)
@@ -329,30 +341,6 @@ def _write_decisions_companion(outdir: Path, architecture: dict) -> None:
     _atomic_write(path, json.dumps(companion, indent=2))
 
 
-def _update_architecture_metadata(graph, cfg, update):
-    """Preserve the checkpoint's producing node when changing metadata.
-
-    LangGraph cannot infer it reliably from a multi-channel update. Omitting
-    as_node can reschedule START; guessing architecture can rewind later work.
-    """
-    # Source node is observable in checkpoint versions even when update metadata
-    # has no writes field (current LangGraph serialization).
-    checkpoint = graph.checkpointer.get_tuple(cfg).checkpoint
-    seen = checkpoint.get("versions_seen") or {}
-    ranked = sorted((version, node) for node, channels in seen.items()
-                    if node != "__start__" for version in channels.values())
-    if ranked:
-        latest = ranked[-1][0]
-        nodes = {node for version, node in ranked if version == latest}
-    else:
-        nodes = {node for node in seen if node != "__start__"}
-    if len(nodes) != 1:
-        raise UserFacingError("Checkpoint metadata owner is ambiguous.",
-                              "cannot safely preserve its scheduled continuation.",
-                              "inspect the current checkpoint before updating technical choices.")
-    graph.update_state(cfg, update, as_node=next(iter(nodes)))
-
-
 def _apply_saved_architecture_decisions(graph, cfg, prior: dict, outdir: Path, persist):
     """Resume: fold the founder's saved decisions (written by the gate page) into the checkpoint
     so items and everything after read them. Does not re-run architecture."""
@@ -372,43 +360,11 @@ def _apply_saved_architecture_decisions(graph, cfg, prior: dict, outdir: Path, p
     ledger = Ledger.from_dict(prior.get("findings_ledger"))
     raise_findings(ledger, merged)
     update = {"architecture": merged, "findings_ledger": ledger.to_dict()}
-    _update_architecture_metadata(graph, cfg, update)
+    graph.update_state(cfg, update, as_node="architecture")
     state = {**prior, **update}
     persist("architecture", merged, state)
-    print("Saved architecture choices applied; continuing at the next stage.", file=sys.stderr)
+    print("Founder decisions for architecture slots applied; continuing at the next stage.", file=sys.stderr)
     return state
-
-
-def _refresh_technical_choices(graph, cfg, prior, outdir, persist, log, progress=None):
-    """Metadata only, resumable after each slot; never regenerate architecture."""
-    import copy
-    from .graph import _technical_choice_call
-    from .architecture_decisions import raise_findings
-    from .findings_ledger import Ledger
-    if not prior or not prior.get("architecture"):
-        raise UserFacingError("No saved architecture to update.", "existing checkpoint required.", "finish architecture before refreshing technical choices.")
-    if any(prior.get(k) for k in ("items", "tests", "manifest")):
-        raise UserFacingError("Technical choices already have downstream results.",
-                              "metadata refresh must not silently change built item specifications.",
-                              "review the downstream impact before changing this architecture.")
-    # Fold existing companion answers first so a refresh never replaces them.
-    prior = _apply_saved_architecture_decisions(graph, cfg, prior, outdir, persist)
-    architecture = copy.deepcopy(prior["architecture"])
-    for entry in architecture.get("stack_entry_dispositions") or []:
-        if entry.get("status") != "research_required" or entry.get("technical_choice") or entry.get("founder_decision"):
-            continue
-        entry["technical_choice"] = _technical_choice_call(prior, entry["key"], entry["research_brief"], log, progress)
-        entry["candidate_options"] = [o["value"] for o in entry["technical_choice"]["options"]]
-        ArchitectureOverview.model_validate(architecture)
-        ledger = Ledger.from_dict(prior.get("findings_ledger"))
-        raise_findings(ledger, architecture)
-        update = {"architecture": copy.deepcopy(architecture), "findings_ledger": ledger.to_dict()}
-        _update_architecture_metadata(graph, cfg, update)
-        prior = {**prior, **update}
-        persist("architecture", architecture, prior)
-    _write_decisions_companion(outdir, architecture)
-    print("Technical-choice metadata updated. Architecture generation was not rerun; no downstream stage started.", file=sys.stderr)
-    return prior
 
 
 def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
@@ -436,8 +392,8 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
             srs = SRSDocument.model_validate(coerce_for_model(doc, SRSDocument))
             _atomic_write(outdir / "srs.md", render_srs(srs))
         elif stage == "architecture":
-            body = {**data, "session_id": sid}
-            arch = validated_architecture(body)
+            body = _legacy_arch_fill({**data, "session_id": sid})  # pre-0.8.0 checkpoints lack the ADR-0021 fields
+            arch = ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
             lifecycle_event = architecture_lifecycle.finalize(body) if architecture_lifecycle else None
             _atomic_write(outdir / "architecture.json", json.dumps(_stamped(body), indent=2))
             _atomic_write(outdir / "architecture.md", render_architecture(arch, greenfield=greenfield, conops_present=conops_present))
@@ -480,7 +436,9 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
         _atomic_write(outdir / "repair-proposal.md", text)
     _persist.repair_proposal = _repair_proposal_files
     _persist.ledger = lambda data: _atomic_write(outdir / "findings-ledger.json", json.dumps(data, indent=2))
-    return _persist
+    from .stop_fence import guarded_publish
+    from .stop_publication import FencedSink
+    return FencedSink(_persist,guarded_publish)
 
 
 STAGE_ORDER = ("needs", "srs", "architecture", "items", "tests", "validation", "review", "assemble")
@@ -660,9 +618,9 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             md += "\n\n## Review advisories\n" + "\n".join(
                 f"- {a['left_id']} {a['left_slug']} and {a['right_id']} {a['right_slug']}: {a['reason']}. Nothing was merged; decide at this gate."
                 for a in advisories)
-        (outdir / f"gate_{gate}.md").write_text(md)
-        (outdir / f"gate_{gate}.json").write_text(json.dumps(artifact, indent=2))
-        (outdir / f"gate_{gate}.advisories.json").write_text(json.dumps({"gate":gate,"advisories":advisories},indent=2))
+        _atomic_write(outdir / f"gate_{gate}.md",md)
+        _atomic_write(outdir / f"gate_{gate}.json",json.dumps(artifact, indent=2))
+        _atomic_write(outdir / f"gate_{gate}.advisories.json",json.dumps({"gate":gate,"advisories":advisories},indent=2))
         print(f"\n===== REVIEW GATE: the {title} =====\n", file=sys.stderr)
         print(md, file=sys.stderr)
         if advisories:
@@ -672,7 +630,7 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             action = "a"
             record={"event":"gate.auto_decision", "gate":gate, "action":"accept", "mode":"hands_free",
                     "artifact":f"gate_{gate}.json", "advisory_count":len(advisories)}
-            with (outdir/"audit.jsonl").open("a") as fh: fh.write(json.dumps(record)+"\n")
+            _append_audit(outdir/"audit.jsonl",record)
             print(f"boundary=hands-free-gate gate={gate} action=accept advisories={len(advisories)} decision=continue", file=sys.stderr)
         else:
             from vmodel_contracts.decisions import emit_decision,founder_decision
@@ -1041,15 +999,20 @@ def main() -> None:
                     help="apply the pending repair proposal (repair-proposal.md) and continue to items, tests, review")
     ap.add_argument("--reject-repair", action="store_true",
                     help="drop the pending repair proposal; the SRS stays as it was and findings stay open")
-    ap.add_argument("--refresh-technical-choices", action="store_true",
-                    help="targeted metadata-only framing for an existing architecture; may call the configured model per missing slot; never runs architecture/components/ADRs")
     ap.add_argument("--require-decisions", action="store_true",
-                    help="attended run: require a usable technical design default or founder override before items. "
-                         "Off by default: slots with neither raise an open ledger finding")
+                    help="attended run: refuse to start items while a research_required stack slot has no founder decision "
+                         "(decision and reason). Off by default: unattended runs raise an open ledger finding per slot instead")
     ap.add_argument("--export-handoff",action="store_true",help="zero-LLM validated coding-agent handoff from completed outputs")
     ap.add_argument("--preflight", action="store_true",
                     help="validate inputs and checkpoint compatibility without building a model or spending a call")
     args = ap.parse_args()
+    from .cooperative_run import cli_stop_binding
+    if cli_stop_binding() is not None and (args.only_stage or args.reconcile_artifacts or args.export_handoff):
+        # These auxiliary paths have separate artifact/checkpoint writers and
+        # are not part of the reviewed cooperative execution adapter yet.
+        raise UserFacingError("this auxiliary CLI mode has no cooperative Stop binding",
+                              "its separate publication paths are not reviewed",
+                              "use the normal job-bound producer path; no work was started")
     if bool(args.only_stage) != bool(args.source_artifacts):
         ap.error("--only-stage and --source-artifacts must be used together")
     if args.only_stage and args.from_stage:
@@ -1201,7 +1164,11 @@ def main() -> None:
     persist_fn = _make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield",
                                conops_present=conops is not None,
                                architecture_lifecycle=architecture_lifecycle)
-    graph = build_graph(log, checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding, require_decisions=args.require_decisions,
+    from .cooperative_run import cli_stop_binding
+    stop_binding=cli_stop_binding()
+    graph = build_graph(log, stop_fence=stop_binding[0] if stop_binding else None,
+                        stop_generation=stop_binding[1] if stop_binding else None,
+                        checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding, require_decisions=args.require_decisions,
                         persist=persist_fn,
                         partials=partials, stop_after=args.to_stage)
     from . import model_config as _mc
@@ -1252,7 +1219,6 @@ def main() -> None:
         # do not replace it or rewrite historical lifecycle hashes.
         architecture_lifecycle.anchor_hash = stable_hash(prior["system_baseline"])
     if resume and prior.get("architecture"):
-        validated_architecture({**prior["architecture"], "session_id": sid})
         architecture_lifecycle.bootstrap_complete(
             prior["architecture"], prior.get("system_baseline") or baseline)
     baseline_changed = (resume and prior.get("system_baseline") is not None
@@ -1262,15 +1228,15 @@ def main() -> None:
         # Check a previously recorded continuation even if SQLite was already
         # reconnected before the crash. Never reseal an arbitrary partial.
         if (prior.get("architecture") and architecture_lifecycle.state.value == "partial"):
-            body = {**prior["architecture"], "session_id": sid}
-            validated_architecture(body)
+            body = _legacy_arch_fill({**prior["architecture"], "session_id": sid})
+            ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
             architecture_lifecycle.resume(next_artifact, content=body,
                 compatible_anchor_hashes=(stable_hash(baseline),))
         bounded_stage = _resume_after_bounded_stop(graph, cfg, prior)
         if bounded_stage:
             if bounded_stage == "architecture":
-                body = {**prior["architecture"], "session_id": sid}
-                validated_architecture(body)
+                body = _legacy_arch_fill({**prior["architecture"], "session_id": sid})
+                ArchitectureOverview.model_validate(coerce_for_model(body, ArchitectureOverview))
                 architecture_lifecycle.resume(next_artifact, content=body,
                     compatible_anchor_hashes=(stable_hash(baseline),))
             destination = f"the requested '{args.to_stage}' boundary" if args.to_stage else "the full pipeline"
@@ -1293,9 +1259,6 @@ def main() -> None:
                 graph.update_state(cfg,{'srs':candidate,'semantic_reviews':reviews},as_node=_predecessor('architecture',args.review))
                 prior={**prior,'srs':candidate,'semantic_reviews':reviews}
                 print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
-    if args.refresh_technical_choices:
-        _refresh_technical_choices(graph, cfg, prior, outdir, persist_fn, log, bus)
-        return
     if resume:
         prior = _apply_saved_architecture_decisions(graph, cfg, prior, outdir, persist_fn)
     if resume:
@@ -1383,8 +1346,7 @@ def main() -> None:
         if args.expert_opinion:
             opinions=(graph.get_state(cfg).values.get("expert_opinions") or [])
             _atomic_write(outdir / "expert-opinions.json",json.dumps({"mode":"simulated_expert_opinion","founder_approved":False,"human_review_required":True,"decisions":opinions},indent=2))
-            with (outdir / "audit.jsonl").open("a") as fh:
-                for opinion in opinions: fh.write(json.dumps({"event":"gate.simulated_expert_opinion",**opinion,"founder_approved":False})+"\n")
+            for opinion in opinions:_append_audit(outdir/"audit.jsonl",{"event":"gate.simulated_expert_opinion",**opinion,"founder_approved":False})
     else:
         result = graph.invoke(None, cfg) if resume else graph.invoke(
             {"intent_model": intent, "system_baseline": baseline, "conops": conops}, cfg)
@@ -1438,21 +1400,21 @@ def main() -> None:
                                                        for x in b.get("punch_list") or []])
 
 
-    (outdir / "needs.md").write_text(render_needs(needs))
+    _atomic_write((outdir / "needs.md"),render_needs(needs))
     srs = SRSDocument.model_validate(coerce_for_model(b["_srs"], SRSDocument))
-    (outdir / "srs.md").write_text(render_srs(srs))
-    (outdir / "architecture.md").write_text(
+    _atomic_write((outdir / "srs.md"),render_srs(srs))
+    _atomic_write(outdir / "architecture.md",
         render_architecture(arch, greenfield=baseline["mode"] == "greenfield",
                             conops_present=conops is not None))
-    (outdir / "architecture.json").write_text(arch.model_dump_json(indent=2))
+    _atomic_write((outdir / "architecture.json"),arch.model_dump_json(indent=2))
     for i in items:
-        (outdir / "specs" / f"{i.spec_id}.md").write_text(render_spec_file(i))
-    (outdir / "AGENTS.md").write_text(render_agents_md(arch, items, manifest, punch))
-    (outdir / "traceability.json").write_text(json.dumps(b["traceability"], indent=2))
-    (outdir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
-    (outdir / "tests.json").write_text(json.dumps(b["_tests"], indent=2))
+        _atomic_write((outdir / "specs" / f"{i.spec_id}.md"),render_spec_file(i))
+    _atomic_write((outdir / "AGENTS.md"),render_agents_md(arch, items, manifest, punch))
+    _atomic_write((outdir / "traceability.json"),json.dumps(b["traceability"], indent=2))
+    _atomic_write((outdir / "manifest.json"),manifest.model_dump_json(indent=2))
+    _atomic_write((outdir / "tests.json"),json.dumps(b["_tests"], indent=2))
     if b.get("_validation"):
-        (outdir / "validation.json").write_text(json.dumps(b["_validation"], indent=2))
+        _atomic_write((outdir / "validation.json"),json.dumps(b["_validation"], indent=2))
 
     refresh_docs(outdir, intent=intent, conops=conops, event="assemble", state=result)
     if result.get("violations"):

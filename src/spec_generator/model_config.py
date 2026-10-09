@@ -53,6 +53,12 @@ def _env(key: str) -> str | None:
     """One setting lookup: the real environment wins, the repo-local .env
     fills the gap. Every external config read goes through here so a .env
     written by switch-model.sh works for API keys too, not just routing."""
+    from .worker_runtime import current_runtime
+    runtime=current_runtime()
+    if runtime is not None:
+        if key in runtime.settings:return runtime.settings[key]
+        if key.startswith("VMODEL_CAP_") or key in ("SPEC_GENERATOR_FROM","SPEC_GENERATOR_BULK","VMODEL_REPLAY_DIR","SPEC_GENERATOR_LOG_RAW","VMODEL_LLM_DEBUG_HTTP"):
+            return None
     return os.environ.get(key) or _dotenv().get(key)
 
 
@@ -136,7 +142,7 @@ def _rerun_guidance(stage: str) -> str:
     --from and lets the checkpoint + per-item resume do their job (2026-09-10:
     the old blanket "rerun the same command" cost a user a forced re-run of
     every finished item)."""
-    frm = os.environ.get("SPEC_GENERATOR_FROM")
+    frm = _env("SPEC_GENERATOR_FROM")
     if frm:
         return (f"rerun the command WITHOUT '--from {frm}' ('--from' forces a re-run from '{frm}' and "
                 "discards finished per-item work) - the checkpoint resumes at this stage and finished "
@@ -147,7 +153,9 @@ def _rerun_guidance(stage: str) -> str:
 def _llm_log_sink() -> str | None:
     """VMODEL_LLM_LOG: unset = off (default, zero cost); 'stderr' = console;
     any other value = a file path, one JSON object per line."""
-    return _env("VMODEL_LLM_LOG")
+    from .worker_runtime import current_runtime
+    runtime=current_runtime()
+    return runtime.llm_log if runtime is not None else _env("VMODEL_LLM_LOG")
 
 
 def _mask_secrets(value: str) -> str:
@@ -165,8 +173,15 @@ def raw_capture_enabled() -> bool:
 
 
 def log_raw_completion(stage: str, item: str | None, attempt: int, raw: str) -> None:
+    from .stop_fence import guarded_publish
+    return guarded_publish(lambda:_log_raw_completion(stage,item,attempt,raw))
+
+
+def _log_raw_completion(stage: str, item: str | None, attempt: int, raw: str) -> None:
     """The only path that ever logs message content - gated on the explicit
     opt-in above, and written through the same sink as the metadata events."""
+    from .stop_fence import check_execution
+    check_execution()
     if raw_capture_enabled():
         _log_llm({"event": "llm_call_raw", "stage": stage,
                   **({"item": item} if item else {}),
@@ -176,14 +191,22 @@ def log_raw_completion(stage: str, item: str | None, attempt: int, raw: str) -> 
 
 def call_diagnostic(stage: str, item: str | None, attempt: int) -> dict:
     cfg = for_stage(stage)
-    return dict(_CALL_DIAGNOSTICS.get((stage, item, attempt), {
+    return dict(_call_diagnostics().get((stage, item, attempt), {
         "attempt": attempt, "provider": cfg.provider, "model": cfg.model,
     }))
 
 
 def capture_rejected_completion(stage: str, item: str | None, attempt: int,
                                 raw: str, reason: str) -> str:
+    from .stop_fence import guarded_publish
+    return guarded_publish(lambda:_capture_rejected_completion(stage,item,attempt,raw,reason))
+
+
+def _capture_rejected_completion(stage: str, item: str | None, attempt: int,
+                                raw: str, reason: str) -> str:
     """Persist every rejected output byte-for-byte plus a readable manifest."""
+    from .stop_fence import check_execution
+    check_execution()
     from pathlib import Path
     sink = _llm_log_sink()
     root = Path(sink).expanduser().resolve().parent if sink and sink != "stderr" else Path.cwd()
@@ -251,6 +274,13 @@ def _console_level(msg: str) -> str | None:
 def _console_line(msg: str) -> None:
     """One stderr line, atomically - the heartbeat thread and the progress
     printer share this lock so lines never interleave mid-call."""
+    from .worker_runtime import current_runtime
+    runtime=current_runtime()
+    if runtime is not None:
+        from .stop_fence import guarded_publish,StopRequested
+        try:guarded_publish(lambda:runtime.console(msg))
+        except StopRequested:pass
+        return
     from vmodel_contracts.runtime import format_console_line
 
     with _CONSOLE_LOCK:
@@ -302,12 +332,18 @@ def _start_heartbeat(label: str):
             elapsed=time.monotonic()-t0
             _console_line(f"  ... still working - {label}, {elapsed:.0f}s elapsed")
             from . import structured_progress
-            sink=structured_progress.active_sink
+            from .worker_runtime import current_runtime
+            runtime=current_runtime()
+            sink=runtime.progress if runtime is not None else structured_progress.active_sink
             if sink is not None and sink._enabled:
-                try:sink.emit(label,label,"heartbeat",f"Model call still running, {elapsed:.0f}s elapsed")
+                try:
+                    from .stop_fence import guarded_publish
+                    guarded_publish(lambda:sink.emit(label,label,"heartbeat",f"Model call still running, {elapsed:.0f}s elapsed"))
                 except Exception:pass
 
-    threading.Thread(target=_beat, daemon=True).start()
+    import contextvars
+    context=contextvars.copy_context()
+    threading.Thread(target=lambda:context.run(_beat), daemon=True).start()
     return stop.set
 
 
@@ -363,8 +399,14 @@ def _prompt_metrics(messages) -> dict:
 def _guard_enter(stage: str) -> None:
     """One LLM call is starting: charge it against the run budget."""
     global _CALLS_USED
-    _CALLS_USED += 1
-    if _CALLS_USED > _guard_limits()[2]:
+    from .worker_runtime import current_runtime
+    runtime=current_runtime()
+    if runtime is not None:
+        with runtime.lock:
+            runtime.calls+=1;calls=runtime.calls
+    else:
+        _CALLS_USED+=1;calls=_CALLS_USED
+    if calls > _guard_limits()[2]:
         cfg = for_stage(stage)
         from .errors import UserFacingError
 
@@ -401,11 +443,20 @@ def _run_with_deadline(fn, timeout_s: int, stage: str):
     import concurrent.futures
 
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(fn)
+    import contextvars
+    context=contextvars.copy_context()
+    from .stop_fence import track_inflight_worker
+    release = track_inflight_worker()
+    def run():
+        try: return context.run(fn)
+        finally: release()
+    try: future = pool.submit(run)
+    except BaseException:
+        release();pool.shutdown(wait=False);raise
     try:
         return future.result(timeout=timeout_s)
     except concurrent.futures.TimeoutError:
-        future.cancel()
+        if future.cancel(): release()
         raise TimeoutError from None
     finally:
         # Never let Executor.__exit__ turn a watchdog deadline back into a
@@ -468,6 +519,11 @@ _API_KEY_ENV = {"deepseek": "DEEPSEEK_API_KEY", "openai": "OPENAI_API_KEY", "ant
 
 
 def for_stage(stage: str) -> StageModel:
+    from .worker_runtime import current_runtime
+    runtime=current_runtime()
+    if runtime is not None:
+        if stage not in runtime.models:raise KeyError(f'job model absent for {stage}')
+        return runtime.models[stage]
     if stage not in _STAGE_DEFAULTS:
         raise KeyError(f"unknown stage {stage!r}")
     cfg = _STAGE_DEFAULTS[stage]
@@ -484,7 +540,7 @@ def bulk_fills_enabled() -> bool:
     specs (a bad fill fails one cheap call, never a long composite payload).
     The old one-bulk-call-per-stage path stays behind SPEC_GENERATOR_BULK=1
     in case the wall-time trade proves bad on the founder's hardware."""
-    return os.environ.get("SPEC_GENERATOR_BULK", "0") == "1"
+    return _env("SPEC_GENERATOR_BULK") == "1"
 
 
 def _preflight(cfg: "StageModel", stage: str) -> None:
@@ -514,11 +570,14 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
     masquerade as a downstream contract failure.
     """
     from .errors import UserFacingError, translate_llm_error
+    from .stop_fence import check_execution
+    check_execution()
 
     cfg = for_stage(stage)
     call_timeout = _guard_limits()[0]
     for attempt in (1, 2):
-        adaptive_deadline, stage_median = _ADAPTIVE_WATCHDOG.deadline(stage)
+        check_execution()
+        adaptive_deadline, stage_median = _watchdog().deadline(stage)
         effective_timeout = min(call_timeout, adaptive_deadline)
         _guard_enter(stage)
         base = {"provider": cfg.provider, "model": cfg.model, "stage": stage,
@@ -529,9 +588,9 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
         t0 = time.monotonic()
         try:
             _set_model_timeout(chat_model, effective_timeout)
-            resp = _run_with_deadline(lambda: chat_model.invoke(messages), effective_timeout, stage)
+            resp = _run_with_deadline(lambda: __import__("spec_generator.attempt_admission",fromlist=["checked_model_invoke"]).checked_model_invoke(chat_model,messages,stage=stage,provider=cfg.provider,model=cfg.model,max_output_tokens=_max_tokens_limit(cfg.max_tokens)), effective_timeout, stage)
             elapsed = time.monotonic() - t0
-            _ADAPTIVE_WATCHDOG.complete(stage, elapsed)
+            _watchdog().complete(stage, elapsed)
             _check_truncated(resp, stage, cfg)
             content = getattr(resp, "content", None)
             if isinstance(content, str) and not content.strip():
@@ -561,7 +620,7 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
                 basis = f"{ratio:.1f}x stage median" if ratio is not None else "cold-start floor"
                 _console_line(f"  WARNING boundary=watchdog stage={stage} item={item or '(none)'} "
                               f"elapsed={elapsed:.1f}s median={stage_median if stage_median is not None else 'none'}s "
-                              f"multiplier={getattr(_ADAPTIVE_WATCHDOG, 'multiplier', 8):g} floor={getattr(_ADAPTIVE_WATCHDOG, 'floor_s', 240):g}s "
+                              f"multiplier={getattr(_watchdog(), 'multiplier', 8):g} floor={getattr(_watchdog(), 'floor_s', 240):g}s "
                               f"absolute_cap={call_timeout}s deadline={effective_timeout:.1f}s "
                               f"decision=kill-retry reason={basis}")
                 continue
@@ -597,11 +656,13 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
     import threading
 
     from .errors import UserFacingError, translate_llm_error
+    from .stop_fence import check_execution
+    check_execution()
 
     cfg = for_stage(stage)
     _guard_enter(stage)
     call_timeout, stall_timeout, _ = _guard_limits()
-    adaptive_deadline, stage_median = _ADAPTIVE_WATCHDOG.deadline(stage)
+    adaptive_deadline, stage_median = _watchdog().deadline(stage)
     effective_timeout = min(call_timeout, adaptive_deadline)
     base = {"provider": cfg.provider, "model": cfg.model, "stage": stage,
             "attempt": attempt, **_prompt_metrics(messages),
@@ -611,7 +672,7 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
 
     def _pump() -> None:
         try:
-            for chunk in chat_model.stream(messages):
+            for chunk in __import__("spec_generator.attempt_admission",fromlist=["checked_model_stream"]).checked_model_stream(chat_model,messages,stage=stage,provider=cfg.provider,model=cfg.model,max_output_tokens=_max_tokens_limit(cfg.max_tokens)):
                 q.put(("chunk", chunk))
             q.put(("done", None))
         except Exception as e:  # noqa: BLE001 - delivered to the consumer below
@@ -621,7 +682,16 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
     _log_llm({"event": "llm_call_start", **base})
     stop_heartbeat = _start_heartbeat(f"stage '{stage}'" + (f" [{item}]" if item else "") + " call")
     t0 = time.monotonic()
-    threading.Thread(target=_pump, daemon=True).start()
+    import contextvars
+    stream_context=contextvars.copy_context()
+    from .stop_fence import track_inflight_worker
+    release = track_inflight_worker()
+    def run_pump():
+        try: stream_context.run(_pump)
+        finally: release()
+    try: threading.Thread(target=run_pump, daemon=True).start()
+    except BaseException:
+        release();raise
     last = None  # final chunk carries the truncation metadata (done_reason/finish_reason)
     first_chunk_seen = False  # prefill silence is healthy; only mid-stream quiet is a stall
     accumulated_usage: dict = {}
@@ -682,8 +752,8 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
                 durations = {k: usage.get(k) for k in ("prompt_eval_duration", "eval_duration")
                              if usage.get(k) is not None}
                 elapsed = time.monotonic() - t0
-                _ADAPTIVE_WATCHDOG.complete(stage, elapsed)
-                _CALL_DIAGNOSTICS[(stage, item, attempt)] = {
+                _watchdog().complete(stage, elapsed)
+                _call_diagnostics()[(stage, item, attempt)] = {
                     "attempt": attempt, "duration_s": round(elapsed, 2),
                     "tokens": usage.get("total_tokens", usage.get("output_tokens", 0)),
                     "provider": cfg.provider, "model": cfg.model,
@@ -751,7 +821,7 @@ def _structured_enabled() -> bool:
     """Constrained decoding (schema-enforced output) is the default for local
     Ollama; SPEC_GENERATOR_STRUCTURED=0 opts out (older Ollama < 0.5, or a
     quality regression the founder wants off)."""
-    return os.environ.get("SPEC_GENERATOR_STRUCTURED", "1") != "0"
+    return _env("SPEC_GENERATOR_STRUCTURED") != "0"
 
 
 def _ollama_keep_alive() -> str:
@@ -852,6 +922,8 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
         from .replay import ReplayChatModel
         return ReplayChatModel(stage, replay)
     cfg = for_stage(stage)
+    from .wire_binding import validate_provider
+    validate_provider(cfg.provider)
     _preflight(cfg, stage)
     if cfg.provider == "ollama" and structured and _structured_enabled():
         supported, reason = _ollama_structured_support()
@@ -868,7 +940,8 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
             return ChatOllama(model=cfg.model, temperature=cfg.temperature,
                               reasoning=_ollama_think(), num_ctx=_ollama_num_ctx(),
                               keep_alive=_ollama_keep_alive(),
-                timeout=_guard_limits()[0],  # socket dies with guardrail deadline
+                timeout=_guard_limits()[0],
+            **({"max_retries":0} if os.environ.get("VMODEL_TENANT_OWNER") is not None or os.environ.get("INTERVIEW_ENGINE_TENANTS")=="1" else {}),  # socket dies with guardrail deadline
                               seed=cfg.seed,  # ADR-0022
                               num_predict=_max_tokens_limit(cfg.max_tokens),
                               base_url=_BASE_URLS["ollama"].removesuffix("/v1"),
@@ -882,10 +955,8 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
         env = _API_KEY_ENV[cfg.provider]
         extra = {}
         deepseek_tool_schema = schema if cfg.provider == "deepseek" and structured and schema is not None else None
-        if cfg.provider == "deepseek":
-            # One policy for structured and plain-text requests.
-            extra["extra_body"] = {"thinking": {"type": "disabled"}}
         if cfg.provider == "deepseek" and structured:
+            extra["extra_body"] = {"thinking": {"type": "disabled"}}
             announcement = ("deepseek", "forced-tool")
             if announcement not in _OUTPUT_MODE_ANNOUNCED:
                 _OUTPUT_MODE_ANNOUNCED.add(announcement)
@@ -896,7 +967,10 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
             if not _ollama_think():
                 body["think"] = False
             extra = {"extra_body": body}
-        if cfg.provider in ("deepseek", "openai"):
+        from .wire_binding import model_clients,register_model
+        installed_clients=model_clients(stage=stage,provider=cfg.provider,model=cfg.model)
+        if installed_clients is not None:extra.update(installed_clients)
+        if cfg.provider in ("deepseek", "openai") and installed_clients is None:
             from vmodel_contracts.runtime import debug_http_client
             client = debug_http_client(llm_log=_llm_log_sink(), mask=_mask_secrets)
             if client is not None:
@@ -906,21 +980,35 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
                     _DEBUG_HTTP_ANNOUNCED.add(debug_path)
                     _console_line(f"  WARNING full LLM HTTP debug enabled: {debug_path} (request messages included; no authorization headers)")
         model = ChatOpenAI(model=cfg.model, temperature=cfg.temperature,
-            timeout=_guard_limits()[0], seed=cfg.seed,
+            timeout=_guard_limits()[0],
+            **({"max_retries":0} if installed_clients is not None or os.environ.get("VMODEL_TENANT_OWNER") is not None or os.environ.get("INTERVIEW_ENGINE_TENANTS")=="1" else {}), seed=cfg.seed,
                           max_tokens=_max_tokens_limit(cfg.max_tokens),
                           base_url=_BASE_URLS[cfg.provider],
                           api_key=(_env(env) or "" if env else "") or "ollama", **extra)
         if deepseek_tool_schema is not None:
-            return _DeepSeekToolOutputAdapter(model, deepseek_tool_schema, f"return_{stage}_artifact")
-        return model
+            model=_DeepSeekToolOutputAdapter(model, deepseek_tool_schema, f"return_{stage}_artifact")
+        return register_model(model,stage=stage,provider=cfg.provider,model=cfg.model)
     if cfg.provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
         # ADR-0022 note: anthropic exposes no seed parameter - temperature 0
         # is the only reproducibility lever on that provider (documented in the ADR).
         return ChatAnthropic(model=cfg.model, temperature=cfg.temperature,
-            timeout=_guard_limits()[0], max_tokens=_max_tokens_limit(cfg.max_tokens),
+            timeout=_guard_limits()[0],
+            **({"max_retries":0} if os.environ.get("VMODEL_TENANT_OWNER") is not None or os.environ.get("INTERVIEW_ENGINE_TENANTS")=="1" else {}), max_tokens=_max_tokens_limit(cfg.max_tokens),
                              api_key=_env(_API_KEY_ENV["anthropic"]) or "")
     raise ValueError(cfg.provider)
 
 
+
+
+def _watchdog():
+    from .worker_runtime import current_runtime
+    runtime=current_runtime()
+    return runtime.watchdog if runtime is not None else _ADAPTIVE_WATCHDOG
+
+
+def _call_diagnostics():
+    from .worker_runtime import current_runtime
+    runtime=current_runtime()
+    return runtime.diagnostics if runtime is not None else _CALL_DIAGNOSTICS
