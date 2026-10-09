@@ -147,14 +147,7 @@ def validate_revision_output(*,source,result,phase,change_request,session_id):
         'founder_accepted':False,'committed':False,'dispatch_started':False}
 
 
-def seed_lineage_revision_checkpoint(*,source,lineage,change_request,graph,config):
-    """Private fresh execution-thread seed with immutable semantic evidence.
-
-    The trusted caller owns destination containment and authenticated lineage.
-    A plan is not install authority. This does not create a session binding.
-    """
-    from .cooperative_run import cli_stop_binding
-    from .stop_fence import check_execution
+def _prepare_lineage_seed(*,source,lineage,change_request,config):
     import re
     required={'kind','semantic_session_id','parent_execution_session_id','parent_generation',
         'execution_session_id','generation','phase','source_checkpoint_id','state','installed','dispatch_started'}
@@ -173,13 +166,20 @@ def seed_lineage_revision_checkpoint(*,source,lineage,change_request,graph,confi
         raise ValueError('exact next lineage generation required')
     if not isinstance(lineage['source_checkpoint_id'],str) or not lineage['source_checkpoint_id']:
         raise ValueError('exact lineage checkpoint required')
+    if config!={'configurable':{'thread_id':lineage['execution_session_id']}}:
+        raise ValueError('exact fresh execution checkpoint configuration required')
+    return prepare_revision_seed(source=source,phase=lineage['phase'],change_request=change_request,
+        session_id=lineage['semantic_session_id'])
+
+
+def seed_lineage_revision_checkpoint(*,source,lineage,change_request,graph,config):
+    """Execution seed requires its bound next-generation cooperative fence."""
+    from .cooperative_run import cli_stop_binding
+    from .stop_fence import check_execution
+    prepared=_prepare_lineage_seed(source=source,lineage=lineage,change_request=change_request,config=config)
     binding=cli_stop_binding()
     if binding is None:raise ValueError('bound cooperative revision execution required')
     if binding[1]!=lineage['generation']:raise ValueError('execution fence generation differs from lineage')
-    if config!={'configurable':{'thread_id':lineage['execution_session_id']}}:
-        raise ValueError('exact fresh execution checkpoint configuration required')
-    prepared=prepare_revision_seed(source=source,phase=lineage['phase'],change_request=change_request,
-        session_id=lineage['semantic_session_id'])
     check_execution()
     existing=graph.get_state(config)
     if existing.values or existing.next:raise ValueError('fresh lineage destination checkpoint must be empty')
@@ -194,15 +194,7 @@ def seed_lineage_revision_checkpoint(*,source,lineage,change_request,graph,confi
 
 
 def stage_reviewed_lineage_checkpoint(*,source,proposal_result,lineage,change_request,graph,config):
-    """Seed validated proposal state at its phase boundary, never invoke graph.
-
-    This is isolated checkpoint staging only. It does not accept the regenerated
-    gate, create execution authority or dispatch downstream work. Caller supplies
-    pinned source/proposal evidence and destination containment under exclusion.
-    """
-    # Validate source, identities and empty destination through the same lineage
-    # rules without writing it first. The staging graph is a private probe which
-    # records the requested seed in memory, not a persistent session.
+    """Legacy bound-next-generation staging; no execution or install."""
     class Probe:
         def __init__(self):self.values={}
         def get_state(self,configuration):
@@ -211,27 +203,61 @@ def stage_reviewed_lineage_checkpoint(*,source,proposal_result,lineage,change_re
         def update_state(self,configuration,values,as_node):self.values=deepcopy(values)
     probe=Probe()
     seed_lineage_revision_checkpoint(source=source,lineage=lineage,change_request=change_request,graph=probe,config=config)
+    from .stop_fence import check_execution
+    return _stage_checkpoint(source=source,proposal_result=proposal_result,lineage=lineage,change_request=change_request,
+        graph=graph,config=config,seed=probe.values,check_authority=check_execution)
+
+
+def stage_private_lineage_checkpoint(*,source,proposal_result,lineage,change_request,graph,config,validate_authority):
+    """Preparation under original source fence, not fresh execution authority.
+
+    Callback is supplied by the trusted owner worker, not client options. Caller
+    holds original source writer exclusion and private destination containment.
+    This helper never invokes graph or models, installs an anchor or binds a run.
+    """
+    from .cooperative_run import cli_stop_binding
+    from .stop_fence import check_execution
+    if not callable(validate_authority):raise ValueError('trusted staging authority reader required')
+    prepared=_prepare_lineage_seed(source=source,lineage=lineage,change_request=change_request,config=config)
+    binding=cli_stop_binding()
+    if binding is None or binding[1]!=lineage['parent_generation']:
+        raise ValueError('original source fence required for private staging')
+    from pathlib import Path
+    path=Path(binding[0].path)
+    if (path.name!='stop-request.json' or path.parent.name!='interview'
+        or path.parent.parent.name!=lineage['parent_execution_session_id']
+        or path.parent.parent.parent.name!='sessions'
+        or path.parent.parent.parent.parent.name!=lineage.get('owner_id')):
+        raise ValueError('original source fence namespace differs from lineage')
+    def authority():
+        validate_authority();check_execution()
+    authority()
+    return _stage_checkpoint(source=source,proposal_result=proposal_result,lineage=lineage,change_request=change_request,
+        graph=graph,config=config,seed=prepared['seed'],check_authority=authority)
+
+
+def _stage_checkpoint(*,source,proposal_result,lineage,change_request,graph,config,seed,check_authority):
     validated=validate_revision_output(source=source,result=proposal_result,phase=lineage['phase'],
         change_request=change_request,session_id=lineage['semantic_session_id'])
     if validated['artifact_sha256']!=lineage.get('regenerated_artifact_sha256'):
         raise ValueError('proposal artifact differs from reviewed lineage digest')
-    if proposal_result.get('expert_opinions',[])!=probe.values.get('expert_opinions',[]):
+    if proposal_result.get('expert_opinions',[])!=seed.get('expert_opinions',[]):
         raise ValueError('proposal retained unreviewed expert decisions')
-    from .stop_fence import check_execution
     gate_node='gate_'+lineage['phase']
     topology=graph.get_graph()
     if not any(edge.source==lineage['phase'] and edge.target==gate_node and not edge.conditional for edge in topology.edges):
         raise ValueError('staged graph must require edited phase gate review')
-    check_execution();existing=graph.get_state(config)
+    check_authority();existing=graph.get_state(config)
     if existing.values or existing.next:raise ValueError('fresh staged destination must be empty')
     # Start from cleared approved seed rather than copying unknown proposal
     # channels, pending writes or old checkpoint metadata into the new thread.
-    state=deepcopy(probe.values);state['gate_feedback'].pop(lineage['phase'],None)
+    state=deepcopy(seed);state['gate_feedback'].pop(lineage['phase'],None)
     state[lineage['phase']]=deepcopy(validated['artifact'])
+    check_authority()
     graph.update_state(config,state,as_node=lineage['phase'])
-    check_execution();saved=graph.get_state(config)
+    check_authority();saved=graph.get_state(config)
     if (saved.next!=(gate_node,) or saved.values.get(lineage['phase'])!=validated['artifact']
-        or saved.values.get('intent_model')!=probe.values['intent_model']
+        or saved.values.get('intent_model')!=seed['intent_model']
         or saved.values.get('gate_feedback',{}).get(lineage['phase'])):
         raise ValueError('staged reviewed checkpoint readback mismatch')
     return {'destination_checkpoint':saved.config,'artifact_sha256':validated['artifact_sha256'],
