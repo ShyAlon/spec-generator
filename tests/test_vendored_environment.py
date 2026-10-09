@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_vendored_contracts_version_hash_and_no_private_git_install():
     wheel = ROOT / "vendor/vmodel_contracts-0.28.0-py3-none-any.whl"
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
-    assert digest == "bc8cb30c63719e106451d514532b28a30d8e69fbcce8a771121eab2369f0391e"
+    assert digest == "a91e0765b4195a9a6ccafd9ed825cdf0e24a38369bc18b3dc3f14007335476cf"
     assert digest in (ROOT / "uv.lock").read_text()
     assert digest in (ROOT / "vendor/RECOVERY-WHEEL.md").read_text()
     with zipfile.ZipFile(wheel) as archive:

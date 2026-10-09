@@ -1695,7 +1695,8 @@ def _slot_fill_validator(rid: str):
                 "criterion ids are assigned by the pipeline")
         if not str(f.get("title") or "").strip() or not str(f.get("statement") or "").strip():
             raise ModelStructureError(f"{rid}: title and statement must be non-empty")
-        return f  # normalized (unwrapped) fill
+        from .skeleton import normalize_generated_ears_statement
+        return {**f, "statement": normalize_generated_ears_statement(f["statement"])}  # before partial storage
     return _v
 
 

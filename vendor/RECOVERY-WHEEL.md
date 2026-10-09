@@ -1,3 +1,3 @@
-# Recovery contracts wheel
+# Calibration contracts wheel
 
-Built offline from recovered contracts commit `95b41c14f83b4d992555bb42281068f83aae1ca9` with `uv build --offline --wheel`. Version 0.28.0, SHA256 `bc8cb30c63719e106451d514532b28a30d8e69fbcce8a771121eab2369f0391e`. Contains the private execution-anchor reader. This replaces the earlier recovery vendor wheel; earlier provenance remains in Git history. It is not a release or deployment certification. UV selects this wheel; install it before the project with pip.
+Built offline from contracts feature commit `047cb60d23941181ad1b99e88734900f5204cf51` with `uv build --offline --wheel`. Version 0.28.0, SHA256 `a91e0765b4195a9a6ccafd9ed825cdf0e24a38369bc18b3dc3f14007335476cf`. Contains the existing private execution-anchor reader and calibrated SRS comparison rules. This replaces the earlier recovery vendor wheel; earlier provenance remains in Git history. It is not a release or deployment certification. UV selects this wheel; install it before the project with pip. The lock hash and exact-wheel regression test were refreshed together.

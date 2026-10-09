@@ -36,7 +36,7 @@ STAGE_PROMPTS = {
            "one requirement slot per need is given with requirement_id, kind, need_ids, and "
            "intent_fields already assigned - never change, renumber, add, or drop them. "
            "Write purpose (why the system exists, stakeholder language), scope_summary (the "
-           "boundary), and for EACH slot: title, statement (well-formed shall-statement, "
+           "boundary), and for EACH slot: title, statement (well-formed shall-statement; shall followed by a space, never a comma; "
            "solution-agnostic), priority (must/should/could), and acceptance criteria as plain "
            "statements that are OBSERVABLE outcomes - no implementation mechanics, no named "
            "technologies, no invented numbers or artifacts (ids are assigned by the pipeline). "
@@ -84,7 +84,7 @@ STAGE_PROMPTS = {
                     "below - never the V model, this pipeline, or these instructions.",
     "srs_slot": "Author ONE requirement fill for the given slot. The skeleton is FIXED - never change, "
                 "renumber, add, or drop slots; you fill exactly the slot given here. Write title, "
-                "statement (well-formed shall-statement, solution-agnostic), priority "
+                "statement (well-formed shall-statement; shall followed by a space, never a comma; solution-agnostic), priority "
                 "(must/should/could), and acceptance criteria as plain statements that are OBSERVABLE "
                 "outcomes - no implementation mechanics, no named technologies, no invented numbers "
                 "or artifacts.",

@@ -1579,7 +1579,7 @@ dependencies = [
     { name = "pydantic" },
 ]
 wheels = [
-    { filename = "vmodel_contracts-0.28.0-py3-none-any.whl", hash = "sha256:bc8cb30c63719e106451d514532b28a30d8e69fbcce8a771121eab2369f0391e" },
+    { filename = "vmodel_contracts-0.28.0-py3-none-any.whl", hash = "sha256:a91e0765b4195a9a6ccafd9ed825cdf0e24a38369bc18b3dc3f14007335476cf" },
 ]
 
 [package.metadata]
