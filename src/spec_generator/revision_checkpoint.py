@@ -145,3 +145,49 @@ def validate_revision_output(*,source,result,phase,change_request,session_id):
         'artifact_sha256':hashlib.sha256(json.dumps(normalized,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
         'typed_and_trace_validated':True,'requires_fresh_review':True,
         'founder_accepted':False,'committed':False,'dispatch_started':False}
+
+
+def seed_lineage_revision_checkpoint(*,source,lineage,change_request,graph,config):
+    """Private fresh execution-thread seed with immutable semantic evidence.
+
+    The trusted caller owns destination containment and authenticated lineage.
+    A plan is not install authority. This does not create a session binding.
+    """
+    from .cooperative_run import cli_stop_binding
+    from .stop_fence import check_execution
+    import re
+    required={'kind','semantic_session_id','parent_execution_session_id','parent_generation',
+        'execution_session_id','generation','phase','source_checkpoint_id','state','installed','dispatch_started'}
+    if not isinstance(lineage,dict) or not required<=lineage.keys():
+        raise ValueError('explicit complete semantic/execution lineage required')
+    if (lineage['kind']!='closed_revision_execution_lineage' or lineage['state']!='planned'
+        or lineage['installed'] is not False or lineage['dispatch_started'] is not False):
+        raise ValueError('private uninstalled lineage plan required')
+    for key in ('semantic_session_id','parent_execution_session_id','execution_session_id'):
+        if not isinstance(lineage[key],str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_-]{0,127}',lineage[key]):
+            raise ValueError('canonical lineage identity required')
+    if lineage['execution_session_id'] in (lineage['semantic_session_id'],lineage['parent_execution_session_id']):
+        raise ValueError('fresh execution identity required')
+    if (type(lineage['parent_generation']) is not int or lineage['parent_generation']<1
+        or type(lineage['generation']) is not int or lineage['generation']!=lineage['parent_generation']+1):
+        raise ValueError('exact next lineage generation required')
+    if not isinstance(lineage['source_checkpoint_id'],str) or not lineage['source_checkpoint_id']:
+        raise ValueError('exact lineage checkpoint required')
+    binding=cli_stop_binding()
+    if binding is None:raise ValueError('bound cooperative revision execution required')
+    if binding[1]!=lineage['generation']:raise ValueError('execution fence generation differs from lineage')
+    if config!={'configurable':{'thread_id':lineage['execution_session_id']}}:
+        raise ValueError('exact fresh execution checkpoint configuration required')
+    prepared=prepare_revision_seed(source=source,phase=lineage['phase'],change_request=change_request,
+        session_id=lineage['semantic_session_id'])
+    check_execution()
+    existing=graph.get_state(config)
+    if existing.values or existing.next:raise ValueError('fresh lineage destination checkpoint must be empty')
+    graph.update_state(config,prepared['seed'],as_node=prepared['as_node'])
+    check_execution();saved=graph.get_state(config)
+    if (saved.values.get('gate_feedback',{}).get(lineage['phase'])!=change_request.strip()
+        or saved.values.get('intent_model',{}).get('session_id')!=lineage['semantic_session_id']):
+        raise ValueError('semantic lineage seed readback mismatch')
+    return {'destination_checkpoint':saved.config,'semantic_session_id':lineage['semantic_session_id'],
+        'execution_session_id':lineage['execution_session_id'],'checkpoint_seeded':True,
+        'source_mutated':False,'installed':False,'dispatch_started':False}
