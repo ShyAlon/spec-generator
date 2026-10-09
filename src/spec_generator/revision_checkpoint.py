@@ -237,3 +237,17 @@ def stage_reviewed_lineage_checkpoint(*,source,proposal_result,lineage,change_re
     return {'destination_checkpoint':saved.config,'artifact_sha256':validated['artifact_sha256'],
         'semantic_session_id':lineage['semantic_session_id'],'execution_session_id':lineage['execution_session_id'],
         'requires_fresh_gate_review':True,'installed':False,'dispatch_started':False}
+
+
+def validate_staged_lineage_state(*,source,staged_state,lineage,change_request):
+    """Typed/source-preservation readback only, never acceptance or installation."""
+    prepared=prepare_revision_seed(source=source,phase=lineage['phase'],change_request=change_request,
+        session_id=lineage['semantic_session_id'])
+    validated=validate_revision_output(source=source,result=staged_state,phase=lineage['phase'],
+        change_request=change_request,session_id=lineage['semantic_session_id'])
+    if validated['artifact_sha256']!=lineage.get('regenerated_artifact_sha256'):
+        raise ValueError('staged artifact differs from lineage digest')
+    if staged_state.get('expert_opinions',[])!=prepared['seed'].get('expert_opinions',[]):
+        raise ValueError('staged expert decisions differ from cleared source')
+    return {'artifact_sha256':validated['artifact_sha256'],'typed_and_trace_validated':True,
+        'approved_upstream_unchanged':True,'installed':False,'dispatch_started':False}

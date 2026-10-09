@@ -23,9 +23,11 @@ def _directory(path):
 def _stamp(info):return info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns
 
 
-def read_closed_checkpoint(path,*,session_id,expected_checkpoint_id):
+def read_closed_checkpoint(path,*,session_id,expected_checkpoint_id,expected_review_phase=None):
     from langgraph.checkpoint.sqlite import SqliteSaver
     from .graph import checkpoint_serde
+    if expected_review_phase is not None and expected_review_phase not in ('srs','architecture'):
+        raise ValueError('implemented staged review phase required')
     path=Path(path)
     if path.name!='checkpoints.sqlite':raise ValueError('canonical source checkpoint required')
     if not Path('/proc/self/fd').is_dir():raise ValueError('pinned SQLite reader requires proc descriptor support')
@@ -48,6 +50,17 @@ def read_closed_checkpoint(path,*,session_id,expected_checkpoint_id):
             if row is None or row.config['configurable']['checkpoint_id']!=expected_checkpoint_id:
                 raise ValueError('reviewed source checkpoint changed')
             result=deepcopy(row.checkpoint['channel_values'])
+            if expected_review_phase is not None:
+                from .graph import build_graph
+                from types import SimpleNamespace
+                graph=build_graph(SimpleNamespace(record=lambda *args:None),review=True,
+                    checkpointer=SqliteSaver(conn,serde=checkpoint_serde()))
+                state=graph.get_state({'configurable':{'thread_id':session_id}})
+                if state.next!=('gate_'+expected_review_phase,):
+                    raise ValueError('staged checkpoint must await fresh edited gate')
+                # Compiled graph owns visible state; raw checkpoint also carries
+                # internal branch scheduling channels which are not artifacts.
+                result=deepcopy(state.values)
         finally:conn.close()
         no_wal()
         if _stamp(os.fstat(fd))!=_stamp(before) or _stamp(os.stat(path.name,dir_fd=directory,follow_symlinks=False))!=_stamp(before):

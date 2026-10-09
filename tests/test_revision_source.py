@@ -51,3 +51,33 @@ def test_symlink_checkpoint_ancestor_is_rejected(tmp_path):
     (root/'spec').rename(root/'old-spec');(root/'spec').symlink_to(root/'old-spec',target_is_directory=True)
     with pytest.raises(OSError):
         read_closed_checkpoint(root/'spec'/'checkpoints.sqlite',session_id='s',expected_checkpoint_id=cid)
+
+
+def test_pinned_staged_sqlite_readback_requires_exact_edited_gate(tmp_path):
+    from spec_generator.graph import build_graph,checkpoint_serde
+    from spec_generator.revision_checkpoint import prepare_revision_seed,validate_revision_output,stage_reviewed_lineage_checkpoint,validate_staged_lineage_state
+    from test_revision_lineage_checkpoint import lineage,fence
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from spec_generator.cooperative_run import cli_execution
+    import sqlite3
+    from types import SimpleNamespace
+    cap,root,runtime,cid,state=setup(tmp_path)
+    result=prepare_revision_seed(source=state,phase='srs',change_request='Describe offline behavior',session_id='s')['seed']
+    result['srs']=state['srs'];result['gate_feedback'].pop('srs')
+    digest=validate_revision_output(source=state,result=result,phase='srs',change_request='Describe offline behavior',session_id='s')['artifact_sha256']
+    binding=lineage()|{'regenerated_artifact_sha256':digest}
+    target=tmp_path/'staged'/'checkpoints.sqlite';target.parent.mkdir()
+    conn=sqlite3.connect(target);g=build_graph(SimpleNamespace(record=lambda *a:None),review=True,checkpointer=SqliteSaver(conn,serde=checkpoint_serde()))
+    with cli_execution(fence(tmp_path),None):
+        receipt=stage_reviewed_lineage_checkpoint(source=state,proposal_result=result,lineage=binding,change_request='Describe offline behavior',graph=g,config={'configurable':{'thread_id':'next'}})
+    conn.close();checkpoint=receipt['destination_checkpoint']['configurable']['checkpoint_id']
+    read=read_closed_checkpoint(target,session_id='next',expected_checkpoint_id=checkpoint,expected_review_phase='srs')
+    assert validate_staged_lineage_state(source=state,staged_state=read,lineage=binding,change_request='Describe offline behavior')['approved_upstream_unchanged']
+    with pytest.raises(ValueError,match='fresh edited gate'):
+        read_closed_checkpoint(target,session_id='next',expected_checkpoint_id=checkpoint,expected_review_phase='architecture')
+
+
+def test_arbitrary_checkpoint_cannot_claim_staged_gate_readiness(tmp_path):
+    cap,root,runtime,cid,state=setup(tmp_path)
+    with pytest.raises(ValueError,match='fresh edited gate'):
+        read_closed_checkpoint(root/'spec'/'checkpoints.sqlite',session_id='s',expected_checkpoint_id=cid,expected_review_phase='srs')
