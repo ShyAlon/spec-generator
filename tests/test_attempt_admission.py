@@ -78,3 +78,19 @@ def test_threaded_stream_context_is_preserved_and_missing_gateway_stops_contact(
     gateway=Gateway()
     with admission.admission_gateway(gateway):list(module.stream_checked(fake,['input'],'needs'))
     assert fake.calls==1 and gateway.events[-1][0]=='uncertain'
+
+
+
+def test_explicit_worker_context_requires_admission_without_environment(monkeypatch):
+    monkeypatch.delenv('VMODEL_TENANT_OWNER',raising=False)
+    monkeypatch.delenv('INTERVIEW_ENGINE_TENANTS',raising=False)
+    monkeypatch.delenv('VMODEL_ADMISSION_FD',raising=False)
+    calls=[]
+    with admission.admission_gateway(None,required=True):
+        with pytest.raises(admission.AdmissionUnavailable):admission.admitted_invoke(lambda:calls.append(1),**OPTIONS)
+    assert calls==[]
+    gateway=Gateway()
+    with admission.admission_gateway(gateway,required=True):
+        admission.admitted_invoke(lambda:SimpleNamespace(usage_metadata={'input_tokens':1,'output_tokens':2}),**OPTIONS)
+    assert [e[0] for e in gateway.events]==['reserve','start','settle']
+    assert not admission._cloud()

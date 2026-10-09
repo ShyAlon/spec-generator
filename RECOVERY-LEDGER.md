@@ -17,3 +17,6 @@ Recovered later source-written Stop/registry/publication test additions. Duplica
 
 ## Recovery dependency pin and lock
 Restored explicit contracts0.28.0 metadata/UV local-wheel source from archived Oct9 pin preparation semantics, but built a new wheel from current recovered contracts5bdc1a0, with fresh SHA provenance in vendor/RECOVERY-WHEEL.md. Old wheel records retained as history. Regenerated uv.lock without blanket upgrades; uv lock --check passed. Offline project wheel builds passed; all three metadata files require contracts==0.28.0. Frozen-v3 artifacts untouched. Fresh installed rebuilt-wheel UI verification remains the next check, not claimed done.
+
+## Later Stop/publication and explicit worker admission tests
+Recovered exact chronological Oct9 07:37,07:38,07:50,08:05 Stop stream draining, raw/progress suppression, adapter accounting, real graph checkpoint, CLI docs/audit/partials/lifecycle tests plus08:10 explicit required admission context test. One archived usage assertion expected no total_tokens; current main normalizes total, so assertion reconciled to existing documented normalized value5, production unchanged. Targeted Stop/admission suite17 passes. Wider suite remains to re-run after this inventory expansion.
