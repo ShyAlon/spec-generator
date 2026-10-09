@@ -100,3 +100,23 @@ def test_worker_rejects_foreign_owned_root_and_mismatched_runtime(tmp_path):
         with pytest.raises(ValueError,match='another worker'):
             run_revision_proposal(capability=cap,session_root=root,checkpoint_id=cid,phase='srs',
                 change_request='Describe offline behavior',validate_authority=lambda:None,log=None)
+
+
+def test_real_generator_graph_revision_consumes_feedback_and_stops_at_srs(tmp_path,monkeypatch):
+    import json
+    from langchain_core.messages import AIMessage
+    from spec_generator import model_config
+    from test_progress import PAYLOADS,FakeModel
+    from conftest import schema_routing_factory
+    cap,root,runtime,cid,state=setup(tmp_path);messages=[]
+    class Model(FakeModel):
+        def invoke(self,incoming):
+            messages.append('\n'.join(str(m.content) for m in incoming))
+            return AIMessage(content=json.dumps(PAYLOADS['srs']))
+    monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**kw:schema_routing_factory(stage,kw.get('schema'),lambda:Model(stage)))
+    runtime.models['srs']=StageModel('fake','fake');runtime.settings['SPEC_GENERATOR_BULK']='1'
+    with job_runtime(runtime),cli_execution(StopFence(root/'interview'/'stop-request.json'),None):
+        proposal=run_revision_proposal(capability=cap,session_root=root,checkpoint_id=cid,phase='srs',
+            change_request='Describe offline behavior',validate_authority=lambda:None,log=SimpleNamespace(record=lambda *args:None))
+    assert messages and any('Describe offline behavior' in text for text in messages)
+    assert proposal['phase']=='srs' and not proposal['committed']

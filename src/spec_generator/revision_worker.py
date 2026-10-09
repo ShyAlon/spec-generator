@@ -64,6 +64,13 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
             phase=phase,change_request=change_request,session_id=capability.session_id,graph=graph,config=config)
         result=graph.invoke(None,config)
         fence.check(generation)
+        # Graph SRS channel is a freshly assembled body, while on-disk artifacts
+        # are serialized contracts. Serialize this new body through the current
+        # model; never change an explicit old stamp or migrate source evidence.
+        if phase=='srs' and isinstance(result.get('srs'),dict) and 'contract_version' not in result['srs']:
+            from vmodel_contracts import SRSDocument
+            from .graph import srs_document_data
+            result={**result,'srs':SRSDocument.model_validate(srs_document_data(result['intent_model'],result['srs'])).model_dump(mode='json')}
         proposal=validate_revision_output(source=original,result=result,phase=phase,
             change_request=change_request,session_id=capability.session_id)
         # This detects source drift, not an atomic evidence CAS. Commit remains
