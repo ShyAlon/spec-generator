@@ -70,11 +70,13 @@ def test_staged_proposal_boundary_retains_semantic_ids_without_invoke(tmp_path):
     result['srs']=deepcopy(original['srs']);result['gate_feedback'].pop('srs')
     validated=validate_revision_output(source=original,result=result,phase='srs',change_request='Describe offline behavior',session_id='s')
     binding=lineage()|{'regenerated_artifact_sha256':validated['artifact_sha256']}
-    invoked=[];g=factory(original,lambda:invoked.append(True))(None,InMemorySaver());config={'configurable':{'thread_id':'next'}}
+    from spec_generator.graph import build_graph
+    invoked=[];g=build_graph(SimpleNamespace(record=lambda *a:None),review=True,checkpointer=InMemorySaver());config={'configurable':{'thread_id':'next'}}
     with cli_execution(fence(tmp_path),None):
         receipt=stage_reviewed_lineage_checkpoint(source=original,proposal_result=result,lineage=binding,
             change_request='Describe offline behavior',graph=g,config=config)
     assert not invoked and not receipt['installed'] and receipt['requires_fresh_gate_review']
+    assert g.get_state(config).next==('gate_srs',)
     assert g.get_state(config).values['srs']['session_id']=='s'
     assert g.get_state(config).values['intent_model']==original['intent_model']
 
@@ -87,5 +89,18 @@ def test_staging_digest_mismatch_never_writes_destination(tmp_path):
     with cli_execution(fence(tmp_path),None):
         with pytest.raises(ValueError,match='reviewed lineage digest'):
             stage_reviewed_lineage_checkpoint(source=original,proposal_result=result,lineage=lineage()|{'regenerated_artifact_sha256':'0'*64},
+                change_request='Describe offline behavior',graph=g,config=config)
+    assert not g.get_state(config).values
+
+
+def test_staging_rejects_graph_that_bypasses_fresh_review(tmp_path):
+    from spec_generator.revision_checkpoint import stage_reviewed_lineage_checkpoint,prepare_revision_seed,validate_revision_output
+    original=source();result=prepare_revision_seed(source=original,phase='srs',change_request='Describe offline behavior',session_id='s')['seed']
+    result['srs']=deepcopy(original['srs']);result['gate_feedback'].pop('srs')
+    digest=validate_revision_output(source=original,result=result,phase='srs',change_request='Describe offline behavior',session_id='s')['artifact_sha256']
+    g=graph();config={'configurable':{'thread_id':'next'}}
+    with cli_execution(fence(tmp_path),None):
+        with pytest.raises(ValueError,match='must require edited phase gate review'):
+            stage_reviewed_lineage_checkpoint(source=original,proposal_result=result,lineage=lineage()|{'regenerated_artifact_sha256':digest},
                 change_request='Describe offline behavior',graph=g,config=config)
     assert not g.get_state(config).values

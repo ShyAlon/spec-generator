@@ -58,3 +58,8 @@ Targeted53 pass; full generator883 pass; diff check clean. Tests cover preserved
 Added isolated staging helper that revalidates semantic lineage/source and typed proposal output, matches regenerated artifact digest to lineage, rejects unreviewed expert decisions and seeds only the cleared approved source plus newly validated phase artifact into an empty execution thread. Unknown proposal channels/pending writes/old checkpoint metadata are not copied. Reads staged artifact/upstream/guidance back. Graph is never invoked, no phase accepted and fresh gate review remains required.
 
 Targeted lineage checkpoint11 pass; full generator885 pass, diff check clean. Tests prove no producer callback/graph invocation, retained semantic ids, no destination write on mismatched lineage digest. Trusted caller must provide pinned source/proposal state and namespace containment. This helper is staging, not filesystem promotion, installed execution authority or a replay mechanism. Existing source run is unchanged; public commit/restart off.
+
+## Staged checkpoint must stop at fresh edited gate
+Follow-up tightening: staging now verifies the compiled graph has the edited phase's mandatory review edge and readback schedules exactly gate_srs or gate_architecture, never a downstream producer. Real build_graph(review=True) test proves fresh SRS gate boundary without invoking a model; a graph that bypasses review fails before destination seed. This closes a private-helper misuse gap in the preceding staging unit, not a public runtime incident.
+
+Targeted12/full886 pass, diff check clean. No installed execution session/generation, graph invocation or gate lifting. Staged namespace/caller authority obligations unchanged.

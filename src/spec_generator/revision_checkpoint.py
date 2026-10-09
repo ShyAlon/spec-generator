@@ -218,6 +218,10 @@ def stage_reviewed_lineage_checkpoint(*,source,proposal_result,lineage,change_re
     if proposal_result.get('expert_opinions',[])!=probe.values.get('expert_opinions',[]):
         raise ValueError('proposal retained unreviewed expert decisions')
     from .stop_fence import check_execution
+    gate_node='gate_'+lineage['phase']
+    topology=graph.get_graph()
+    if not any(edge.source==lineage['phase'] and edge.target==gate_node and not edge.conditional for edge in topology.edges):
+        raise ValueError('staged graph must require edited phase gate review')
     check_execution();existing=graph.get_state(config)
     if existing.values or existing.next:raise ValueError('fresh staged destination must be empty')
     # Start from cleared approved seed rather than copying unknown proposal
@@ -226,7 +230,7 @@ def stage_reviewed_lineage_checkpoint(*,source,proposal_result,lineage,change_re
     state[lineage['phase']]=deepcopy(validated['artifact'])
     graph.update_state(config,state,as_node=lineage['phase'])
     check_execution();saved=graph.get_state(config)
-    if (saved.values.get(lineage['phase'])!=validated['artifact']
+    if (saved.next!=(gate_node,) or saved.values.get(lineage['phase'])!=validated['artifact']
         or saved.values.get('intent_model')!=probe.values['intent_model']
         or saved.values.get('gate_feedback',{}).get(lineage['phase'])):
         raise ValueError('staged reviewed checkpoint readback mismatch')
