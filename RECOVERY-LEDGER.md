@@ -63,3 +63,8 @@ Targeted lineage checkpoint11 pass; full generator885 pass, diff check clean. Te
 Follow-up tightening: staging now verifies the compiled graph has the edited phase's mandatory review edge and readback schedules exactly gate_srs or gate_architecture, never a downstream producer. Real build_graph(review=True) test proves fresh SRS gate boundary without invoking a model; a graph that bypasses review fails before destination seed. This closes a private-helper misuse gap in the preceding staging unit, not a public runtime incident.
 
 Targeted12/full886 pass, diff check clean. No installed execution session/generation, graph invocation or gate lifting. Staged namespace/caller authority obligations unchanged.
+
+## Private execution-anchor StopFence binding
+StopFence optionally requires typed authenticated installed anchor and pinned unchanged bytes. Initializes later execution generation from exact binding, keeps Stop as one-way requested marker at anchor generation+1, rejects stale/false/conflicting/removed markers and changed/missing anchors. An anchor namespace without explicit binding cannot fall back to legacy generation1. Existing non-lineage behavior unchanged. No production caller switched, writer/installation route or public restart added; installation must authenticate expected binding separately.
+
+Full generator896 pass with current contracts source; targeted prior21 before extra fallback regression.

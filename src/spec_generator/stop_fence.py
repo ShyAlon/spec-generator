@@ -25,14 +25,28 @@ def check_execution():
     if check is not None:check()
 
 class StopFence:
-    def __init__(self,path):
+    def __init__(self,path,*,execution_anchor=None):
         self.path=Path(path);self.lock=threading.RLock()
         self.generation=1;self.requested=False;self.active=0;self.recovery_pending=False;self._guard_depth=threading.local();self._writer_file=None
+        if execution_anchor is None and self.path.name=='stop-request.json' and self.path.parent.name=='interview':
+            anchor_path=self.path.parent.parent/'execution-generation.json'
+            if anchor_path.exists() or anchor_path.is_symlink():
+                raise ValueError('explicit installed execution binding required for lineage namespace')
+        self._execution_anchor=execution_anchor;self._anchor_root=None;self._anchor_digest=None
+        if execution_anchor is not None:
+            from vmodel_contracts.execution_anchor import read_execution_anchor
+            if self.path.name!='stop-request.json' or self.path.parent.name!='interview':
+                raise ValueError('canonical execution control marker required')
+            self._anchor_root=self.path.parent.parent
+            receipt=read_execution_anchor(self._anchor_root,expected=execution_anchor)
+            self._anchor_digest=receipt['document_sha256'];self.generation=execution_anchor.generation
         if self.path.exists():
             data=json.loads(self.path.read_text())
             self.generation=data['generation'];self.requested=data['requested'];self.recovery_pending=self.requested
             if type(self.generation) is not int or self.generation<1 or type(self.requested) is not bool:
                 raise ValueError('invalid durable stop fence')
+            if execution_anchor is not None and (self.requested is not True or self.generation!=execution_anchor.generation+1):
+                raise ValueError('Stop marker differs from installed execution generation')
 
     @contextmanager
     def marker_guard(self):
@@ -57,10 +71,20 @@ class StopFence:
                     fcntl.flock(file,fcntl.LOCK_UN)
 
     def _refresh_marker(self):
-        if not self.path.exists():return
+        if self._execution_anchor is not None:
+            from vmodel_contracts.execution_anchor import read_execution_anchor
+            receipt=read_execution_anchor(self._anchor_root,expected=self._execution_anchor)
+            if receipt['document_sha256']!=self._anchor_digest:
+                raise ValueError('immutable execution anchor bytes changed')
+        if not self.path.exists():
+            if self._execution_anchor is not None and self.requested:
+                raise ValueError('installed execution Stop marker disappeared')
+            return
         data=json.loads(self.path.read_text())
         if type(data.get('generation')) is not int or data['generation']<1 or data.get('requested') is not True:
             raise ValueError('invalid durable stop fence')
+        if self._execution_anchor is not None and data['generation']!=self._execution_anchor.generation+1:
+            raise ValueError('Stop marker differs from installed execution generation')
         if not self.requested:
             # Another registry/process's marker does not prove quiescence.
             self.recovery_pending=True
