@@ -37,15 +37,8 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
     config={'configurable':{'thread_id':capability.session_id}}
     def source():
         validate_authority();fence.check(generation)
-        if source_path.resolve()!=source_path or not source_path.is_file():
-            raise ValueError('owned source checkpoint required')
-        conn=sqlite3.connect(source_path.as_uri()+'?mode=ro',uri=True,check_same_thread=False)
-        try:
-            row=SqliteSaver(conn,serde=checkpoint_serde()).get_tuple(config)
-            if row is None or row.config['configurable']['checkpoint_id']!=checkpoint_id:
-                raise ValueError('reviewed source checkpoint changed')
-            return deepcopy(row.checkpoint['channel_values'])
-        finally:conn.close()
+        from .revision_source import read_closed_checkpoint
+        return read_closed_checkpoint(source_path,session_id=capability.session_id,expected_checkpoint_id=checkpoint_id)
     original=source()
     prepare_revision_seed(source=original,phase=phase,change_request=change_request,session_id=capability.session_id)
     parent=root/'spec'/'revision-proposals'
