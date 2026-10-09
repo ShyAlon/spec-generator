@@ -104,3 +104,57 @@ def test_staging_rejects_graph_that_bypasses_fresh_review(tmp_path):
             stage_reviewed_lineage_checkpoint(source=original,proposal_result=result,lineage=lineage()|{'regenerated_artifact_sha256':digest},
                 change_request='Describe offline behavior',graph=g,config=config)
     assert not g.get_state(config).values
+
+
+def _private_stage(tmp_path):
+    from spec_generator.revision_checkpoint import prepare_revision_seed,validate_revision_output
+    from spec_generator.graph import build_graph
+    from langgraph.checkpoint.memory import InMemorySaver
+    original=source();result=prepare_revision_seed(source=original,phase='srs',change_request='Describe offline behavior',session_id='s')['seed']
+    result['srs']=deepcopy(original['srs']);result['gate_feedback'].pop('srs')
+    digest=validate_revision_output(source=original,result=result,phase='srs',change_request='Describe offline behavior',session_id='s')['artifact_sha256']
+    binding=lineage()|{'owner_id':'owner','parent_generation':1,'generation':2,'regenerated_artifact_sha256':digest}
+    root=tmp_path/'tenants'/'owner'/'sessions'/'parent'
+    control=StopFence(root/'interview'/'stop-request.json')
+    g=build_graph(SimpleNamespace(record=lambda *a:None),review=True,checkpointer=InMemorySaver())
+    return control,g,dict(source=original,proposal_result=result,lineage=binding,change_request='Describe offline behavior',
+        graph=g,config={'configurable':{'thread_id':'next'}})
+
+
+def test_private_stage_uses_original_fence_without_next_generation_authority(tmp_path):
+    from spec_generator.revision_checkpoint import stage_private_lineage_checkpoint
+    control,g,args=_private_stage(tmp_path);checks=[]
+    g.invoke=lambda *a,**kw:pytest.fail('private staging must not invoke graph')
+    with cli_execution(control,None):
+        result=stage_private_lineage_checkpoint(**args,validate_authority=lambda:checks.append(1))
+    assert control.generation==1 and len(checks)>=4
+    assert g.get_state(args['config']).next==('gate_srs',) and not result['installed']
+    assert not (control.path.parent.parent/'execution-generation.json').exists()
+
+
+def test_private_stage_requires_original_fence_and_authority(tmp_path):
+    from spec_generator.revision_checkpoint import stage_private_lineage_checkpoint
+    control,g,args=_private_stage(tmp_path)
+    with pytest.raises(ValueError,match='original source fence'):
+        stage_private_lineage_checkpoint(**args,validate_authority=lambda:None)
+    with cli_execution(control,None):
+        with pytest.raises(ValueError,match='authority reader'):
+            stage_private_lineage_checkpoint(**args,validate_authority=None)
+        with pytest.raises(ValueError,match='namespace'):
+            stage_private_lineage_checkpoint(**(args|{'lineage':args['lineage']|{'owner_id':'foreign'}}),validate_authority=lambda:None)
+        def changed():raise ValueError('owner evidence changed')
+        with pytest.raises(ValueError,match='owner evidence changed'):
+            stage_private_lineage_checkpoint(**args,validate_authority=changed)
+    assert not g.get_state(args['config']).values
+
+
+def test_private_stage_rechecks_authority_before_write(tmp_path):
+    from spec_generator.revision_checkpoint import stage_private_lineage_checkpoint
+    control,g,args=_private_stage(tmp_path);checks=[]
+    def authority():
+        checks.append(1)
+        if len(checks)==3:raise ValueError('review drift before write')
+    with cli_execution(control,None):
+        with pytest.raises(ValueError,match='review drift'):
+            stage_private_lineage_checkpoint(**args,validate_authority=authority)
+    assert not g.get_state(args['config']).values
