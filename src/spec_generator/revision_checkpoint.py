@@ -67,7 +67,7 @@ def prepare_revision_seed(*,source,phase,change_request,session_id):
 
 
 def seed_fresh_revision_checkpoint(*,source,source_checkpoint_id,expected_checkpoint_id,
-                                   phase,change_request,session_id,graph,config):
+                                   phase,change_request,session_id,graph,config,execution_session_id=None):
     """Seed only an empty destination graph after exact source identity matching.
 
     Caller supplies a Stop-fenced graph and owned fresh output namespace. This
@@ -80,7 +80,13 @@ def seed_fresh_revision_checkpoint(*,source,source_checkpoint_id,expected_checkp
     if (not isinstance(source_checkpoint_id,str) or not source_checkpoint_id
         or source_checkpoint_id!=expected_checkpoint_id):
         raise ValueError('reviewed source checkpoint changed')
-    if config!={'configurable':{'thread_id':session_id}}:
+    execution_session_id=execution_session_id or session_id
+    if execution_session_id!=session_id:
+        anchor=getattr(binding[0],'_execution_anchor',None)
+        if (anchor is None or anchor.execution_session_id!=execution_session_id
+            or anchor.semantic_session_id!=session_id or anchor.generation!=binding[1]):
+            raise ValueError('installed semantic/execution binding required')
+    if config!={'configurable':{'thread_id':execution_session_id}}:
         raise ValueError('exact revision session checkpoint configuration required')
     prepared=prepare_revision_seed(source=source,phase=phase,change_request=change_request,session_id=session_id)
     check_execution()
