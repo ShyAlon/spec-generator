@@ -955,8 +955,9 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
         env = _API_KEY_ENV[cfg.provider]
         extra = {}
         deepseek_tool_schema = schema if cfg.provider == "deepseek" and structured and schema is not None else None
-        if cfg.provider == "deepseek" and structured:
+        if cfg.provider == "deepseek":
             extra["extra_body"] = {"thinking": {"type": "disabled"}}
+        if cfg.provider == "deepseek" and structured:
             announcement = ("deepseek", "forced-tool")
             if announcement not in _OUTPUT_MODE_ANNOUNCED:
                 _OUTPUT_MODE_ANNOUNCED.add(announcement)
