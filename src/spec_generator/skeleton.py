@@ -136,6 +136,17 @@ def build_srs_skeleton(needs: dict, intent: dict | None = None) -> list[dict]:
     return slots
 
 
+def normalize_generated_ears_statement(text):
+    """Generated prose boundary only, never rewrite approved source artifacts.
+
+    Remove the punctuation error after shall and collapse whitespace. Preserve
+    wording, capitalization, quantities and units; lint still judges EARS.
+    """
+    if not isinstance(text, str):
+        return text
+    return re.sub(r"\b(shall)\s*,\s*", lambda m: m.group(1) + " ", " ".join(text.split()), flags=re.I)
+
+
 def merge_srs_fills(slots: list[dict], body) -> dict:
     """Skeleton structure + model prose -> contract-shaped SRS body. AC ids
     are assigned here, sequentially, in slot order. Structure carried from the
@@ -162,7 +173,7 @@ def merge_srs_fills(slots: list[dict], body) -> dict:
         req = {
             "requirement_id": rid,
             "title": f.get("title"),
-            "statement": f.get("statement"),
+            "statement": normalize_generated_ears_statement(f.get("statement")),
             "priority": f.get("priority"),
             "acceptance": criteria,
             "kind": slot["kind"],
