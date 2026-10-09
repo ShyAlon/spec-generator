@@ -283,3 +283,59 @@ def validate_staged_lineage_state(*,source,staged_state,lineage,change_request):
         raise ValueError('staged expert decisions differ from cleared source')
     return {'artifact_sha256':validated['artifact_sha256'],'typed_and_trace_validated':True,
         'approved_upstream_unchanged':True,'installed':False,'dispatch_started':False}
+
+
+def prepare_approved_continuation_checkpoint(*,installed_state,execution_anchor,phase,artifact_sha256,
+        approval_reference,graph,config,validate_authority):
+    """Fresh private continuation checkpoint, no model/gate invoke or dispatch.
+
+    Original installed reviewed checkpoint remains immutable. Caller creates a
+    separate exclusive private checkpoint file under the installed namespace.
+    Authority callback must check current DB owner/generation/phase approval and
+    exact durable acceptance, not infer permission from the artifact or anchor.
+    """
+    import hashlib,json
+    from vmodel_contracts.execution_anchor import ExecutionAnchor
+    from .cooperative_run import cli_stop_binding
+    from .stop_fence import check_execution
+    if not isinstance(execution_anchor,ExecutionAnchor) or phase not in ('srs','architecture'):
+        raise ValueError('exact installed execution and implemented phase required')
+    binding=cli_stop_binding()
+    if (binding is None or binding[1]!=execution_anchor.generation
+        or getattr(binding[0],'_execution_anchor',None)!=execution_anchor):
+        raise ValueError('installed original generation writer fence required')
+    if not callable(validate_authority) or not isinstance(approval_reference,str) or not approval_reference:
+        raise ValueError('exact authenticated phase approval reader required')
+    if config.get('configurable',{}).get('thread_id')!=execution_anchor.execution_session_id:
+        raise ValueError('fresh continuation execution thread required')
+    def authority():validate_authority();check_execution()
+    authority()
+    intent=installed_state.get('intent_model') or {}
+    artifact=installed_state.get(phase)
+    if intent.get('session_id')!=execution_anchor.semantic_session_id or not isinstance(artifact,dict):
+        raise ValueError('preserved semantic source required')
+    if hashlib.sha256(json.dumps(artifact,sort_keys=True,separators=(',',':')).encode()).hexdigest()!=artifact_sha256:
+        raise ValueError('exact approved artifact digest required')
+    if installed_state.get('gate_feedback',{}).get(phase):raise ValueError('approved phase has unresolved regeneration feedback')
+    if phase=='srs':
+        from vmodel_contracts import SRSDocument
+        typed=SRSDocument.model_validate(artifact)
+        if typed.session_id!=execution_anchor.semantic_session_id or typed.intent_model_ref!=execution_anchor.semantic_session_id:
+            raise ValueError('approved SRS source mismatch')
+    else:
+        from .graph import validated_architecture
+        if validated_architecture(artifact).session_id!=execution_anchor.semantic_session_id:
+            raise ValueError('approved architecture source mismatch')
+    if graph.get_state(config).values or graph.get_state(config).next:
+        raise ValueError('fresh continuation checkpoint must be empty')
+    # Updating at the gate schedules only its already-approved outgoing edge.
+    # Never invoke that gate (which could request duplicate approval/model review).
+    authority();graph.update_state(config,deepcopy(installed_state),as_node='gate_'+phase)
+    authority();saved=graph.get_state(config)
+    next_node='architecture' if phase=='srs' else 'items'
+    if saved.next!=(next_node,) or saved.values.get(phase)!=artifact or saved.values.get('intent_model')!=intent:
+        raise ValueError('approved continuation readback mismatch')
+    return {'checkpoint':saved.config,'next_node':next_node,'approved_phase':phase,
+        'approval_reference':approval_reference,'artifact_sha256':artifact_sha256,
+        'execution_session_id':execution_anchor.execution_session_id,'semantic_session_id':execution_anchor.semantic_session_id,
+        'dispatch_started':False,'provider_invoked':False}
