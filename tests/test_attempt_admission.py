@@ -56,7 +56,8 @@ def test_threaded_checked_invoke_fails_closed_and_context_reaches_gateway(cloud,
             self.calls+=1
             return SimpleNamespace(content='ok',usage_metadata={'input_tokens':1,'output_tokens':1})
     fake=Fake()
-    with pytest.raises(admission.AdmissionUnavailable):module.invoke_checked(fake,['input'],'needs')
+    from spec_generator.errors import UserFacingError
+    with pytest.raises(UserFacingError,match='admission/accounting'):module.invoke_checked(fake,['input'],'needs')
     assert fake.calls==0
     gateway=Gateway()
     with admission.admission_gateway(gateway):assert module.invoke_checked(fake,['input'],'needs').content=='ok'
@@ -73,7 +74,8 @@ def test_threaded_stream_context_is_preserved_and_missing_gateway_stops_contact(
             self.calls+=1
             yield SimpleNamespace(content='ok',usage_metadata={'input_tokens':1,'output_tokens':1},response_metadata={})
     fake=Fake()
-    with pytest.raises(admission.AdmissionUnavailable):list(module.stream_checked(fake,['input'],'needs'))
+    from spec_generator.errors import UserFacingError
+    with pytest.raises(UserFacingError,match='admission/accounting'):list(module.stream_checked(fake,['input'],'needs'))
     assert fake.calls==0
     gateway=Gateway()
     with admission.admission_gateway(gateway):list(module.stream_checked(fake,['input'],'needs'))
