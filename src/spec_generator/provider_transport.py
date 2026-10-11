@@ -5,10 +5,46 @@ must bind a durable-job gateway and reviewed serialized-request resolver first.
 Synchronous JSON and terminal-usage SSE supported; async wire prototypes exist; no runner installs them.
 """
 import base64
+import hashlib
 import json
 import uuid
 import httpx
 from .attempt_admission import AdmissionUnavailable
+
+
+class WireEvidence:
+    """Bounded metadata + exact raw terminal usage; never keys/request bodies."""
+    def __init__(self,gateway,attempt):
+        self.gateway=gateway;self.attempt=attempt;self.sha=hashlib.sha256();self.bytes=0
+        self.cr=0;self.lf=0;self.events=0;self.usage=None;self.done=False;self.reported=False
+    def chunk(self,chunk):
+        self.sha.update(chunk);self.bytes+=len(chunk);self.cr+=chunk.count(b'\r');self.lf+=chunk.count(b'\n')
+    def emit(self,status,error=None):
+        if self.reported:return
+        self.reported=True
+        callback=getattr(self.gateway,'record_wire_evidence',None)
+        if callback is not None:
+            # Persistence failure is visible, not permission to drop evidence.
+            callback(self.attempt,{'status':status,'response_sha256':self.sha.hexdigest(),
+                'response_bytes':self.bytes,'cr_count':self.cr,'lf_count':self.lf,
+                'event_count':self.events,'terminal_usage':self.usage,'done_seen':self.done,
+                'error_class':type(error).__name__ if error is not None else None})
+
+
+class SSELines:
+    """Bounded incremental LF/CRLF/CR decoder, including split CRLF."""
+    def __init__(self):self.buffer=bytearray();self.skip_lf=False
+    def feed(self,chunk):
+        for value in chunk:
+            if self.skip_lf:
+                self.skip_lf=False
+                if value==10:continue
+            if value in (10,13):
+                line=bytes(self.buffer);self.buffer.clear();self.skip_lf=value==13
+                yield line
+            else:
+                self.buffer.append(value)
+                if len(self.buffer)>65536:raise AdmissionUnavailable('oversized provider SSE line')
 
 
 def _terminal_usage_choices(choices):
@@ -89,7 +125,7 @@ class UsageStream(httpx.SyncByteStream):
     """
     def __init__(self,response,gateway,attempt):
         self.response=response;self.gateway=gateway;self.attempt=attempt
-        self.finished=False;self.marked=False
+        self.finished=False;self.marked=False;self.evidence=WireEvidence(gateway,attempt)
 
     def uncertain(self):
         if self.finished or self.marked:return
@@ -98,23 +134,21 @@ class UsageStream(httpx.SyncByteStream):
         except Exception:pass
 
     def __iter__(self):
-        buffer=b'';data=[];size=0;usage=None;done=False
+        lines=SSELines();data=[];size=0;usage=None;done=False
         try:
             for chunk in self.response.stream:
-                buffer+=chunk
-                if len(buffer)>65536 and b'\n' not in buffer:
-                    raise AdmissionUnavailable('oversized provider SSE line')
-                while b'\n' in buffer:
-                    line,buffer=buffer.split(b'\n',1);line=line.rstrip(b'\r')
+                self.evidence.chunk(chunk)
+                for line in lines.feed(chunk):
                     size+=len(line)
                     if size>65536:raise AdmissionUnavailable('oversized provider SSE event')
                     if line.startswith(b'data:'):
                         data.append(line[5:].lstrip(b' '))
                     elif not line:
                         if data:
-                            value=b'\n'.join(data);data=[]
+                            value=b'\n'.join(data);data=[];self.evidence.events+=1
                             if done:raise AdmissionUnavailable('provider event after DONE')
                             if value==b'[DONE]':
+                                self.evidence.done=True
                                 if usage is None:raise AdmissionUnavailable('DONE without terminal usage')
                                 self.gateway.settle_raw(self.attempt,usage)
                                 self.finished=True;done=True
@@ -127,18 +161,26 @@ class UsageStream(httpx.SyncByteStream):
                                     if not isinstance(event['usage'],dict) or usage is not None:
                                         raise AdmissionUnavailable('ambiguous provider terminal usage')
                                     if not _terminal_usage_choices(event.get('choices')):raise AdmissionUnavailable('usage is not terminal')
-                                    usage=event['usage']
+                                    usage=event['usage'];self.evidence.usage=usage
                                 elif usage is not None:raise AdmissionUnavailable('content after terminal usage')
                         size=0
                 yield chunk
-            if buffer.strip() or data or not done or usage is None:
+            if lines.buffer.strip() or data or not done or usage is None:
                 raise AdmissionUnavailable('incomplete terminal provider usage')
+        except BaseException as exc:
+            self.evidence.emit('failed',exc)
+            raise
         finally:
-            self.uncertain()
-            self.response.close()
+            try:self.evidence.emit('settled' if self.finished else 'closed_without_settlement')
+            finally:
+                try:self.uncertain()
+                finally:self.response.close()
 
     def close(self):
-        self.uncertain();self.response.close()
+        try:self.evidence.emit('settled' if self.finished else 'early_close')
+        finally:
+            try:self.uncertain()
+            finally:self.response.close()
 
 
 class AsyncAdmittedTransport(httpx.AsyncBaseTransport):
@@ -207,7 +249,7 @@ class AsyncUsageStream(httpx.AsyncByteStream):
     """
     def __init__(self,response,gateway,attempt):
         self.response=response;self.gateway=gateway;self.attempt=attempt
-        self.finished=False;self.marked=False
+        self.finished=False;self.marked=False;self.evidence=WireEvidence(gateway,attempt)
 
     def uncertain(self):
         if self.finished or self.marked:return
@@ -216,23 +258,21 @@ class AsyncUsageStream(httpx.AsyncByteStream):
         except Exception:pass
 
     async def __aiter__(self):
-        buffer=b'';data=[];size=0;usage=None;done=False
+        lines=SSELines();data=[];size=0;usage=None;done=False
         try:
             async for chunk in self.response.stream:
-                buffer+=chunk
-                if len(buffer)>65536 and b'\n' not in buffer:
-                    raise AdmissionUnavailable('oversized provider SSE line')
-                while b'\n' in buffer:
-                    line,buffer=buffer.split(b'\n',1);line=line.rstrip(b'\r')
+                self.evidence.chunk(chunk)
+                for line in lines.feed(chunk):
                     size+=len(line)
                     if size>65536:raise AdmissionUnavailable('oversized provider SSE event')
                     if line.startswith(b'data:'):
                         data.append(line[5:].lstrip(b' '))
                     elif not line:
                         if data:
-                            value=b'\n'.join(data);data=[]
+                            value=b'\n'.join(data);data=[];self.evidence.events+=1
                             if done:raise AdmissionUnavailable('provider event after DONE')
                             if value==b'[DONE]':
+                                self.evidence.done=True
                                 if usage is None:raise AdmissionUnavailable('DONE without terminal usage')
                                 self.gateway.settle_raw(self.attempt,usage)
                                 self.finished=True;done=True
@@ -245,15 +285,23 @@ class AsyncUsageStream(httpx.AsyncByteStream):
                                     if not isinstance(event['usage'],dict) or usage is not None:
                                         raise AdmissionUnavailable('ambiguous provider terminal usage')
                                     if not _terminal_usage_choices(event.get('choices')):raise AdmissionUnavailable('usage is not terminal')
-                                    usage=event['usage']
+                                    usage=event['usage'];self.evidence.usage=usage
                                 elif usage is not None:raise AdmissionUnavailable('content after terminal usage')
                         size=0
                 yield chunk
-            if buffer.strip() or data or not done or usage is None:
+            if lines.buffer.strip() or data or not done or usage is None:
                 raise AdmissionUnavailable('incomplete terminal provider usage')
+        except BaseException as exc:
+            self.evidence.emit('failed',exc)
+            raise
         finally:
-            self.uncertain()
-            await self.response.aclose()
+            try:self.evidence.emit('settled' if self.finished else 'closed_without_settlement')
+            finally:
+                try:self.uncertain()
+                finally:await self.response.aclose()
 
     async def aclose(self):
-        self.uncertain();await self.response.aclose()
+        try:self.evidence.emit('settled' if self.finished else 'early_close')
+        finally:
+            try:self.uncertain()
+            finally:await self.response.aclose()
