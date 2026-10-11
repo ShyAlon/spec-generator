@@ -158,3 +158,59 @@ def test_documented_finish_only_usage_event_or_fail_closed(choices):
             with pytest.raises(AdmissionUnavailable):c.post('https://fake.invalid/chat/completions',json={'model':'fake','max_tokens':10,'stream':True,'stream_options':{'include_usage':True}})
     assert g.events[-1][0]==('settle' if terminal else 'uncertain')
 
+
+@pytest.mark.parametrize('separator',[b'\n',b'\r\n',b'\r'])
+@pytest.mark.parametrize('fragment',[1,7,9999])
+def test_legal_sse_line_endings_real_sdk_settle_with_wire_evidence(separator,fragment):
+    from langchain_openai import ChatOpenAI
+    g=Gateway();wire=[];g.record_wire_evidence=lambda aid,body:wire.append(body)
+    u={'prompt_tokens':8213,'completion_tokens':594,'total_tokens':8807,'prompt_cache_hit_tokens':7424,'prompt_cache_miss_tokens':789}
+    common={'id':'fixture','object':'chat.completion.chunk','model':'deepseek-flash'}
+    events=[common|{'choices':[{'index':0,'delta':{'role':'assistant','content':'fixture'},'finish_reason':None}]},common|{'choices':[],'usage':u}]
+    raw=b''.join(b'data: '+json.dumps(e).encode()+separator*2 for e in events)+b'data: [DONE]'+separator*2
+    inner=httpx.MockTransport(lambda r:httpx.Response(200,headers={'content-type':'text/event-stream'},stream=Chunks([raw[i:i+fragment] for i in range(0,len(raw),fragment)])))
+    with httpx.Client(transport=AdmittedTransport(inner,g,stage='architecture',provider='deepseek',model='deepseek-flash')) as c:
+        model=ChatOpenAI(model='deepseek-flash',api_key='fixture',base_url='https://fixture.invalid',max_tokens=8192,max_retries=0,http_client=c,stream_usage=True)
+        assert ''.join(x.content for x in model.stream('fixture'))=='fixture'
+    assert [x[0] for x in g.events]==['reserve','start','settle']
+    assert len(wire)==1 and wire[0]['done_seen'] is True and wire[0]['terminal_usage']==u
+    assert 'fixture' not in str(wire[0])
+
+@pytest.mark.parametrize('separator',[b'\n',b'\r\n',b'\r'])
+def test_async_legal_sse_lines_real_sdk_settle(separator):
+    import asyncio
+    from langchain_openai import ChatOpenAI
+    from spec_generator.provider_transport import AsyncAdmittedTransport
+    g=Gateway();u={'prompt_tokens':2,'completion_tokens':1,'total_tokens':3}
+    common={'id':'fixture','object':'chat.completion.chunk','model':'deepseek-flash'}
+    events=[common|{'choices':[{'index':0,'delta':{'role':'assistant','content':'fixture'},'finish_reason':None}]},common|{'choices':[],'usage':u}]
+    raw=b''.join(b'data: '+json.dumps(e).encode()+separator*2 for e in events)+b'data: [DONE]'+separator*2
+    async def fake(r):return httpx.Response(200,headers={'content-type':'text/event-stream'},stream=AsyncChunks([raw[i:i+1] for i in range(len(raw))]))
+    async def run():
+        async with httpx.AsyncClient(transport=AsyncAdmittedTransport(httpx.MockTransport(fake),g,stage='architecture',provider='deepseek',model='deepseek-flash')) as c:
+            model=ChatOpenAI(model='deepseek-flash',api_key='fixture',base_url='https://fixture.invalid',max_tokens=8192,max_retries=0,http_async_client=c,stream_usage=True)
+            assert ''.join([x.content async for x in model.astream('fixture')])=='fixture'
+    asyncio.run(run());assert [x[0] for x in g.events]==['reserve','start','settle']
+
+def test_wrapped_admission_denial_not_network_outage():
+    from spec_generator.errors import translate_llm_error
+    from spec_generator.attempt_admission import AdmissionUnavailable
+    import openai
+    cause=AdmissionUnavailable('uncertain provider usage requires review')
+    exc=openai.APIConnectionError(request=httpx.Request('POST','https://fixture.invalid'));exc.__cause__=cause
+    result=translate_llm_error(exc,'architecture','deepseek','deepseek-flash',None)
+    assert 'admission/accounting' in result.what and 'network' not in result.what and 'do not retry' in result.next_action
+
+
+def test_wire_failure_keeps_unknown_hold_and_closes_response():
+    from spec_generator.provider_transport import UsageStream
+    g=Gateway()
+    def fail(*args):raise RuntimeError('private evidence storage unavailable')
+    g.record_wire_evidence=fail
+    closed=[]
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self):yield b'data: {"choices":[],"usage":{"prompt_tokens":1}}\r\r'
+        def close(self):closed.append(True)
+    stream=UsageStream(httpx.Response(200,stream=Stream()),g,'attempt')
+    with pytest.raises(RuntimeError):list(stream)
+    assert g.events[-1][0]=='uncertain' and closed

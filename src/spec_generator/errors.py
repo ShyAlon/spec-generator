@@ -65,6 +65,14 @@ def _is_ollama_ctx(context: str) -> bool:
 
 def translate_llm_error(exc: Exception, stage: str, provider: str, model: str, base_url: str | None) -> UserFacingError | None:
     """Map the common LLM-call failures to UserFacingError. None = not ours."""
+    # SDK connection wrappers can conceal a local admission refusal.
+    cause=exc;seen=set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if type(cause).__name__ in ('AdmissionDenied','AdmissionUnavailable'):
+            return UserFacingError(f"stage '{stage}' was stopped by admission/accounting checks.",
+                str(cause), "preserve the run evidence and review its ledger; do not retry or blame connectivity.")
+        cause=cause.__cause__ or cause.__context__
     name = type(exc).__name__
     text = str(exc).lower()
     ctx = f"{provider} {base_url or ''}"
