@@ -94,7 +94,7 @@ class AdmittedTransport(httpx.BaseTransport):
             # Headers and URL stay in the SDK transport, never in the ledger.
             response=self.inner.handle_request(request)
             if response.status_code<200 or response.status_code>=300:
-                raise AdmissionUnavailable('provider response cannot prove usage')
+                raise AdmissionUnavailable(f'provider HTTP {response.status_code} response cannot prove usage')
             if payload.get('stream'):
                 if 'text/event-stream' not in response.headers.get('content-type',''):
                     raise AdmissionUnavailable('unexpected streaming content type')
@@ -236,7 +236,7 @@ class AsyncAdmittedTransport(httpx.AsyncBaseTransport):
             # Headers and URL stay in the SDK transport, never in the ledger.
             response=await self.inner.handle_async_request(request)
             if response.status_code<200 or response.status_code>=300:
-                raise AdmissionUnavailable('provider response cannot prove usage')
+                raise AdmissionUnavailable(f'provider HTTP {response.status_code} response cannot prove usage')
             if payload.get('stream'):
                 if 'text/event-stream' not in response.headers.get('content-type',''):
                     raise AdmissionUnavailable('unexpected streaming content type')

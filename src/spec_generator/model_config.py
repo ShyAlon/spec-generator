@@ -858,6 +858,37 @@ def _ollama_think() -> bool:
 
 
 
+def _tool_payload_schema(schema):
+    """Preserve document-local refs when embedding a schema in tool payload.
+
+    Fragment pointers resolve from the tool-parameter document root, not the
+    nested payload. Validate before sending and never mutate the contract schema.
+    """
+    import copy
+    result = copy.deepcopy(schema)
+    def walk(node):
+        if isinstance(node, list):
+            for value in node:
+                walk(value)
+        elif isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str):
+                if ref != "#" and not ref.startswith("#/"):
+                    raise ValueError("tool schema requires local JSON pointer references")
+                target = schema
+                try:
+                    for part in ref[2:].split("/") if ref != "#" else []:
+                        part = part.replace("~1", "/").replace("~0", "~")
+                        target = target[int(part)] if isinstance(target, list) else target[part]
+                except (KeyError, IndexError, TypeError, ValueError) as exc:
+                    raise ValueError("unresolved tool schema reference") from exc
+                node["$ref"] = "#/properties/payload" + ref[1:]
+            for value in node.values():
+                walk(value)
+    walk(result)
+    return result
+
+
 class _DeepSeekToolOutputAdapter:
     """Expose one forced DeepSeek function call as ordinary JSON content.
 
@@ -869,7 +900,7 @@ class _DeepSeekToolOutputAdapter:
         self.name = name
         tool = {"type": "function", "function": {"name": name,
                 "description": "Return the requested structured artifact.",
-                "parameters": {"type": "object", "properties": {"payload": schema},
+                "parameters": {"type": "object", "properties": {"payload": _tool_payload_schema(schema)},
                                "required": ["payload"], "additionalProperties": False}}}
         self.model = model
         self.tool = tool
