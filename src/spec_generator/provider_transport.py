@@ -98,7 +98,7 @@ class AdmittedTransport(httpx.BaseTransport):
             if payload.get('stream'):
                 if 'text/event-stream' not in response.headers.get('content-type',''):
                     raise AdmissionUnavailable('unexpected streaming content type')
-                return httpx.Response(response.status_code,headers=response.headers,
+                return httpx.Response(response.status_code,headers={k:v for k,v in response.headers.items() if k.lower() not in ('content-encoding','content-length')},
                     stream=UsageStream(response,self.gateway,attempt))
             body=response.read()
             envelope=json.loads(body)
@@ -118,14 +118,33 @@ class AdmittedTransport(httpx.BaseTransport):
     def close(self):self.inner.close()
 
 
+class RawEvidenceStream(httpx.SyncByteStream):
+    """Hash observed wire bytes before HTTP content decoding."""
+    def __init__(self,stream,evidence):self.stream,self.evidence=stream,evidence
+    def __iter__(self):
+        for chunk in self.stream:
+            self.evidence.chunk(chunk)
+            yield chunk
+    def close(self):self.stream.close()
+
+class AsyncRawEvidenceStream(httpx.AsyncByteStream):
+    """Hash observed wire bytes before HTTP content decoding."""
+    def __init__(self,stream,evidence):self.stream,self.evidence=stream,evidence
+    async def __aiter__(self):
+        async for chunk in self.stream:
+            self.evidence.chunk(chunk)
+            yield chunk
+    async def aclose(self):await self.stream.aclose()
+
 class UsageStream(httpx.SyncByteStream):
-    """Pass exact bytes through; settle on terminal usage followed by DONE, before SDK early-close.
+    """Pass decoded bytes through; settle terminal usage before SDK DONE close.
 
     Early close, broken/malformed/oversized SSE or missing usage keeps uncertainty.
     """
     def __init__(self,response,gateway,attempt):
         self.response=response;self.gateway=gateway;self.attempt=attempt
         self.finished=False;self.marked=False;self.evidence=WireEvidence(gateway,attempt)
+        self.response.stream=RawEvidenceStream(self.response.stream,self.evidence)
 
     def uncertain(self):
         if self.finished or self.marked:return
@@ -136,8 +155,7 @@ class UsageStream(httpx.SyncByteStream):
     def __iter__(self):
         lines=SSELines();data=[];size=0;usage=None;done=False
         try:
-            for chunk in self.response.stream:
-                self.evidence.chunk(chunk)
+            for chunk in self.response.iter_bytes():
                 for line in lines.feed(chunk):
                     size+=len(line)
                     if size>65536:raise AdmissionUnavailable('oversized provider SSE event')
@@ -222,7 +240,7 @@ class AsyncAdmittedTransport(httpx.AsyncBaseTransport):
             if payload.get('stream'):
                 if 'text/event-stream' not in response.headers.get('content-type',''):
                     raise AdmissionUnavailable('unexpected streaming content type')
-                return httpx.Response(response.status_code,headers=response.headers,
+                return httpx.Response(response.status_code,headers={k:v for k,v in response.headers.items() if k.lower() not in ('content-encoding','content-length')},
                     stream=AsyncUsageStream(response,self.gateway,attempt))
             body=await response.aread()
             envelope=json.loads(body)
@@ -243,13 +261,14 @@ class AsyncAdmittedTransport(httpx.AsyncBaseTransport):
 
 
 class AsyncUsageStream(httpx.AsyncByteStream):
-    """Pass exact bytes through; settle on terminal usage followed by DONE, before SDK early-close.
+    """Pass decoded bytes through; settle terminal usage before SDK DONE close.
 
     Early close, broken/malformed/oversized SSE or missing usage keeps uncertainty.
     """
     def __init__(self,response,gateway,attempt):
         self.response=response;self.gateway=gateway;self.attempt=attempt
         self.finished=False;self.marked=False;self.evidence=WireEvidence(gateway,attempt)
+        self.response.stream=AsyncRawEvidenceStream(self.response.stream,self.evidence)
 
     def uncertain(self):
         if self.finished or self.marked:return
@@ -260,8 +279,7 @@ class AsyncUsageStream(httpx.AsyncByteStream):
     async def __aiter__(self):
         lines=SSELines();data=[];size=0;usage=None;done=False
         try:
-            async for chunk in self.response.stream:
-                self.evidence.chunk(chunk)
+            async for chunk in self.response.aiter_bytes():
                 for line in lines.feed(chunk):
                     size+=len(line)
                     if size>65536:raise AdmissionUnavailable('oversized provider SSE event')
