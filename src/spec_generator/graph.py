@@ -790,6 +790,37 @@ def _check_technical_choice_constraints(state, key, choice):
                 raise ValueError("technical choice conflicts with recorded product platform")
 
 
+def _technical_choice_length_budget():
+    """Read authoring budgets from the unchanged shared contract."""
+    from vmodel_contracts.architecture import TechnicalChoiceFraming, TechnicalChoiceOption
+    limits = {}
+    for prefix, model in (("", TechnicalChoiceFraming), ("options[].", TechnicalChoiceOption)):
+        for name, field in model.model_json_schema()["properties"].items():
+            if field.get("type") == "string" and "maxLength" in field:
+                limits[prefix + name] = field["maxLength"]
+    return limits
+
+
+def _technical_choice_validation_feedback(exc):
+    """Short exact contract errors, without echoing the rejected artifact."""
+    errors = getattr(exc, "errors", None)
+    if not callable(errors):
+        return str(exc)
+    messages = []
+    for error in errors()[:5]:
+        path = ".".join(str(part) for part in error["loc"]) or "(root)"
+        value = error.get("input")
+        maximum = error.get("ctx", {}).get("max_length")
+        if error.get("type") == "string_too_long" and isinstance(value, str) and maximum is not None:
+            messages.append(f"{path} is {len(value)} characters; maximum {maximum}. "
+                            "Rewrite this field concisely within the limit, preserving the grounded tradeoff. "
+                            "Do not repeat code-owned provenance or research-status notes in reason. "
+                            "Keep valid option values, default_value and requirement_ids unchanged")
+        else:
+            messages.append(f"{path}: {error['msg']}")
+    return "; ".join(messages)
+
+
 def _technical_choice_call(state, key, brief, log, progress=None):
     from .prompts import ARCH_STACK_OPTIONS
     from .schemas import arch_stack_options_schema
@@ -802,8 +833,12 @@ def _technical_choice_call(state, key, brief, log, progress=None):
             _check_technical_choice_constraints(state, key, choice)
             return choice
         except ValueError as exc:
-            raise ModelStructureError(f"stack.{key}: {exc}") from exc
-    return _call_json("architecture", json.dumps(context) + f"\nSLOT: {key}\nINTERNAL RESEARCH BRIEF: {brief}\n" + ARCH_STACK_OPTIONS,
+            raise ModelStructureError(f"stack.{key}: {_technical_choice_validation_feedback(exc)}") from exc
+    return _call_json("architecture", json.dumps(context) + f"\nSLOT: {key}\nINTERNAL RESEARCH BRIEF: {brief}\n" + ARCH_STACK_OPTIONS
+                      + "\nFIELD CHARACTER LIMITS (including spaces): "
+                      + "; ".join(f"{field} <= {maximum}" for field, maximum in _technical_choice_length_budget().items())
+                      + ". Write reason as a short grounded summary, not a restatement of the brief. "
+                      "Code supplies provenance and research_status; do not spend reason characters repeating them.",
                       log, progress, validate=validate, schema=arch_stack_options_schema(req_ids),
                       stream_items=False, item_label=f"technical-choice:{key}")
 
