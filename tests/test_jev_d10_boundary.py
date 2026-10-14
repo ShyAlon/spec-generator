@@ -119,9 +119,19 @@ def test_duplicate_body_stops_the_stage(monkeypatch, tmp_path):
 def test_resumed_partial_goes_through_the_same_boundary(monkeypatch, tmp_path):
     """A pre-existing partial (any earlier run) is not trusted: duplicates stop on resume."""
     g, partials = _run(monkeypatch, tmp_path, [GOOD[0]])
-    spec = [{**PLAN[0], "spec_id": "SPEC-1", "body_markdown": GOOD[0]},
-            {**PLAN[1], "spec_id": "SPEC-2", "body_markdown": GOOD[0]}]
-    partials.save("items", spec)
+    from spec_generator import items_resume
+    original = items_resume.prepare_plan
+
+    def seed_valid_plan(partials, payload, validator, propose):
+        # A durable plan from an earlier run, but bodies still need acceptance.
+        plan = validator(PLAN)
+        partials.save("items_plan", {"version": 1,
+            "context_sha256": items_resume.context_digest(payload),
+            "plan_sha256": items_resume.digest(plan), "plan": plan})
+        partials.save("items", [{**p, "body_markdown": GOOD[0]} for p in plan])
+        return original(partials, payload, validator, lambda: pytest.fail("plan replay"))
+
+    monkeypatch.setattr(items_resume, "prepare_plan", seed_valid_plan)
     with pytest.raises(ContentRejected):
         g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "t"}})
 
