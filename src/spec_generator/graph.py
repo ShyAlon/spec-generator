@@ -58,7 +58,7 @@ from .findings_ledger import Ledger, LedgerError, finding_from_check, revision_o
 # (state["repair_request"], set by --repair) and is bounded by this ceiling. PLACEHOLDER: the founder
 # left the number blank; reaching it leaves findings OPEN and assembly blocked, never "success".
 REPAIR_ATTEMPT_CEILING = 2
-REVIEW_CHUNK_MAX_FINDINGS = 24  # per-chunk bound by construction; overflow is recorded as incomplete
+REVIEW_CHUNK_MAX_FINDINGS = 32  # per-chunk bound by construction; overflow is recorded as incomplete
 
 
 class GenState(TypedDict, total=False):
@@ -3375,12 +3375,12 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 model_config._console_line(
                     f"     - boundary=review-batch round={n} batch={index}/{len(chunks)} requirements={len(req_chunk)} "
                     f"linked_items={len(chunk_items)} linked_tests={len(chunk_tests)} projected_input_chars={projected_input_chars} "
-                    "max_findings=24 max_fix_chars=320 decision=bounded-single-requirement-review")
+                    f"max_findings={REVIEW_CHUNK_MAX_FINDINGS} max_fix_chars=320 decision=bounded-single-requirement-review")
                 saved[chunk_id] = _call_json(
                     "review", STAGE_PROMPTS["review"].format(n=n)
                     + f"\n\nREVIEW CHUNK {index}/{len(chunks)}. Return ONLY concrete findings whose primary target "
                       "is in this one-requirement cluster. Never restate requirements, specs, tests, or rationale. "
-                      "At most 24 findings. Each fix is one imperative sentence, at most 320 characters. "
+                      f"At most {REVIEW_CHUNK_MAX_FINDINGS} findings. Each fix is one imperative sentence, at most 320 characters. "
                       "Cross-chunk consistency is checked deterministically after aggregation."
                     + _decided_architecture_block(state)
                     + "\n\nSRS REQUIREMENTS:\n" + json.dumps(_prompt_view(req_chunk))

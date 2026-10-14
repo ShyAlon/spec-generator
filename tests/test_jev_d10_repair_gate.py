@@ -44,12 +44,14 @@ def test_ledger_less_checkpoint_is_unreviewed_not_clean(queue_models):
     assert "never content-reviewed" in e.value.reasons[0]
 
 
-def test_more_than_24_findings_survive(queue_models):
-    many = [{"fix": f"R-1 problem number {i} needs a distinct fix"} for i in range(30)]
+def test_more_than_the_chunk_bound_findings_survive(queue_models):
+    from spec_generator.graph import REVIEW_CHUNK_MAX_FINDINGS
+    total = REVIEW_CHUNK_MAX_FINDINGS + 6
+    many = [{"fix": f"R-1 problem number {i} needs a distinct fix"} for i in range(total)]
     g, cfg, values = _blocked(queue_models, "g3", many)
     ledger = Ledger.from_dict(values["findings_ledger"])
-    assert len(ledger.open_findings()) == 30
-    assert any("30 findings" in i["reason"] for i in ledger.incomplete)
+    assert len(ledger.open_findings()) == total
+    assert any(f"{total} findings" in i["reason"] for i in ledger.incomplete)
 
 
 def _run_repair_and_approve(g, cfg):
