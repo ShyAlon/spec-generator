@@ -289,7 +289,9 @@ def test_review_batches_one_requirement_and_caps_finding_shape():
     from spec_generator.graph import _normalized_review_fixes
     source=inspect.getsource(build_graph)
     assert "chunks = [[requirement] for requirement in requirements]" in source
-    assert "max_findings=24 max_fix_chars=320" in source
+    assert "max_findings={REVIEW_CHUNK_MAX_FINDINGS} max_fix_chars=320" in source
+    from spec_generator.graph import REVIEW_CHUNK_MAX_FINDINGS
+    assert REVIEW_CHUNK_MAX_FINDINGS == 32 and "At most {REVIEW_CHUNK_MAX_FINDINGS} findings" in source
     assert "Never restate requirements, specs, tests, or rationale" in source
     # Grammar remains Ollama-safe; caps are enforced after parse.
     findings = [{"scope": "requirement", "target_ids": [f"R-{j}" for j in range(12)],

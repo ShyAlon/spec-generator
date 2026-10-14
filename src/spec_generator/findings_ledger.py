@@ -264,11 +264,27 @@ class Ledger:
                 if any(t in current and current[t] != after for t in f["targets"]):
                     stale.append(f["finding_id"])
         open_ = [f["finding_id"] for f in self.open_findings()]
+        cleared = [m["scope"] for m in self.incomplete if self._overflow_decided(m)]
+        incomplete = [m for m in self.incomplete if m["scope"] not in cleared]
         reasons = ([f"{len(open_)} open finding(s)"] if open_ else []) \
-            + ([f"{len(self.incomplete)} incomplete required check(s)"] if self.incomplete else []) \
+            + ([f"{len(incomplete)} incomplete required check(s)"] if incomplete else []) \
             + ([f"{len(stale)} stale closure(s)"] if stale else [])
         return {"blocked": bool(reasons), "reasons": reasons, "open": open_,
-                "incomplete": list(self.incomplete), "stale": stale}
+                "incomplete": incomplete, "stale": stale, "overflow_cleared": cleared}
+
+    _OVERFLOW_SCOPE = re.compile(r"review:round-(\d+)-chunk-\d+")
+
+    def _overflow_decided(self, marker: dict) -> bool:
+        """A review chunk that returned more findings than its bound is recorded incomplete because the
+        excess might otherwise be dropped unseen. The runner keeps every returned finding, so once no OPEN
+        finding from that round remains (each was closed by founder disposition or repair) the marker has
+        nothing left to guard. Only this exact overflow marker qualifies; a truncated or failed chunk,
+        a grounding check or any other incomplete marker still blocks."""
+        m = self._OVERFLOW_SCOPE.fullmatch(marker.get("scope", ""))
+        if not m or not str(marker.get("reason", "")).startswith("chunk returned ") or not isinstance(marker.get("returned"), int):
+            return False
+        source = f"review:round-{m.group(1)}"
+        return not any(f["state"] == OPEN and source in f["sources"] for f in self.findings.values())
 
     def quarantined(self) -> set[str]:
         """Targets with an OPEN finding: nothing may derive from them."""
