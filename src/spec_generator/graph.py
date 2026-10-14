@@ -3074,6 +3074,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         fixes = _normalized_review_fixes(state.get("review_fixes"))
         affected = _affected_spec_ids(state, fixes) if fixes else set()
         selective = bool(fixes) and affected is not None
+        if partials and partials.load("items") and ((selective and state.get("items")) or model_config.bulk_fills_enabled()):
+            raise ValueError("saved items bodies require their durable micro-call plan; do not switch authoring modes during recovery")
         if selective and state.get("items"):
             plan = [{k: v for k, v in spec.items() if k != "body_markdown"} for spec in state["items"]]
             data = []
@@ -3091,13 +3093,16 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             # ADR-0022: plan the module grouping (one small call, references
             # enum-constrained, coverage validated), then author each spec
             # body in its own micro-call - a weak body fails one cheap call.
-            plan = _call_json("items", _items_plan_payload(state, req_ids) + _founder_stack_block(state), log, progress,
-                              validate=_items_plan_validator(req_ids),
-                              schema=items_plan_schema(req_ids), stream_items=False)
+            from .items_resume import prepare_plan
+            plan_payload = _items_plan_payload(state, req_ids) + _founder_stack_block(state)
+            plan_validator = _items_plan_validator(req_ids)
+            plan, done = prepare_plan(partials, plan_payload, plan_validator,
+                lambda: _call_json("items", plan_payload, log, progress,
+                                  validate=plan_validator,
+                                  schema=items_plan_schema(req_ids), stream_items=False))
             if progress is not None:
                 progress.emit(ProgressEvent("items", "", "item", _t.time(), None,
                                             f"plan: {len(plan)} specs to write"))
-            done = {d["spec_id"]: d for d in ((partials.load("items") or []) if partials else [])}
             data = []
             for spec in plan:
                 if spec["spec_id"] in done:  # per-item resume: preserved body
@@ -3127,6 +3132,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             getattr(persist, "ledger", lambda *_: None)(ledger.to_dict())
         if partials:
             partials.clear("items")
+            partials.clear("items_plan")
         return {"items": data, "findings_ledger": ledger.to_dict()}
 
     def node_tests(state: GenState) -> dict:

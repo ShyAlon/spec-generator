@@ -151,6 +151,7 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
     FILES = {"srs_fills": "srs_fills.partial.json",
              "architecture": "architecture.partial.json",
              "items": "items.partial.json",
+             "items_plan": "items_plan.partial.json",
              "tests_fills": "tests_fills.partial.json",
              "validation_fills": "validation_fills.partial.json",
              "review": "review.partial.json"}
@@ -194,9 +195,9 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
 
 
 # partial files invalidated by --from <stage> (that stage and everything after)
-_PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "tests_fills", "validation_fills", "review"),
-                      "architecture": ("architecture", "items", "tests_fills", "validation_fills", "review"),
-                      "items": ("items", "tests_fills", "validation_fills", "review"),
+_PARTIAL_DOWNSTREAM = {"srs": ("srs_fills", "architecture", "items", "items_plan", "tests_fills", "validation_fills", "review"),
+                      "architecture": ("architecture", "items", "items_plan", "tests_fills", "validation_fills", "review"),
+                      "items": ("items", "items_plan", "tests_fills", "validation_fills", "review"),
                       "tests": ("tests_fills", "validation_fills", "review"),
                       "validation": ("validation_fills", "review"),
                       "review": ("review",)}
