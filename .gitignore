@@ -20,4 +20,5 @@ usage_summary.json
 *.partial.json
 artifacts*
 spec-analysis-*
-.DS_Store
+.DS_Storefounder-script-*.json
+rejected-llm-outputs/
