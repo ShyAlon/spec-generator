@@ -20,5 +20,10 @@ usage_summary.json
 *.partial.json
 artifacts*
 spec-analysis-*
-.DS_Storefounder-script-*.json
 rejected-llm-outputs/
+
+.DS_Store
+
+# Remove later
+founder-script*
+item6*
