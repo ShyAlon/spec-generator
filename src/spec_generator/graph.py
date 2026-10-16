@@ -801,6 +801,61 @@ def _technical_choice_length_budget():
     return limits
 
 
+_TRIM_EXEMPT_FIELDS = {"title", "default_value", "value", "requirement_ids"}
+_TRIM_MAX_OVERAGE = 0.25
+_TECHNICAL_CHOICE_TARGET_RATIO = 0.8
+
+
+def _fit_text_within(text: str, maximum: int):
+    """Cut at the last word boundary that fits. Adds no words and no characters.
+    Returns None when no boundary exists (the caller leaves the text alone)."""
+    if len(text) <= maximum:
+        return text
+    cut = text[:maximum]
+    if not text[maximum].isspace():
+        space = max(cut.rfind(" "), cut.rfind("\n"), cut.rfind("\t"))
+        if space <= 0:
+            return None
+        cut = cut[:space]
+    cut = cut.rstrip(" \t\n,;:-")
+    return cut or None
+
+
+def _fit_prose_overage(data, budget):
+    """Last-resort, bounded fit for prose fields that only just exceed the shared
+    contract limit. Ids, values and titles are never touched; an overage above
+    _TRIM_MAX_OVERAGE is left for the normal retry/fail path. Returns
+    (data, trims) where each trim keeps the byte-exact original text."""
+    trims = []
+    def fit(container, field, maximum, label):
+        value = container.get(field)
+        if (field in _TRIM_EXEMPT_FIELDS or not isinstance(value, str)
+                or not maximum < len(value) <= int(maximum * (1 + _TRIM_MAX_OVERAGE))):
+            return
+        fitted = _fit_text_within(value, maximum)
+        if fitted is None:
+            return
+        container[field] = fitted
+        trims.append({"field": label, "limit": maximum, "before": len(value), "after": len(fitted),
+                      "original": value, "fitted": fitted})
+    if not isinstance(data, dict):
+        return data, trims
+    data = dict(data)
+    for field, maximum in budget.items():
+        if field.startswith("options[]."):
+            continue
+        fit(data, field, maximum, field)
+    options = data.get("options")
+    if isinstance(options, list):
+        data["options"] = [dict(o) if isinstance(o, dict) else o for o in options]
+        for i, option in enumerate(data["options"]):
+            if isinstance(option, dict):
+                for field, maximum in budget.items():
+                    if field.startswith("options[]."):
+                        fit(option, field[len("options[]."):], maximum, f"options[{i}].{field[10:]}")
+    return data, trims
+
+
 def _technical_choice_validation_feedback(exc):
     """Short exact contract errors, without echoing the rejected artifact."""
     errors = getattr(exc, "errors", None)
@@ -829,6 +884,9 @@ def _technical_choice_call(state, key, brief, log, progress=None):
     context = {k: _prompt_view(state.get(k) or {}) for k in ("srs", "system_baseline", "intent_model", "conops")}
     def validate(d):
         try:
+            d, trims = _fit_prose_overage(d, _technical_choice_length_budget())
+            if trims:
+                model_config.capture_fitted_output("architecture", f"technical-choice:{key}", trims)
             choice = technical_choice_data({**d, "provenance": "design_proposal", "research_status": "pending"}, req_ids)
             _check_technical_choice_constraints(state, key, choice)
             return choice
@@ -837,7 +895,12 @@ def _technical_choice_call(state, key, brief, log, progress=None):
     return _call_json("architecture", json.dumps(context) + f"\nSLOT: {key}\nINTERNAL RESEARCH BRIEF: {brief}\n" + ARCH_STACK_OPTIONS
                       + "\nFIELD CHARACTER LIMITS (including spaces): "
                       + "; ".join(f"{field} <= {maximum}" for field, maximum in _technical_choice_length_budget().items())
-                      + ". Write reason as a short grounded summary, not a restatement of the brief. "
+                      + ". AIM FOR ABOUT 80% OF EACH LIMIT (" + "; ".join(
+                          f"{field} ~{int(maximum * _TECHNICAL_CHOICE_TARGET_RATIO)}"
+                          for field, maximum in _technical_choice_length_budget().items()
+                          if field not in _TRIM_EXEMPT_FIELDS)
+                      + ") because character counts are easy to overshoot; never exceed the hard limit. "
+                      "Write reason as a short grounded summary, not a restatement of the brief. "
                       "Code supplies provenance and research_status; do not spend reason characters repeating them.",
                       log, progress, validate=validate, schema=arch_stack_options_schema(req_ids),
                       stream_items=False, item_label=f"technical-choice:{key}")

@@ -10,6 +10,9 @@ from spec_generator.worker_runtime import JobRuntime,job_runtime
 from spec_generator.model_config import StageModel
 from spec_generator.revision_worker import run_revision_proposal
 from test_revision_checkpoint import source
+import os
+
+pytestmark = pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="pinned SQLite reader requires /proc/self/fd (Linux); covered by CI")
 
 
 def setup(tmp_path):

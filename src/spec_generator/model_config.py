@@ -230,6 +230,40 @@ def _capture_rejected_completion(stage: str, item: str | None, attempt: int,
     return str(path)
 
 
+def capture_fitted_output(stage: str, item: str | None, trims: list) -> str:
+    """Keep the byte-exact pre-trim text of every fitted field next to rejected-llm-outputs."""
+    from .stop_fence import guarded_publish
+    return guarded_publish(lambda: _capture_fitted_output(stage, item, trims))
+
+
+def _capture_fitted_output(stage: str, item: str | None, trims: list) -> str:
+    from .stop_fence import check_execution
+    check_execution()
+    from pathlib import Path
+    sink = _llm_log_sink()
+    root = Path(sink).expanduser().resolve().parent if sink and sink != "stderr" else Path.cwd()
+    fitted = root / "fitted-llm-outputs"
+    fitted.mkdir(parents=True, exist_ok=True)
+    safe_item = _re.sub(r"[^A-Za-z0-9_.-]+", "-", item or "call").strip("-")
+    manifest = fitted / "manifest.jsonl"
+    last = ""
+    for trim in trims:
+        safe_field = _re.sub(r"[^A-Za-z0-9_.-]+", "-", trim["field"]).strip("-")
+        stem = f"{stage}--{safe_item}--{safe_field}"
+        path = fitted / f"{stem}.original.txt"
+        suffix = 2
+        while path.exists():
+            path = fitted / f"{stem}--{suffix}.original.txt"; suffix += 1
+        tmp = path.with_suffix(path.suffix + ".tmp"); tmp.write_text(trim["original"], encoding="utf-8"); os.replace(tmp, path)
+        with manifest.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"path": str(path), "stage": stage, "item": item, "field": trim["field"],
+                                 "limit": trim["limit"], "chars_before": trim["before"], "chars_after": trim["after"],
+                                 "fitted_text": trim["fitted"]}, ensure_ascii=False) + "\n")
+        _console_line(f"     - boundary=technical-choice-fit item={item} trimmed:{trim['field']}:{trim['before']}->{trim['after']} original saved: {path}")
+        last = str(path)
+    return last
+
+
 def capture_failed_completion(stage: str, item: str | None, raw: str) -> str:
     """Compatibility wrapper for callers that only know terminal failure."""
     return capture_rejected_completion(stage, item, 2, raw, "terminal-contract-failure")

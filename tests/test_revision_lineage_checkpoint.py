@@ -5,6 +5,9 @@ from spec_generator.revision_checkpoint import seed_lineage_revision_checkpoint
 from spec_generator.stop_fence import StopFence
 from spec_generator.cooperative_run import cli_execution
 from test_revision_checkpoint import source
+import os
+
+pytestmark = pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="pinned SQLite reader requires /proc/self/fd (Linux); covered by CI")
 
 
 def lineage():

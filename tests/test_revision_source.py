@@ -1,6 +1,9 @@
 import pytest
 from spec_generator.revision_source import read_closed_checkpoint
 from test_revision_worker import setup
+import os
+
+pytestmark = pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="pinned SQLite reader requires /proc/self/fd (Linux); covered by CI")
 
 
 def test_pinned_checkpoint_returns_exact_state_without_new_sidecars(tmp_path):
