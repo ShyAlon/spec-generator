@@ -1991,6 +1991,54 @@ def _clear_feedback(state: GenState, stage: str) -> dict:
 REVIEW_MAX_FINDINGS = REVIEW_CHUNK_MAX_FINDINGS
 REVIEW_MAX_TARGET_IDS = 8
 REVIEW_MAX_FIX_CHARS = 320
+# Admission refuses a call when (request wire bytes + ~7.3K overhead + the 8192 output cap) exceeds the
+# 128000 ceiling (resume 5 of run 06: review item 6, 114,988 bytes). A review call stays under this many
+# prompt bytes, leaving ~12K of margin. The gate is not changed; an oversized cluster is split instead.
+REVIEW_PROMPT_MAX_BYTES = 100_000
+
+
+def _split_review_cluster(fixed_bytes: int, items: list, tests: list, budget: int = REVIEW_PROMPT_MAX_BYTES) -> list:
+    """Split one requirement's linked items/tests into parts whose prompts fit the budget.
+
+    fixed_bytes is the size of the prompt with no items and no tests. Returns a list of
+    (items, tests) parts in stable order. One part (the input unchanged) when it already fits,
+    so an unsplit review prompt is byte-identical to what it was before. Each item travels with the
+    tests that name its spec; a test linked only through a criterion goes where it fits. An item whose
+    own tests do not fit is repeated with a subset of them. One item larger than the budget stays alone
+    (the admission gate then names it; it is never cut)."""
+    def size(x):
+        return len(json.dumps(_prompt_view(x)).encode()) + 2
+    if fixed_bytes + sum(size(i) for i in items) + sum(size(t) for t in tests) <= budget:
+        return [(items, tests)]
+    by_spec = {}
+    spec_ids = {i.get("spec_id") for i in items}
+    for t in tests:
+        by_spec.setdefault(t.get("spec_id") if t.get("spec_id") in spec_ids else None, []).append(t)
+    room = max(1, budget - fixed_bytes)
+    parts = []  # [items, tests, used]
+    def place(it, ts):
+        need = (size(it) if it is not None else 0) + sum(size(t) for t in ts)
+        for part in parts:
+            if part[2] + need <= room:
+                if it is not None:
+                    part[0].append(it)
+                part[1].extend(ts); part[2] += need
+                return
+        parts.append([[it] if it is not None else [], list(ts), need])
+    for it in items:
+        own = by_spec.get(it.get("spec_id"), [])
+        if size(it) + sum(size(t) for t in own) <= room:
+            place(it, own)
+            continue
+        group, used = [], size(it)
+        for t in own:
+            if group and used + size(t) > room:
+                parts.append([[it], group, used]); group, used = [], size(it)
+            group.append(t); used += size(t)
+        parts.append([[it], group, used])
+    for t in by_spec.get(None, []):
+        place(None, [t])
+    return [(p[0], p[1]) for p in parts if p[0] or p[1]]
 
 
 _REMOVAL_INTENT = _re.compile(
@@ -3455,19 +3503,46 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     f"     - boundary=review-batch round={n} batch={index}/{len(chunks)} requirements={len(req_chunk)} "
                     f"linked_items={len(chunk_items)} linked_tests={len(chunk_tests)} projected_input_chars={projected_input_chars} "
                     f"max_findings={REVIEW_CHUNK_MAX_FINDINGS} max_fix_chars=320 decision=bounded-single-requirement-review")
-                saved[chunk_id] = _call_json(
-                    "review", STAGE_PROMPTS["review"].format(n=n)
-                    + f"\n\nREVIEW CHUNK {index}/{len(chunks)}. Return ONLY concrete findings whose primary target "
-                      "is in this one-requirement cluster. Never restate requirements, specs, tests, or rationale. "
-                      f"At most {REVIEW_CHUNK_MAX_FINDINGS} findings. Each fix is one imperative sentence, at most 320 characters. "
-                      "Cross-chunk consistency is checked deterministically after aggregation."
-                    + _decided_architecture_block(state)
-                    + "\n\nSRS REQUIREMENTS:\n" + json.dumps(_prompt_view(req_chunk))
-                    + "\n\nLINKED ITEMS:\n" + json.dumps(_prompt_view(chunk_items))
-                    + "\n\nLINKED TESTS:\n" + json.dumps(_prompt_view(chunk_tests)),
-                    log, progress, validate=_normalized_review_fixes,
-                    schema=output_schema("review"), stream_items=False,
-                    item_label=f"review {index}/{len(chunks)} ({len(req_chunk)} requirements)")
+                def _review_prompt(items_part, tests_part, part_note=""):
+                    return (STAGE_PROMPTS["review"].format(n=n)
+                        + f"\n\nREVIEW CHUNK {index}/{len(chunks)}. Return ONLY concrete findings whose primary target "
+                          "is in this one-requirement cluster. Never restate requirements, specs, tests, or rationale. "
+                          f"At most {REVIEW_CHUNK_MAX_FINDINGS} findings. Each fix is one imperative sentence, at most 320 characters. "
+                          "Cross-chunk consistency is checked deterministically after aggregation."
+                        + part_note
+                        + _decided_architecture_block(state)
+                        + "\n\nSRS REQUIREMENTS:\n" + json.dumps(_prompt_view(req_chunk))
+                        + "\n\nLINKED ITEMS:\n" + json.dumps(_prompt_view(items_part))
+                        + "\n\nLINKED TESTS:\n" + json.dumps(_prompt_view(tests_part)))
+                fixed = len(_review_prompt([], []).encode()) + len(METHODOLOGY.encode()) + 200
+                parts = _split_review_cluster(fixed, chunk_items, chunk_tests)
+                if len(parts) == 1:
+                    saved[chunk_id] = _call_json(
+                        "review", _review_prompt(chunk_items, chunk_tests),
+                        log, progress, validate=_normalized_review_fixes,
+                        schema=output_schema("review"), stream_items=False,
+                        item_label=f"review {index}/{len(chunks)} ({len(req_chunk)} requirements)")
+                else:
+                    model_config._console_line(
+                        f"     - boundary=review-split round={n} batch={index}/{len(chunks)} parts={len(parts)} "
+                        f"budget_bytes={REVIEW_PROMPT_MAX_BYTES} decision=split-oversized-cluster "
+                        "reason=one prompt would exceed the provider admission ceiling")
+                    merged = []
+                    for k, (items_part, tests_part) in enumerate(parts, 1):
+                        part_id = f"{chunk_id}-part-{k}of{len(parts)}"
+                        if part_id not in saved:
+                            note = (f"\n\nPART {k}/{len(parts)} of this cluster: you see only {len(items_part)} of "
+                                    f"{len(chunk_items)} linked items and {len(tests_part)} of {len(chunk_tests)} linked tests. "
+                                    "Report findings only for what you see here.")
+                            saved[part_id] = _call_json(
+                                "review", _review_prompt(items_part, tests_part, note),
+                                log, progress, validate=_normalized_review_fixes,
+                                schema=output_schema("review"), stream_items=False,
+                                item_label=f"review {index}/{len(chunks)} part {k}/{len(parts)} ({len(req_chunk)} requirements)")
+                            if partials:
+                                partials.save("review", saved)
+                        merged.extend(saved[part_id] or [])
+                    saved[chunk_id] = merged
                 if partials:
                     partials.save("review", saved)
             chunk_findings = _normalized_review_fixes(saved[chunk_id])
