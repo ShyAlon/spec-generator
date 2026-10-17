@@ -30,5 +30,6 @@ class SocketAdmissionGateway:
     def settle_raw(self,attempt,raw_usage):return self._request('settle_raw',{'attempt':attempt,'raw_usage':raw_usage})
     def start(self,attempt):return self._request('start',{'attempt':attempt})
     def uncertain(self,attempt):return self._request('uncertain',{'attempt':attempt})
+    def release(self,attempt,evidence):return self._request('release',{'attempt':attempt,'evidence':evidence})
     def settle(self,attempt,response):return self._request('settle',{'attempt':attempt,'usage':getattr(response,'usage_metadata',None)})
     def close(self):self.stream.close();self.socket.close()

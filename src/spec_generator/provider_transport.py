@@ -7,6 +7,7 @@ Synchronous JSON and terminal-usage SSE supported; async wire prototypes exist; 
 import base64
 import hashlib
 import json
+import sys
 import uuid
 import httpx
 import random
@@ -65,6 +66,40 @@ async def _areserve_serialized_with_retry(gateway,**kw):
             if wait is None:raise
             from .stop_fence import check_execution
             check_execution();await (_asleep or asyncio.sleep)(wait);check_execution()
+
+
+CONNECT_TRIES=3
+_CONNECT_ERRORS=(httpx.ConnectError,httpx.ConnectTimeout)
+
+
+class _Released(Exception):
+    """The ledger released the attempt: the provider provably never got the request."""
+    def __init__(self,exc):self.exc=exc
+
+
+def _release_connect_failure(gateway,attempt,exc):
+    """Ask the ledger to release an attempt that never reached the provider. False keeps the uncertain path."""
+    release=getattr(gateway,'release',None)
+    if release is None or not isinstance(exc,_CONNECT_ERRORS):return False
+    try:
+        release(attempt,{'kind':'connect-failure','error_class':type(exc).__name__,'bytes_sent':0,'response_seen':False})
+        return True
+    except Exception as refused:
+        _note_connect(exc,1,None,None,f'release-refused: {type(refused).__name__}: {(getattr(refused,"reason","") or str(refused))[:200]}')
+        return False
+
+
+def _note_connect(exc,try_no,t0,wait,released='yes'):
+    try:
+        from . import model_config
+        elapsed=(time.monotonic()-t0) if t0 is not None else 0.0
+        msg=(f"  WARNING boundary=provider-connect {datetime.now(timezone.utc).isoformat(timespec='seconds')} "
+             f"elapsed={elapsed:.1f}s try={try_no}/{CONNECT_TRIES} error={type(exc).__name__}: {str(exc)[:300]} "
+             f"released={released} decision={'retry-in-%.1fs' % wait if wait is not None else 'stop'} billing=none-for-released-attempt")
+        model_config._console_line(msg)
+        model_config._log_llm({'event':'provider_connect_retry','try':try_no,'tries':CONNECT_TRIES,'error':{'class':type(exc).__name__,'message':str(exc)[:300]},
+                               'released':released,'decision':'retry' if wait is not None else 'stop'})
+    except Exception:pass
 
 
 class WireEvidence:
@@ -139,6 +174,17 @@ class AdmittedTransport(httpx.BaseTransport):
                 raise ValueError('one explicit output cap required')
         except (ValueError,TypeError) as exc:
             raise AdmissionUnavailable('unsupported complete SDK request') from exc
+        t0=time.monotonic()
+        for try_no in range(1,CONNECT_TRIES+1):
+            try:return self._dispatch(request,raw,payload,caps)
+            except _Released as rel:
+                wait=RESERVE_WAITS[try_no-1]+random.uniform(0,0.5) if try_no<CONNECT_TRIES else None
+                _note_connect(rel.exc,try_no,t0,wait)
+                if wait is None:raise rel.exc
+                check_execution();_sleep(wait);check_execution()
+
+    def _dispatch(self,request,raw,payload,caps):
+        from .stop_fence import check_execution
         attempt=_reserve_serialized_with_retry(self.gateway,attempt_id=uuid.uuid4().hex,
             stage=self.stage,provider=self.provider,model=self.model,
             serialized_request=base64.b64encode(raw).decode('ascii'),max_output_tokens=caps[0])
@@ -166,6 +212,8 @@ class AdmittedTransport(httpx.BaseTransport):
         except BaseException:
             if response is not None:response.close()
             if not settled:
+                exc=sys.exc_info()[1]
+                if response is None and _release_connect_failure(self.gateway,attempt,exc):raise _Released(exc) from exc
                 try:self.gateway.uncertain(attempt)
                 except Exception:pass
             raise
@@ -281,6 +329,18 @@ class AsyncAdmittedTransport(httpx.AsyncBaseTransport):
                 raise ValueError('one explicit output cap required')
         except (ValueError,TypeError) as exc:
             raise AdmissionUnavailable('unsupported complete SDK request') from exc
+        import asyncio
+        t0=time.monotonic()
+        for try_no in range(1,CONNECT_TRIES+1):
+            try:return await self._adispatch(request,raw,payload,caps)
+            except _Released as rel:
+                wait=RESERVE_WAITS[try_no-1]+random.uniform(0,0.5) if try_no<CONNECT_TRIES else None
+                _note_connect(rel.exc,try_no,t0,wait)
+                if wait is None:raise rel.exc
+                check_execution();await (_asleep or asyncio.sleep)(wait);check_execution()
+
+    async def _adispatch(self,request,raw,payload,caps):
+        from .stop_fence import check_execution
         attempt=await _areserve_serialized_with_retry(self.gateway,attempt_id=uuid.uuid4().hex,
             stage=self.stage,provider=self.provider,model=self.model,
             serialized_request=base64.b64encode(raw).decode('ascii'),max_output_tokens=caps[0])
@@ -308,6 +368,8 @@ class AsyncAdmittedTransport(httpx.AsyncBaseTransport):
         except BaseException:
             if response is not None:await response.aclose()
             if not settled:
+                exc=sys.exc_info()[1]
+                if response is None and _release_connect_failure(self.gateway,attempt,exc):raise _Released(exc) from exc
                 try:self.gateway.uncertain(attempt)
                 except Exception:pass
             raise
