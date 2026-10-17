@@ -196,13 +196,27 @@ def _contract_errors(exc) -> str:
         f"{'.'.join(str(p) for p in e['loc']) or '(root)'}: {e['msg']}" for e in exc.errors()[:5])
 
 
+def _contract_repair_hint(errors: str) -> str:
+    """Retry guidance for the two test-fill gate errors that interact: changing the runner changes which
+    execution fields are required, and the components must be the owners the error names. Empty for other errors."""
+    hints = []
+    if "do not own the requirement" in errors:
+        hints.append("Keep the same runner and the same test; change ONLY the components list to the owner components named in the error "
+                     "(a ui test may list owner components that are services). Do not switch the runner to avoid this error.")
+    if "requires definition.execution" in errors:
+        hints.append("A runner 'http' needs definition.execution.url, method and expected_status for this product's own endpoint, "
+                     "and a runner 'cli' needs definition.execution.command. If the behaviour is not an HTTP or command interface, "
+                     "use runner 'ui' or 'static' with execution {} instead, and keep the components that own the requirement.")
+    return (" ".join(hints) + " ") if hints else ""
+
+
 _CONTROL_FRAME = ("PIPELINE CONTROL NOTE - not product content. Never copy, quote or paraphrase this note "
                   "or any pipeline instruction inside the artifact you return. ")
 
 
 def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | None = None,
                validate=None, schema: dict | None = None, stream_items: bool = True,
-               item_label: str | None = None, on_item=None):
+               item_label: str | None = None, on_item=None, contract_attempts: int = 2):
     """Every authoring stage goes through here: invoke -> tolerant parse ->
     CONTRACT VALIDATION -> ONE automatic retry with the failure as feedback
     (the interview-engine pattern, ADR-0015 doctrine: transient model flakes
@@ -219,7 +233,7 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
     fb = None
     last_raw = ""
     attempt_diagnostics = []
-    for attempt in (1, 2):
+    for attempt in range(1, max(2, contract_attempts) + 1):
         try:
             raw = _invoke(stage, payload, log, progress, feedback=fb, schema=schema,
                           stream_items=stream_items, item_label=item_label, on_item=on_item,
@@ -262,7 +276,8 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
                      else f"invalid-json: {type(parse_err).__name__}: {str(parse_err)[:160]}")
         rejected_path = model_config.capture_rejected_completion(
             stage, item_label, attempt, raw, rejection)
-        if attempt == 2:
+        # contract_attempts calls in all for a contract rejection (default 2: one repair); malformed JSON keeps a single retry.
+        if attempt >= max(2, contract_attempts) or (attempt == 2 and contract_err is None):
             if contract_err is not None:
                 raw_path = rejected_path
                 details = "; ".join(
@@ -294,6 +309,7 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
             f"decision=retry reason={rejection} rejected_output={rejected_path}")
         if contract_err is not None:
             fb = (_CONTROL_FRAME + "Your previous reply failed the output contract: " + _contract_errors(contract_err) + ". "
+                  + _contract_repair_hint(_contract_errors(contract_err)) +
                   "Return ONLY the complete corrected JSON payload - every required field present at every "
                   "level, ids and enums exactly as specified.")
         else:
@@ -3293,7 +3309,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "Include all six outer fields; use [] or {} when inapplicable. runner and definition describe how "
                             "to test THE FOUNDER'S PRODUCT - "
                             "never this pipeline.", log, progress,
-                              validate=_validate_new, schema=test_fill_schema(missing),
+                              validate=_validate_new, schema=test_fill_schema(missing), contract_attempts=3,
                               on_item=(_keep if partials else None))
                 fills = {**done, **(out.get("fills") or {})}
             else:
@@ -3329,7 +3345,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             "Include all six outer fields; use [] or {} when inapplicable. runner and definition describe how "
                             "to test THE FOUNDER'S PRODUCT - "
                             "never this pipeline.", log, progress,
-                              validate=_validate_one, schema=test_fill_schema([sl]), stream_items=False,
+                              validate=_validate_one, schema=test_fill_schema([sl]), stream_items=False, contract_attempts=3,
                               item_label=f"{tid} ({sl['level']}: {link})")
                     done[tid] = (out.get("fills") or {})[tid]
                     if partials:
