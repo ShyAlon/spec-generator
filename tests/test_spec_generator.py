@@ -87,7 +87,7 @@ def test_main_prints_the_chosen_baseline(capsys):
     # a baseline that silently belongs to a different system is the
     # grounded-but-wrong failure mode (2026-09-12 review)
     import inspect
-    src = inspect.getsource(__import__("spec_generator.cli", fromlist=["main"]).main)
+    src = inspect.getsource(__import__("spec_generator.cli", fromlist=["main"])._main)
     assert "System baseline:" in src and "baseline_id" in src and "mode=" in src
 
 

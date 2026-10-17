@@ -16,6 +16,7 @@ tmp+rename - a late failure leaves all completed work on disk):
 """
 from __future__ import annotations
 from .docs import refresh_docs, archive_review
+from . import cli_io
 
 import argparse
 import hashlib
@@ -23,7 +24,6 @@ import json
 import os
 import shlex
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -387,7 +387,7 @@ def _apply_saved_architecture_decisions(graph, cfg, prior: dict, outdir: Path, p
     _update_architecture_metadata(graph, cfg, update)
     state = {**prior, **update}
     persist("architecture", merged, state)
-    print("Saved architecture choices applied; continuing at the next stage.", file=sys.stderr)
+    print("Saved architecture choices applied; continuing at the next stage.", file=cli_io.stderr())
     return state
 
 
@@ -419,7 +419,7 @@ def _refresh_technical_choices(graph, cfg, prior, outdir, persist, log, progress
         prior = {**prior, **update}
         persist("architecture", architecture, prior)
     _write_decisions_companion(outdir, architecture)
-    print("Technical-choice metadata updated. Architecture generation was not rerun; no downstream stage started.", file=sys.stderr)
+    print("Technical-choice metadata updated. Architecture generation was not rerun; no downstream stage started.", file=cli_io.stderr())
     return prior
 
 
@@ -667,7 +667,7 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             print(f"\nThe checkpointed {gate} draft predates today's validation fixes. "
                   "This is the expected one-time heal: discarding it and regenerating "
                   "the stage under the fixed pipeline - the run continues on its own, "
-                  "do NOT rerun the command.\n", file=sys.stderr)
+                  "do NOT rerun the command.\n", file=cli_io.stderr())
             result = graph.invoke(initial_state, cfg)
             continue
         if advisories:
@@ -677,36 +677,43 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
         _atomic_write(outdir / f"gate_{gate}.md",md)
         _atomic_write(outdir / f"gate_{gate}.json",json.dumps(artifact, indent=2))
         _atomic_write(outdir / f"gate_{gate}.advisories.json",json.dumps({"gate":gate,"advisories":advisories},indent=2))
-        print(f"\n===== REVIEW GATE: the {title} =====\n", file=sys.stderr)
-        print(md, file=sys.stderr)
+        print(f"\n===== REVIEW GATE: the {title} =====\n", file=cli_io.stderr())
+        print(md, file=cli_io.stderr())
         if advisories:
-            print(f"(review advisories: {outdir}/gate_{gate}.advisories.json)", file=sys.stderr)
-        print(f"(full artifact: {outdir}/gate_{gate}.md | editable JSON: {outdir}/gate_{gate}.json)", file=sys.stderr)
+            print(f"(review advisories: {outdir}/gate_{gate}.advisories.json)", file=cli_io.stderr())
+        print(f"(full artifact: {outdir}/gate_{gate}.md | editable JSON: {outdir}/gate_{gate}.json)", file=cli_io.stderr())
         if auto_approve:
             action = "a"
             record={"event":"gate.auto_decision", "gate":gate, "action":"accept", "mode":"hands_free",
                     "artifact":f"gate_{gate}.json", "advisory_count":len(advisories)}
             _append_audit(outdir/"audit.jsonl",record)
-            print(f"boundary=hands-free-gate gate={gate} action=accept advisories={len(advisories)} decision=continue", file=sys.stderr)
+            print(f"boundary=hands-free-gate gate={gate} action=accept advisories={len(advisories)} decision=continue", file=cli_io.stderr())
         else:
-            from vmodel_contracts.decisions import emit_decision,founder_decision
-            emit_decision(founder_decision(f"{gate}-review",f"Review {title}",f"What should happen at the {gate} gate?",[
+            from vmodel_contracts.decisions import founder_decision
+            options=[
                 {"value":"a","label":"Accept","summary":"Approve this artifact and continue."},
                 {"value":"e","label":"Edit","summary":"Open the generated JSON for a validated edit."},
                 {"value":"f","label":"Feedback","summary":"Regenerate this phase from founder feedback."},
-                {"value":"r","label":"Reject","summary":"Stop at this checkpoint."}]))
+                {"value":"r","label":"Reject","summary":"Stop at this checkpoint."}]
+            # A hosted run never opens an editor on the server; the app edits through its own review screen.
+            if cli_io.bound():options=[o for o in options if o["value"]!="e"]
+            decision=founder_decision(f"{gate}-review",f"Review {title}",f"What should happen at the {gate} gate?",options)
+            cli_io.emit(decision)
+            valid=[o["value"] for o in options]
             while True:
-                action = input("[a]ccept / [e]dit / [f]eedback / [r]eject? ").strip().lower()
-                if action in ("a", "e", "f", "r"):
+                action = cli_io.read(decision,"[a]ccept / [e]dit / [f]eedback / [r]eject? ").strip().lower()
+                if action in valid:
                     break
         if action == "r":
-            print(f"Rejected at the {gate} gate. The run is checkpointed - {_mc._rerun_guidance(gate)}.", file=sys.stderr)
+            from . import model_config as _mc
+            print(f"Rejected at the {gate} gate. The run is checkpointed - {_mc._rerun_guidance(gate)}.", file=cli_io.stderr())
             raise SystemExit(1)
         if action == "f":
-            emit_decision(founder_decision(f"{gate}-feedback",f"Feedback for {title}","What should regeneration change?",[
+            decision=founder_decision(f"{gate}-feedback",f"Feedback for {title}","What should regeneration change?",[
                 {"value":"feedback","label":"Send feedback","summary":"Regenerate the phase using your written steer."}],
-                rationale_required=True,rationale_label="Founder feedback",answer_format="feedback - <rationale>"))
-            raw_feedback = input("Feedback (one line, founder language): ").strip()
+                rationale_required=True,rationale_label="Founder feedback",answer_format="feedback - <rationale>")
+            cli_io.emit(decision)
+            raw_feedback = cli_io.read(decision,"Feedback (one line, founder language): ").strip()
             fb = raw_feedback.partition(" - ")[2].strip() if raw_feedback.startswith("feedback - ") else raw_feedback
             if fb:
                 result = graph.invoke(Command(resume={"action": "regenerate", "feedback": fb}), cfg)
@@ -720,11 +727,11 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
                     _validate_gate_edit(gate, edited, intent)
                     break
                 except json.JSONDecodeError as e:
-                    print(f"Invalid JSON ({e}) - reopening the editor.", file=sys.stderr)
+                    print(f"Invalid JSON ({e}) - reopening the editor.", file=cli_io.stderr())
                 except UserFacingError as e:
-                    print(e.render() + "\nReopening the editor.", file=sys.stderr)
+                    print(e.render() + "\nReopening the editor.", file=cli_io.stderr())
             graph.update_state(cfg, {gate: edited})
-            print("Edit accepted and validated.", file=sys.stderr)
+            print("Edit accepted and validated.", file=cli_io.stderr())
         result = graph.invoke(Command(resume={"action": "accept"}), cfg)
 
 
@@ -871,13 +878,13 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     if conops:
         _atomic_write(outdir / "conops.json", json.dumps(conops, indent=2))
     loaded = [*(_ONLY_STAGE_INPUTS[args.only_stage])]
-    print(f"Stage iteration: {args.only_stage}", file=sys.stderr)
-    print(f"Loaded immutable source: {source}", file=sys.stderr)
-    print(f"System baseline: {args.system_baseline.resolve()} ({baseline['mode']}, {len(baseline['repositories'])} repos)", file=sys.stderr)
-    print(f"Loaded upstream: {', '.join(loaded) or 'intent only'}", file=sys.stderr)
+    print(f"Stage iteration: {args.only_stage}", file=cli_io.stderr())
+    print(f"Loaded immutable source: {source}", file=cli_io.stderr())
+    print(f"System baseline: {args.system_baseline.resolve()} ({baseline['mode']}, {len(baseline['repositories'])} repos)", file=cli_io.stderr())
+    print(f"Loaded upstream: {', '.join(loaded) or 'intent only'}", file=cli_io.stderr())
     print(f"Recomputing ONLY: {args.only_stage}; downstream artifacts are copied for comparison, not regenerated.",
-          file=sys.stderr)
-    print(f"New output: {outdir} (source will not be modified)", file=sys.stderr)
+          file=cli_io.stderr())
+    print(f"New output: {outdir} (source will not be modified)", file=cli_io.stderr())
     refresh_docs(outdir, intent=intent, conops=state.get("conops"), start=True, invalidate=args.only_stage)
     log = UsageLog(sid, sink=jsonl_sink(outdir / "usage.jsonl"))
     bus = ProgressBus(); bus.subscribe(stderr_printer())
@@ -893,7 +900,7 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     if args.only_stage == "review":
         _atomic_write(outdir / "review-fixes.json", json.dumps(result.get("review_fixes") or [], indent=2))
     refresh_docs(outdir, intent=intent, event=args.only_stage, state=result)
-    print(f"Stage '{args.only_stage}' written to {outdir}. Source unchanged.")
+    print(f"Stage '{args.only_stage}' written to {outdir}. Source unchanged.", file=cli_io.stdout())
 
 
 
@@ -1011,7 +1018,16 @@ def _reconcile_artifacts(intent: dict, baseline: dict, source: Path,
     refresh_docs(destination, intent=intent, invalidate="items" if changed else None)
     return audit
 
-def main() -> None:
+def main(argv=None, io=None) -> None:
+    """Command-line entry. A trusted caller running the generator in its own process passes argv and a cli_io.RunIO
+    for one run; the command line passes neither and reads the process arguments, stdin, stdout and stderr."""
+    if io is None:
+        return _main(argv)
+    with cli_io.bind(io):
+        return _main(argv)
+
+
+def _main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("intent_model", type=Path)
     ap.add_argument("-o", "--out", type=Path, default=None,
@@ -1063,7 +1079,7 @@ def main() -> None:
     ap.add_argument("--export-handoff",action="store_true",help="zero-LLM validated coding-agent handoff from completed outputs")
     ap.add_argument("--preflight", action="store_true",
                     help="validate inputs and checkpoint compatibility without building a model or spending a call")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     from .cooperative_run import cli_stop_binding
     if cli_stop_binding() is not None and (args.only_stage or args.reconcile_artifacts or args.export_handoff):
         raise UserFacingError("this auxiliary CLI mode has no cooperative Stop binding",
@@ -1128,7 +1144,7 @@ def main() -> None:
                                   "pass intent_model.json and conops.json from the same interview output directory.")
     else:
         print("WARNING: no Concept of Operations supplied (legacy session) - any product-concept "
-              "choice in architecture is unverified and must be challenged.", file=sys.stderr)
+              "choice in architecture is unverified and must be challenged.", file=cli_io.stderr())
 
     if args.system_baseline is None:
         raise UserFacingError(
@@ -1139,7 +1155,7 @@ def main() -> None:
     baseline = _load_system_baseline(args.system_baseline)
     print(f"System baseline: {args.system_baseline.resolve()} "
           f"(id={baseline['baseline_id']}, mode={baseline['mode']}, "
-          f"{len(baseline['repositories'])} repos)", file=sys.stderr)
+          f"{len(baseline['repositories'])} repos)", file=cli_io.stderr())
     sid = intent["session_id"]
     if args.only_stage:
         _run_only_stage(args, intent, sid)
@@ -1148,7 +1164,7 @@ def main() -> None:
     if args.export_handoff:
         from .handoff import build_handoff
         handoff=build_handoff(args.intent_model.parent,outdir)
-        print(json.dumps(handoff));return
+        print(json.dumps(handoff), file=cli_io.stdout());return
     if args.preflight:
         import sqlite3
         cp=outdir / "checkpoints.sqlite"
@@ -1168,24 +1184,24 @@ def main() -> None:
                         "choose a fresh -o directory, or explicitly rerun from architecture under the new baseline.")
         print(f"Preflight OK: session={sid}; seed=intent_model,system_baseline,conops; "
               f"baseline={baseline['baseline_id']}; conops={conops is not None}; "
-              f"checkpoint={'compatible' if cp.exists() else 'fresh'}")
+              f"checkpoint={'compatible' if cp.exists() else 'fresh'}", file=cli_io.stdout())
         return
     if args.reconcile_artifacts:
         audit = _reconcile_artifacts(intent, baseline, outdir, args.reconcile_out,
                                      conops_present=conops is not None)
-        print("Reconciled artifacts with ZERO LLM calls.", file=sys.stderr)
-        print(f"Semantic changes: {', '.join(audit['semantic_changed']) or '(none)'}", file=sys.stderr)
-        print(f"Downstream: {audit['downstream']} ({audit['destination']})", file=sys.stderr)
+        print("Reconciled artifacts with ZERO LLM calls.", file=cli_io.stderr())
+        print(f"Semantic changes: {', '.join(audit['semantic_changed']) or '(none)'}", file=cli_io.stderr())
+        print(f"Downstream: {audit['downstream']} ({audit['destination']})", file=cli_io.stderr())
         return
     outdir.mkdir(parents=True, exist_ok=True)
     refresh_docs(outdir, intent=intent, conops=conops, start=True)
     from vmodel_contracts.runtime import install_plain_log
     run_log = outdir / "run.log"
-    sys.stderr = install_plain_log(run_log, sys.stderr)
+    cli_io.set_stderr(install_plain_log(run_log, cli_io.stderr()))
     # Per-call telemetry is part of every normal run, not an experiment-only
     # opt-in. Preserve an explicit external sink, otherwise keep it beside the bundle.
     os.environ.setdefault("VMODEL_LLM_LOG", str(outdir / "llm-calls.jsonl"))
-    print(f"Run log: {run_log.resolve()} (plain text)", file=sys.stderr)
+    print(f"Run log: {run_log.resolve()} (plain text)", file=cli_io.stderr())
     (outdir / "specs").mkdir(exist_ok=True)
     _atomic_write(outdir / "system-baseline.json", json.dumps(baseline, indent=2))
 
@@ -1231,11 +1247,11 @@ def main() -> None:
 
     if args.from_stage:
         os.environ["SPEC_GENERATOR_FROM"] = args.from_stage  # guardrail errors must not echo --from back
-    print(f"Generating bundle for session {sid} (crash? {_mc._rerun_guidance('')})", file=sys.stderr)
-    print(f"Models: {_mc.describe_models()}", file=sys.stderr)
-    print(f"Bundle dir: {outdir.resolve()}", file=sys.stderr)
+    print(f"Generating bundle for session {sid} (crash? {_mc._rerun_guidance('')})", file=cli_io.stderr())
+    print(f"Models: {_mc.describe_models()}", file=cli_io.stderr())
+    print(f"Bundle dir: {outdir.resolve()}", file=cli_io.stderr())
     print("  progress persists there per item (*.partial.json as items close; stage artifacts land "
-          "as each stage completes)\n", file=sys.stderr)
+          "as each stage completes)\n", file=cli_io.stderr())
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
     if prior and prior.get("repair_proposal") and not (args.approve_repair or args.reject_repair):
@@ -1250,7 +1266,7 @@ def main() -> None:
     prior, dispose_only = _pre_run_actions(graph, cfg, prior, args)
     if dispose_only:
         print("Disposition recorded in the findings ledger. Nothing was resumed or regenerated; "
-              "rerun without --dispose to continue.", file=sys.stderr)
+              "rerun without --dispose to continue.", file=cli_io.stderr())
         return
     prior_ledger_before_run = (prior or {}).get("findings_ledger")
     resume = bool(prior)
@@ -1297,7 +1313,7 @@ def main() -> None:
                 architecture_lifecycle.resume(next_artifact, content=body,
                     compatible_anchor_hashes=(stable_hash(baseline),))
             destination = f"the requested '{args.to_stage}' boundary" if args.to_stage else "the full pipeline"
-            print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through {destination}.", file=sys.stderr)
+            print(f"Checkpoint intentionally stopped after '{bounded_stage}' - continuing through {destination}.", file=cli_io.stderr())
     # --from needs/srs regenerates the SRS and its review, so an unresolved old review must not stop the rewind.
     if resume and args.from_stage not in ('needs','srs') and (prior.get('semantic_reviews') or {}).get('srs'):
         from .semantic_review import load_reviewed_srs
@@ -1309,20 +1325,20 @@ def main() -> None:
             if _srs_review_already_applied(prior,candidate,reviewed):
                 # update_state(as_node=<predecessor of architecture>) re-queues architecture, so
                 # re-applying an unchanged review on every resume re-ran a finished stage (39 min).
-                print('Reviewed SRS items already applied to this checkpoint; continuing at the next stage.',file=sys.stderr)
+                print('Reviewed SRS items already applied to this checkpoint; continuing at the next stage.',file=cli_io.stderr())
             else:
                 reviews={**prior['semantic_reviews'],'srs':reviewed.model_dump(mode='json'),
                          SRS_APPLIED_KEY:_srs_candidate_digest(candidate)}
                 graph.update_state(cfg,{'srs':candidate,'semantic_reviews':reviews},as_node=_predecessor('architecture',args.review))
                 prior={**prior,'srs':candidate,'semantic_reviews':reviews}
-                print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=sys.stderr)
+                print('Reviewed SRS items applied and structurally validated; continuing without rewriting accepted items.',file=cli_io.stderr())
     if args.refresh_technical_choices:
         _refresh_technical_choices(graph, cfg, prior, outdir, persist_fn, log, bus)
         return
     if resume:
         prior = _apply_saved_architecture_decisions(graph, cfg, prior, outdir, persist_fn)
     if resume:
-        print("Checkpoint found - resuming; completed stages are NOT re-run.", file=sys.stderr)
+        print("Checkpoint found - resuming; completed stages are NOT re-run.", file=cli_io.stderr())
         # backfill-persist artifacts for stages completed BEFORE incremental
         # persistence shipped: resume skips completed stages (persist never
         # fires for them), so without this the bundle dir stays empty. State
@@ -1337,7 +1353,7 @@ def main() -> None:
                                                         architecture_lifecycle=checkpoint_lifecycle), prior)
         if written:
             print(f"Artifacts for already-completed stages written to the bundle dir ({', '.join(written)}).",
-                  file=sys.stderr)
+                  file=cli_io.stderr())
     if resume and prior.get("system_baseline") is not None and _resume_constraint_content(prior["system_baseline"]) != _resume_constraint_content(baseline):
         # A completed stage is only "completed" under the baseline it was
         # built with. Resuming under a DIFFERENT anchor must never silently
@@ -1346,14 +1362,14 @@ def main() -> None:
         # never read the baseline; architecture and everything downstream do
         # - invalidate from architecture, loudly, and re-run.
         old_b = prior["system_baseline"]
-        print("WARNING: the --system-baseline for this run differs from the checkpoint's:", file=sys.stderr)
+        print("WARNING: the --system-baseline for this run differs from the checkpoint's:", file=cli_io.stderr())
         print(f"  checkpoint: id={old_b.get('baseline_id')}, mode={old_b.get('mode')}, "
-              f"{len(old_b.get('repositories') or [])} repos", file=sys.stderr)
+              f"{len(old_b.get('repositories') or [])} repos", file=cli_io.stderr())
         print(f"  this run:   id={baseline['baseline_id']}, mode={baseline['mode']}, "
-              f"{len(baseline['repositories'])} repos", file=sys.stderr)
+              f"{len(baseline['repositories'])} repos", file=cli_io.stderr())
         print("  architecture and everything downstream were built under the old anchor - "
               "invalidating them (needs/srs do not depend on the baseline and are preserved).",
-              file=sys.stderr)
+              file=cli_io.stderr())
         architecture_lifecycle.reanchor(["architecture", "items", "tests", "assembly", "manifest", "traceability"])
         graph.update_state(cfg, {"system_baseline": baseline, **_CLEAR_DOWNSTREAM["architecture"]},
                            as_node=_predecessor("architecture", args.review))
@@ -1361,7 +1377,7 @@ def main() -> None:
             saved = partials.load(key) or {}
             if len(saved):
                 print(f"  discarding {len(saved)} preserved item(s) ({key}) - they will be regenerated "
-                      "under the new baseline.", file=sys.stderr)
+                      "under the new baseline.", file=cli_io.stderr())
             partials.clear(key)
         for stale in ("architecture.json", "architecture.md", "items.json", "tests.json", "validation.json",
                       "AGENTS.md", "manifest.json", "traceability.json", "review-fixes.json"):
@@ -1369,7 +1385,7 @@ def main() -> None:
         for stale in (outdir / "specs").glob("SPEC-*.md"):
             stale.unlink()
         print("  stale downstream artifacts removed from the bundle dir; re-running from 'architecture'.",
-              file=sys.stderr)
+              file=cli_io.stderr())
     elif resume and prior.get("system_baseline") is None:
         # --system-baseline is authoritative for THIS invocation. Old
         # checkpoints predate the baseline feature entirely (the 2026-09-12
@@ -1383,14 +1399,14 @@ def main() -> None:
         graph.update_state(cfg, {"system_baseline": baseline},
                            as_node=_predecessor("architecture", args.review))
         print("System baseline merged into the resumed run (its checkpoint predates the baseline feature).",
-              file=sys.stderr)
+              file=cli_io.stderr())
     if args.from_stage:
         _invalidate_from(graph, cfg, args.from_stage, args.review)
         for key in _PARTIAL_DOWNSTREAM.get(args.from_stage, ()):
             saved = partials.load(key) or {}
             if len(saved):
                 print(f"warning: --from {args.from_stage} discards {len(saved)} preserved item(s) "
-                      f"({key}) - they will be regenerated.", file=sys.stderr)
+                      f"({key}) - they will be regenerated.", file=cli_io.stderr())
             partials.clear(key)
         refresh_docs(outdir, intent=intent, conops=conops, invalidate=args.from_stage)
         resume = args.from_stage != "needs"
@@ -1398,7 +1414,7 @@ def main() -> None:
             kept = [s for s in STAGE_ORDER[:STAGE_ORDER.index(args.from_stage)] if prior.get(s)]
             print(f"Re-running from stage '{args.from_stage}' under the current code - "
                   f"preserved: {', '.join(kept) or '(nothing)'}; downstream state invalidated.",
-                  file=sys.stderr)
+                  file=cli_io.stderr())
     if args.review:
         result = _run_with_gates(graph, cfg,
                                  {"intent_model": intent, "system_baseline": baseline, "conops": conops},
@@ -1415,10 +1431,10 @@ def main() -> None:
     if result.get("quick_stop"):
         text = _quick_summary(prior_ledger_before_run, result.get("findings_ledger"), outdir)
         _atomic_write(outdir / "quick-repair-summary.md", text)
-        print(text)
+        print(text, file=cli_io.stdout())
         return
     if args.to_stage:
-        print(f"Stopped after stage '{args.to_stage}' as requested. Checkpoint and stage artifacts are resumable in {outdir}.")
+        print(f"Stopped after stage '{args.to_stage}' as requested. Checkpoint and stage artifacts are resumable in {outdir}.", file=cli_io.stdout())
         return
 
     b = result.get("bundle")
@@ -1478,10 +1494,10 @@ def main() -> None:
 
     refresh_docs(outdir, intent=intent, conops=conops, event="assemble", state=result)
     if result.get("violations"):
-        print("WARNING - traceability violations (in punch list):")
+        print("WARNING - traceability violations (in punch list):", file=cli_io.stdout())
         for v in result["violations"]:
-            print(f"  - {v}")
-    print(f"Bundle written to {outdir}/  |  generation cost: ${log.total_usd():.4f}")
+            print(f"  - {v}", file=cli_io.stdout())
+    print(f"Bundle written to {outdir}/  |  generation cost: ${log.total_usd():.4f}", file=cli_io.stdout())
 
 
 if __name__ == "__main__":
