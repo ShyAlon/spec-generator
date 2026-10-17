@@ -1,6 +1,6 @@
 """Local inherited-descriptor worker gateway. No reconnect or permissive retry."""
 import json,os,socket,threading
-from .attempt_admission import AdmissionUnavailable
+from .attempt_admission import AdmissionUnavailable,AdmissionRefused
 
 class SocketAdmissionGateway:
     def __init__(self,fd):
@@ -17,9 +17,13 @@ class SocketAdmissionGateway:
                 response=self.stream.readline(1024*1024+1)
             if len(response)>1024*1024 or not response.endswith(b'\n'):raise ValueError('invalid frame')
             reply=json.loads(response)
-            if not isinstance(reply,dict) or set(reply)-{'ok','result','error'} or reply.get('ok') is not True:raise ValueError('denied')
+            if not isinstance(reply,dict) or set(reply)-{'ok','result','error','reason'}:raise ValueError('invalid reply')
+            if reply.get('ok') is not True:
+                reason=reply.get('reason');reason=reason[:300] if isinstance(reason,str) else ''
+                raise AdmissionRefused('worker attempt admission refused'+(': '+reason if reason else ' (the server gave no reason)'),reason)
             return reply.get('result')
-        except Exception as exc:raise AdmissionUnavailable('worker attempt admission unavailable or denied') from exc
+        except AdmissionRefused:raise
+        except Exception as exc:raise AdmissionUnavailable('worker attempt admission unavailable or denied: '+type(exc).__name__+(': '+str(exc)[:200] if str(exc) else '')) from exc
 
     def reserve(self,**payload):return self._request('reserve',payload)
     def reserve_serialized(self,**payload):return self._request('reserve_serialized',payload)

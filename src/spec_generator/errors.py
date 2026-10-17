@@ -69,7 +69,7 @@ def translate_llm_error(exc: Exception, stage: str, provider: str, model: str, b
     cause=exc;seen=set()
     while cause is not None and id(cause) not in seen:
         seen.add(id(cause))
-        if type(cause).__name__ in ('AdmissionDenied','AdmissionUnavailable'):
+        if type(cause).__name__ in ('AdmissionDenied','AdmissionUnavailable','AdmissionRefused'):
             return UserFacingError(f"stage '{stage}' was stopped by admission/accounting checks.",
                 str(cause), "preserve the run evidence and review its ledger; do not retry or blame connectivity.")
         cause=cause.__cause__ or cause.__context__

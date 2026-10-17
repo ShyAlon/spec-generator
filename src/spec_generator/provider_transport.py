@@ -9,7 +9,62 @@ import hashlib
 import json
 import uuid
 import httpx
-from .attempt_admission import AdmissionUnavailable
+import random
+import time
+from datetime import datetime, timezone
+from .attempt_admission import AdmissionUnavailable, AdmissionRefused
+
+# Bounded retry of the RESERVE step only. A refused reserve leaves no attempt row, nothing is sent to the
+# provider and nothing is billed, and the retry reuses the same attempt id (the ledger replays an existing
+# attempt with the same fingerprint instead of creating a second one). Never retried: a refusal the server
+# names as deterministic (AdmissionDenied / TenantAccessDenied), a socket timeout or broken frame (the
+# channel may be out of step), start, settle, and anything after the request went out.
+RESERVE_TRIES=3
+RESERVE_WAITS=(2.0,5.0)
+_DETERMINISTIC=('AdmissionDenied','TenantAccessDenied')
+_sleep=time.sleep
+_asleep=None
+
+
+def _retryable(exc):
+    return isinstance(exc,AdmissionRefused) and not exc.reason.startswith(_DETERMINISTIC)
+
+
+def _note_retry(exc,try_no,t0,wait):
+    try:
+        from . import model_config
+        msg=(f"  WARNING boundary=admission-retry {datetime.now(timezone.utc).isoformat(timespec='seconds')} "
+             f"elapsed={time.monotonic()-t0:.1f}s try={try_no}/{RESERVE_TRIES} error={type(exc).__name__}: {str(exc)[:300]} "
+             f"decision={'retry-in-%.1fs' % wait if wait is not None else 'stop'} billing=no-attempt-created")
+        model_config._console_line(msg)
+        model_config._log_llm({'event':'admission_retry','try':try_no,'tries':RESERVE_TRIES,'error':{'class':type(exc).__name__,'message':str(exc)[:300]},
+                               'decision':'retry' if wait is not None else 'stop'})
+    except Exception:pass
+
+
+def _reserve_serialized_with_retry(gateway,**kw):
+    t0=time.monotonic()
+    for try_no in range(1,RESERVE_TRIES+1):
+        try:return gateway.reserve_serialized(**kw)
+        except AdmissionUnavailable as exc:
+            wait=RESERVE_WAITS[try_no-1]+random.uniform(0,0.5) if _retryable(exc) and try_no<RESERVE_TRIES else None
+            _note_retry(exc,try_no,t0,wait)
+            if wait is None:raise
+            from .stop_fence import check_execution
+            check_execution();_sleep(wait);check_execution()
+
+
+async def _areserve_serialized_with_retry(gateway,**kw):
+    import asyncio
+    t0=time.monotonic()
+    for try_no in range(1,RESERVE_TRIES+1):
+        try:return gateway.reserve_serialized(**kw)
+        except AdmissionUnavailable as exc:
+            wait=RESERVE_WAITS[try_no-1]+random.uniform(0,0.5) if _retryable(exc) and try_no<RESERVE_TRIES else None
+            _note_retry(exc,try_no,t0,wait)
+            if wait is None:raise
+            from .stop_fence import check_execution
+            check_execution();await (_asleep or asyncio.sleep)(wait);check_execution()
 
 
 class WireEvidence:
@@ -84,7 +139,7 @@ class AdmittedTransport(httpx.BaseTransport):
                 raise ValueError('one explicit output cap required')
         except (ValueError,TypeError) as exc:
             raise AdmissionUnavailable('unsupported complete SDK request') from exc
-        attempt=self.gateway.reserve_serialized(attempt_id=uuid.uuid4().hex,
+        attempt=_reserve_serialized_with_retry(self.gateway,attempt_id=uuid.uuid4().hex,
             stage=self.stage,provider=self.provider,model=self.model,
             serialized_request=base64.b64encode(raw).decode('ascii'),max_output_tokens=caps[0])
         if not attempt:raise AdmissionUnavailable('serialized request was not admitted')
@@ -226,7 +281,7 @@ class AsyncAdmittedTransport(httpx.AsyncBaseTransport):
                 raise ValueError('one explicit output cap required')
         except (ValueError,TypeError) as exc:
             raise AdmissionUnavailable('unsupported complete SDK request') from exc
-        attempt=self.gateway.reserve_serialized(attempt_id=uuid.uuid4().hex,
+        attempt=await _areserve_serialized_with_retry(self.gateway,attempt_id=uuid.uuid4().hex,
             stage=self.stage,provider=self.provider,model=self.model,
             serialized_request=base64.b64encode(raw).decode('ascii'),max_output_tokens=caps[0])
         if not attempt:raise AdmissionUnavailable('serialized request was not admitted')
