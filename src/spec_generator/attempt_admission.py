@@ -15,6 +15,12 @@ _required=ContextVar('attempt_admission_required',default=False)
 
 class AdmissionUnavailable(RuntimeError):pass
 
+class AdmissionRefused(AdmissionUnavailable):
+    """The gateway answered with a clean refusal frame (the channel is still in sync).
+    reason is the server's own text ("AdmissionDenied: ..."), or '' when an older server gave none."""
+    def __init__(self,message,reason=''):
+        super().__init__(message);self.reason=reason
+
 @contextmanager
 def admission_gateway(gateway,*,required=False):
     token=_gateway.set(gateway);required_token=_required.set(required)
