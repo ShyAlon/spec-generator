@@ -550,7 +550,7 @@ def test_full_resume_reconnects_checkpoint_stopped_after_architecture(monkeypatc
 def test_render_diagnostics_do_not_blame_model_for_none_bundle():
     import inspect
     from spec_generator import cli
-    source=inspect.getsource(cli.main)
+    source=inspect.getsource(cli._main)
     assert "assembly produced no bundle" in source
     assert "changing the model cannot fix a code exception" in source
     assert "artifact '{label}'" in source

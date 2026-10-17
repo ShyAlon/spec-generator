@@ -1,7 +1,7 @@
 """Framed generator progress on the existing subprocess pipe; prose is diagnostic."""
 from __future__ import annotations
 from datetime import datetime, timezone
-import sys
+from . import cli_io
 import os
 import threading
 from uuid import uuid4
@@ -26,8 +26,8 @@ class StructuredProgress:
                 session_id=self.session_id,phase_key=self.fallback_phase,
                 stage=stage,label=label or stage,status=status if status!="item" else "item_completed",
                 detail=detail,timestamp=datetime.now(timezone.utc))
-            sys.stdout.write(PREFIX+signal.model_dump_json()+"\n")
-            sys.stdout.flush()
+            cli_io.stdout().write(PREFIX+signal.model_dump_json()+"\n")
+            cli_io.stdout().flush()
 
     def subscriber(self, event):
         if self._enabled:self.emit(event.stage,event.label,event.status,event.detail)

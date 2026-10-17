@@ -430,7 +430,7 @@ def test_progress_printer_prepends_local_wall_clock_timestamp(capsys):
 def test_normal_cli_defaults_llm_call_log_to_bundle_dir():
     import inspect
     from spec_generator import cli
-    source = inspect.getsource(cli.main)
+    source = inspect.getsource(cli._main)
     assert 'os.environ.setdefault("VMODEL_LLM_LOG", str(outdir / "llm-calls.jsonl"))' in source
     assert source.index('os.environ.setdefault("VMODEL_LLM_LOG"') < source.index('graph = build_graph')
 

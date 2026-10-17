@@ -17,7 +17,7 @@ Event shape:
 """
 from __future__ import annotations
 
-import sys
+from . import cli_io
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -91,27 +91,27 @@ def stderr_printer():
     def _print_inner(ev: ProgressEvent) -> None:
         detail = f" ({ev.detail})" if ev.detail else ""
         if ev.status == "started":
-            print(format_console_line(f"  -> {ev.label}{detail}...", ev.ts, stream=sys.stderr), file=sys.stderr)
+            print(format_console_line(f"  -> {ev.label}{detail}...", ev.ts, stream=cli_io.stderr()), file=cli_io.stderr())
         elif ev.status == "item_started":
             line = f"     - [{_hhmmss(ev.ts)}] {ev.detail}"
-            if sys.stderr.isatty():
-                print(line, end="", file=sys.stderr, flush=True)
+            if cli_io.stderr().isatty():
+                print(line, end="", file=cli_io.stderr(), flush=True)
             else:
-                print(line, file=sys.stderr)
+                print(line, file=cli_io.stderr())
             open_item["detail"] = ev.detail
         elif ev.status == "item":
             if ev.elapsed_s is not None:
                 line = f"     - [{_hhmmss(ev.ts - ev.elapsed_s)}-{_hhmmss(ev.ts)}] {ev.detail}"
             else:
                 line = f"     - {ev.detail}"
-            if open_item["detail"] is not None and sys.stderr.isatty():
-                print("\r" + line + "  ", file=sys.stderr)  # overwrite the running line
+            if open_item["detail"] is not None and cli_io.stderr().isatty():
+                print("\r" + line + "  ", file=cli_io.stderr())  # overwrite the running line
             else:
-                print(line, file=sys.stderr)
+                print(line, file=cli_io.stderr())
             open_item["detail"] = None
         elif ev.status == "completed":
-            print(format_console_line(f"  ok {ev.label}{detail} [{ev.elapsed_s:.1f}s]", ev.ts, "success", sys.stderr), file=sys.stderr)
+            print(format_console_line(f"  ok {ev.label}{detail} [{ev.elapsed_s:.1f}s]", ev.ts, "success", cli_io.stderr()), file=cli_io.stderr())
         else:
-            print(format_console_line(f"  !! {ev.label}{detail} FAILED after {ev.elapsed_s:.1f}s", ev.ts, "error", sys.stderr), file=sys.stderr)
+            print(format_console_line(f"  !! {ev.label}{detail} FAILED after {ev.elapsed_s:.1f}s", ev.ts, "error", cli_io.stderr()), file=cli_io.stderr())
     return _print
 
