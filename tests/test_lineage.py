@@ -127,3 +127,16 @@ def test_provisional_restore_binding_allows_gate_feedback_regeneration(tmp_path)
                  phase="srs", name="srs.json", sha256=new, source="stage-commit")
     assert lineage.verify_file(lineage.load(tmp_path), phase="srs", name="srs.json",
                                path=tmp_path / "srs.json")["sha256"] == new
+
+
+def test_mark_settled_flips_only_the_named_phase(tmp_path):
+    lineage.bind(tmp_path, task_id="t", session_id="s", generation="g", phase="srs",
+                 name="srs.json", sha256="a" * 64, source="restore", settled=False)
+    lineage.bind(tmp_path, task_id="t", session_id="s", generation="g", phase="architecture",
+                 name="architecture.json", sha256="b" * 64, source="restore", settled=False)
+    lineage.mark_settled(tmp_path, "srs")
+    record = lineage.load(tmp_path)
+    assert lineage.lookup(record, "srs", "srs.json")["settled"] is True
+    assert lineage.lookup(record, "architecture", "architecture.json")["settled"] is False
+    lineage.mark_settled(tmp_path, "srs")  # idempotent
+    assert lineage.mark_settled(tmp_path / "missing", "srs") is None

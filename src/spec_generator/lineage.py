@@ -112,12 +112,15 @@ def bind(root: Path, *, task_id, session_id, generation, phase: str, name: str,
     legitimately regenerate the phase on founder feedback) may be re-bound by the
     stage commit that produces it. Explicit --from rewinds invalidate bindings
     first, so the refusal below only fires on an unsanctioned overwrite."""
-    if source not in ("restore", "stage-commit", "founder-decision"):
+    if source not in ("restore", "stage-commit", "founder-decision", "assembly"):
         raise ValueError(f"unknown lineage source {source!r}")
     record = load(root) or {"version": _VERSION, "inputs": {}, "entries": []}
     record["identity"] = _identity(task_id, session_id, generation)
     entries = [e for e in record["entries"] if not (e["phase"] == phase and e["name"] == name)]
     prior = [e for e in record["entries"] if e["phase"] == phase and e["name"] == name]
+    # "assembly" is the authorized terminal rewrite (final bundle render re-serializes
+    # architecture/tests/validation from state); it carries the prior entry's
+    # settledness forward explicitly and is allowed to replace the entry.
     if prior and source == "stage-commit":
         hard = [e for e in prior if e.get("settled", True)]
         if hard and all(e["sha256"] != sha256 for e in hard):
@@ -174,6 +177,23 @@ def verify_file(record: dict, *, phase: str, name: str, path: Path,
                 f"not {expected}; refusing to treat another run's output as settled."
             )
     return entry
+
+
+def mark_settled(root: Path, phase: str) -> dict | None:
+    """Gate approval flips every binding for the phase to settled: from here on a
+    stage commit may not replace those bytes without an explicit rewind (--from or
+    a gate redo, both of which invalidate first)."""
+    record = load(root)
+    if record is None:
+        return None
+    changed = False
+    for entry in record["entries"]:
+        if entry["phase"] == phase and not entry.get("settled", True):
+            entry["settled"] = True
+            changed = True
+    if changed:
+        _write(root, record)
+    return record
 
 
 def invalidate_from(root: Path, phases: set[str]) -> dict | None:

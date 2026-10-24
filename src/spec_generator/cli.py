@@ -108,7 +108,10 @@ def _backfill_persist(persist, values: dict) -> list[str]:
     """Resume companion: persist artifacts for stages completed BEFORE
     incremental persistence shipped (resume skips completed stages, so
     persist() never fires for them and the bundle dir stays empty). State is
-    authoritative - overwrite stale files. Returns the stages written."""
+    authoritative - overwrite stale files. Returns the stages written.
+    Callers with a lineage record must pre-filter lineage-bound stages (their
+    bytes were already verified at hydration): backfill is not an authorized
+    mutation point and must never rewrite approved bytes."""
     written = []
     for stage in ("needs", "srs", "architecture", "items", "tests", "validation"):
         if values.get(stage):
@@ -575,15 +578,70 @@ def _unstamped(value):
     return value
 
 
+def _assembly_rebind_lineage(outdir: Path, sid: str, prior_bytes: dict) -> None:
+    """Re-bind the terminal render's rewrites (architecture/tests/validation) at this
+    authorized mutation point. Only the intended serialization/stamping difference is
+    admitted: when a binding already exists and prior bytes were captured, the new
+    bytes must be semantically equal to the previously bound ones (modulo contract
+    stamping and model serialization). A substantive difference - changed semantic
+    content, lost founder decisions - refuses closed instead of blessing drift.
+    Settledness carries forward from the prior entry; assembly never settles or
+    un-settles a phase on its own."""
+    from . import lineage
+    record = lineage.load(outdir)
+    if record is None:
+        return
+    for phase, name in (("architecture", "architecture.json"), ("tests", "tests.json"),
+                        ("validation", "validation.json")):
+        path = outdir / name
+        if not path.is_file():
+            continue
+        entry = lineage.lookup(record, phase, name)
+        if entry is not None and name in prior_bytes:
+            old = _unstamped(json.loads(prior_bytes[name]))
+            new = _unstamped(json.loads(path.read_bytes()))
+            if phase == "architecture":
+                old = ArchitectureOverview.model_validate(
+                    coerce_for_model(old, ArchitectureOverview)).model_dump(mode="json")
+                new = ArchitectureOverview.model_validate(
+                    coerce_for_model(new, ArchitectureOverview)).model_dump(mode="json")
+            elif phase == "tests":
+                from vmodel_contracts import AcceptanceTest
+                old = [AcceptanceTest.model_validate(coerce_for_model(t, AcceptanceTest)).model_dump(mode="json") for t in old]
+                new = [AcceptanceTest.model_validate(coerce_for_model(t, AcceptanceTest)).model_dump(mode="json") for t in new]
+            elif phase == "validation":
+                from vmodel_contracts import ValidationPlan
+                old = ValidationPlan.model_validate(coerce_for_model(old, ValidationPlan)).model_dump(mode="json")
+                new = ValidationPlan.model_validate(coerce_for_model(new, ValidationPlan)).model_dump(mode="json")
+            if old != new:
+                raise UserFacingError(
+                    f"assembly render changed the bound content of {name} beyond stamping/serialization.",
+                    "the terminal render must re-serialize the same approved content; a substantive "
+                    "difference means graph state and the approved artifact diverged (founder "
+                    "decisions or reviewed content would be lost)",
+                    "restore the session again from the published manifest (no model calls); if the "
+                    "change is intended, rerun explicitly with --from.")
+        lineage.bind(outdir,
+                     task_id=os.environ.get("VMODEL_PROGRESS_TASK_ID", ""),
+                     session_id=sid,
+                     generation=os.environ.get("VMODEL_PROGRESS_GENERATION", "standalone"),
+                     phase=phase, name=name,
+                     sha256=lineage.sha256_file(path),
+                     source="assembly",
+                     revision=(entry or {}).get("revision"),
+                     settled=bool((entry or {}).get("settled", False)))
+
+
 def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode):
     """Settled-work resume: admit prior-stage state ONLY from lineage-bound disk
     artifacts (task/session/generation + content hash + launch-input hashes), never
     from arbitrary disk files, and never silently regenerate a settled stage.
-    Bindings gate stages the checkpoint does not cover - the cross-host pickup case,
-    where checkpoints.sqlite never travels. A checkpoint-covered stage is same-host
-    continuity and runs as before (later sanctioned folds may still rewrite the
-    artifact without re-binding; the binding re-verifies on any host that lacks
-    the checkpoint)."""
+    Restored authority outranks local checkpoint claims: a lineage-bound artifact
+    must match its binding whether or not the checkpoint covers the stage, so a
+    returning host with a stale checkpoint cannot have substituted bytes blessed.
+    Legitimate resume-time rewrites (relabel, reseal) re-bind at their authorized
+    mutation points; anything else that changed a bound artifact fails closed
+    with re-restore recovery."""
     from . import lineage
     record = lineage.load(outdir)
     hosted = bool(os.environ.get("VMODEL_PROGRESS_TASK_ID"))
@@ -618,16 +676,21 @@ def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode):
                     f"'{pending_seen}' has neither checkpoint state nor a binding; resuming "
                     "would regenerate settled downstream work. Restore the session again "
                     "from the published manifest (no model calls), or rerun with --from.")
+            if entry is not None:
+                # Bound artifact: disk must match the binding whether or not the
+                # checkpoint covers the stage - restored authority outranks local
+                # checkpoint claims; a returning host with a stale checkpoint must
+                # not have substituted bytes blessed. Legitimate resume-time
+                # rewrites re-bind at their authorized mutation points.
+                lineage.verify_file(record, phase=stage, name=name, path=path,
+                                    task_id=task_id, session_id=sid, generation=generation)
             if covered:
-                continue  # checkpoint covers it: same-host continuity, runs as before
+                continue  # checkpoint covers it (binding, when present, verified above)
             if entry is None:
                 if stage in ("review",):
                     continue  # no artifact file; the review loop reruns cheaply
                 pending_seen = pending_seen or stage  # pending: this stage runs now
                 continue
-            # Bound artifact and no checkpoint coverage: disk must match the binding.
-            lineage.verify_file(record, phase=stage, name=name, path=path,
-                                task_id=task_id, session_id=sid, generation=generation)
             body = _unstamped(json.loads(path.read_text()))
             try:
                 if stage == "needs":
@@ -644,10 +707,10 @@ def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode):
                     f"settled artifact {stage}/{name} fails contract validation ({exc}); "
                     "restore the session again from the published manifest (no model calls).")
             hydrate[stage] = body
-        # Companions: when bound and the checkpoint does not cover the owning stage,
-        # their disk bytes must match before the decide/review folds.
+        # Companions: when bound, their disk bytes must match before the decide/review
+        # folds, whether or not the checkpoint covers the owning stage.
         for phase, name in (("srs", "srs.semantic-review.json"), ("architecture", "architecture.decisions.json")):
-            if prior.get(phase) is None and lineage.lookup(record, phase, name) is not None:
+            if lineage.lookup(record, phase, name) is not None:
                 lineage.verify_file(record, phase=phase, name=name, path=outdir / name,
                                     task_id=task_id, session_id=sid, generation=generation)
     except lineage.LineageRefusal as exc:
@@ -1492,9 +1555,14 @@ def _main(argv=None) -> None:
         # relabel or rewrite the old complete architecture first.
         checkpoint_lifecycle = ArchitectureLifecycle(
             outdir, sid, prior.get("system_baseline") or baseline)
+        from . import lineage as _lineage_bf
+        _bound_stages = {entry["phase"]
+                         for entry in (_lineage_bf.load(outdir) or {}).get("entries") or []
+                         if (outdir / entry["name"]).is_file()}
         written = _backfill_persist(_make_persist(intent, outdir,
                                                         conops_present=conops is not None,
-                                                        architecture_lifecycle=checkpoint_lifecycle), prior)
+                                                        architecture_lifecycle=checkpoint_lifecycle),
+                                    {k: v for k, v in prior.items() if k not in _bound_stages})
         if written:
             print(f"Artifacts for already-completed stages written to the bundle dir ({', '.join(written)}).",
                   file=cli_io.stderr())
@@ -1511,6 +1579,23 @@ def _main(argv=None) -> None:
               f"{len(old_b.get('repositories') or [])} repos", file=cli_io.stderr())
         print(f"  this run:   id={baseline['baseline_id']}, mode={baseline['mode']}, "
               f"{len(baseline['repositories'])} repos", file=cli_io.stderr())
+        # Approved settled work is never invalidated by a baseline change without
+        # explicit redo authority: check BEFORE touching state, files, or bindings.
+        from . import lineage as _lineage_anchor
+        _downstream_anchor = {st for st in STAGE_ORDER[STAGE_ORDER.index("architecture"):]
+                              if st not in ("review", "assemble")}
+        _settled_anchor = sorted(f"{e['phase']}/{e['name']}"
+                                 for e in (_lineage_anchor.load(outdir) or {}).get("entries", [])
+                                 if e["phase"] in _downstream_anchor and e.get("settled", True))
+        _explicit_redo = (args.from_stage is not None
+                          and STAGE_ORDER.index(args.from_stage) <= STAGE_ORDER.index("architecture"))
+        if _settled_anchor and not _explicit_redo:
+            raise UserFacingError(
+                "the changed --system-baseline would invalidate APPROVED settled work.",
+                f"settled bindings: {', '.join(_settled_anchor)}; a baseline change redoes "
+                "approved work and needs explicit redo authority",
+                "rerun with --from architecture under the new baseline (the explicit rewind), "
+                "or keep the checkpoint's baseline.")
         print("  architecture and everything downstream were built under the old anchor - "
               "invalidating them (needs/srs do not depend on the baseline and are preserved).",
               file=cli_io.stderr())
@@ -1528,6 +1613,7 @@ def _main(argv=None) -> None:
             (outdir / stale).unlink(missing_ok=True)
         for stale in (outdir / "specs").glob("SPEC-*.md"):
             stale.unlink()
+        _lineage_anchor.invalidate_from(outdir, _downstream_anchor)
         print("  stale downstream artifacts removed from the bundle dir; re-running from 'architecture'.",
               file=cli_io.stderr())
     elif resume and prior.get("system_baseline") is None:
@@ -1629,6 +1715,11 @@ def _main(argv=None) -> None:
     _atomic_write(outdir / "architecture.md",
         render_architecture(arch, greenfield=baseline["mode"] == "greenfield",
                             conops_present=conops is not None))
+    _asm_prior = {}
+    for _name in ("architecture.json", "tests.json", "validation.json"):
+        _p = outdir / _name
+        if _p.is_file():
+            _asm_prior[_name] = _p.read_bytes()
     _atomic_write((outdir / "architecture.json"),arch.model_dump_json(indent=2))
     for i in items:
         _atomic_write((outdir / "specs" / f"{i.spec_id}.md"),render_spec_file(i))
@@ -1638,6 +1729,13 @@ def _main(argv=None) -> None:
     _atomic_write((outdir / "tests.json"),json.dumps(b["_tests"], indent=2))
     if b.get("_validation"):
         _atomic_write((outdir / "validation.json"),json.dumps(b["_validation"], indent=2))
+
+    # The terminal render is an authorized mutation point: it re-serializes
+    # architecture/tests/validation from state (unstamped). Re-bind those names so
+    # resume verification admits them; settledness carries forward from the entry
+    # the stage commit or founder decision recorded (assembly never settles or
+    # un-settles a phase on its own).
+    _assembly_rebind_lineage(outdir, sid, _asm_prior)
 
     refresh_docs(outdir, intent=intent, conops=conops, event="assemble", state=result)
     if result.get("violations"):
