@@ -1021,9 +1021,11 @@ def _reconcile_artifacts(intent: dict, baseline: dict, source: Path,
 def main(argv=None, io=None) -> None:
     """Command-line entry. A trusted caller running the generator in its own process passes argv and a cli_io.RunIO
     for one run; the command line passes neither and reads the process arguments, stdin, stdout and stderr."""
+    from .cloud_wire import admitted_child_run
     if io is None:
-        return _main(argv)
-    with cli_io.bind(io):
+        with admitted_child_run():
+            return _main(argv)
+    with cli_io.bind(io), admitted_child_run():
         return _main(argv)
 
 
