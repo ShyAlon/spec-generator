@@ -108,3 +108,42 @@ def test_actual_forced_tool_adapter_remains_wire_bound(monkeypatch):
         for client in clients:
             if isinstance(client,httpx.Client):client.close()
             else:asyncio.run(client.aclose())
+
+
+def test_ollama_model_uses_admitted_wire_and_settles_usage(monkeypatch):
+    """The local Ollama route is admitted like any provider: same job-bound clients,
+    same reserve/start/settle, non-streaming usage from the response envelope."""
+    from spec_generator import model_config as module
+    monkeypatch.setattr(module,'for_stage',lambda stage:SimpleNamespace(provider='ollama',model='qwen2.5-coder:14b',max_tokens=10,temperature=0,seed=None))
+    monkeypatch.setattr(module,'_check_truncated',lambda *args:None)
+    g=Gateway();clients=[];captured=[]
+    usage={'prompt_tokens':5,'completion_tokens':2,'total_tokens':7}
+    def fake(r):
+        captured.append(r.content)
+        payload=json.loads(r.content)
+        assert not payload.get('stream')
+        return httpx.Response(200,json={'id':'fake','object':'chat.completion','model':'qwen2.5-coder:14b','choices':[{'index':0,'message':{'role':'assistant','content':'ok'},'finish_reason':'stop'}],'usage':usage})
+    def factory(**kw):
+        args={k:kw[k] for k in ('stage','provider','model')}
+        pair=(httpx.Client(transport=AdmittedTransport(httpx.MockTransport(fake),g,**args)),httpx.AsyncClient(transport=AsyncAdmittedTransport(httpx.MockTransport(fake),g,**args)))
+        clients.extend(pair);return pair
+    try:
+        with admission_gateway(g,required=True),wire_clients(g,factory):
+            model=module.build_chat_model('needs',structured=False)
+            assert module.invoke_checked(model,['fake'],'needs').content=='ok'
+        assert [e[0] for e in g.events]==['reserve','start','settle']
+        sent=json.loads(base64.b64decode(g.events[0][1]['serialized_request']))
+        assert sent==json.loads(captured[0]) and sent['model']=='qwen2.5-coder:14b'
+    finally:
+        import asyncio
+        for c in clients:
+            if isinstance(c,httpx.Client):c.close()
+            else:asyncio.run(c.aclose())
+
+
+def test_unlisted_provider_still_refused_under_binding():
+    from spec_generator.wire_binding import model_clients,validate_provider
+    g=Gateway()
+    with wire_clients(g,lambda **kw:(None,None)):
+        with pytest.raises(AdmissionUnavailable):validate_provider('anthropic')
+        with pytest.raises(AdmissionUnavailable):model_clients(stage='needs',provider='anthropic',model='fake')

@@ -20,7 +20,7 @@ def wire_clients(gateway,client_factory):
 def model_clients(*,stage,provider,model):
     binding=_binding.get()
     if binding is None:return None
-    if provider not in ('deepseek','openai'):
+    if provider not in ('deepseek','openai','ollama'):
         raise AdmissionUnavailable('provider has no reviewed SDK wire installation')
     from .provider_transport import AdmittedTransport,AsyncAdmittedTransport
     gateway,factory,_=binding
@@ -51,5 +51,5 @@ def wire_model(chat_model,*,stage,provider,model):
 
 
 def validate_provider(provider):
-    if _binding.get() is not None and provider not in ('deepseek','openai'):
+    if _binding.get() is not None and provider not in ('deepseek','openai','ollama'):
         raise AdmissionUnavailable('provider has no reviewed SDK wire installation')
