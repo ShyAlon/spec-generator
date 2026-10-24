@@ -741,3 +741,43 @@ def test_bounded_items_checkpoint_reconnects_to_tests_without_repeating_items(mo
     assert _resume_after_bounded_stop(later,cfg,later.get_state(cfg).values)=='items'
     result=later.invoke(None,cfg)
     assert result.get('tests') and box['items'].calls==items_calls
+
+
+def test_baseline_change_refuses_to_invalidate_approved_settled_work(monkeypatch, tmp_path, capsys):
+    """With lineage bindings present, an approved (settled) phase must NOT be
+    silently invalidated by a baseline change: refuse and require explicit redo
+    authority (--from). Standalone runs without a record keep today's behavior
+    (test_baseline_change_invalidates_architecture_downstream above)."""
+    from spec_generator import lineage
+    box = {}
+    ledger = ModelFactoryLedger(SchemaRoutingArchitectureModel)
+    def factory(stage, **kw):
+        if stage == "architecture": return ledger.build(stage, kw.get("schema"))
+        return box.setdefault(stage, FakeModel(stage))
+    monkeypatch.setattr(model_config, "build_chat_model", factory)
+    intent_file = tmp_path / "intent_model.json"
+    intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
+    b1 = tmp_path / "b1.json"; b1.write_text(json.dumps(SYSTEM_BASELINE))
+    b2 = tmp_path / "b2.json"; b2.write_text(json.dumps(dict(SYSTEM_BASELINE, baseline_id="other-system-v1")))
+    outdir = tmp_path / "bundle"
+    _run_cli(monkeypatch, intent_file, b1, outdir)
+    capsys.readouterr()
+    # gate approves architecture: its binding (written by the terminal render) flips settled
+    lineage.mark_settled(outdir, "architecture")
+    lineage.mark_settled(outdir, "items")
+
+    with pytest.raises(UserFacingError) as refusal:
+        _run_cli(monkeypatch, intent_file, b2, outdir)
+    capsys.readouterr()
+    assert "would invalidate APPROVED settled work" in str(refusal.value)
+    assert "--from architecture" in (refusal.value.next_action or "")
+    entry = lineage.lookup(lineage.load(outdir), "architecture", "architecture.json")
+    assert entry is not None and entry["settled"] is True, "settled bindings survive the refusal"
+    assert ledger.calls("architecture") == 7, "architecture was NOT re-run by the refused resume"
+
+    monkeypatch.setattr(sys, "argv", ["cli", str(intent_file), "-o", str(outdir),
+                                      "--system-baseline", str(b2), "--from", "architecture"])
+    main()
+    err = capsys.readouterr().err
+    assert "WARNING: the --system-baseline for this run differs" in err
+    assert ledger.calls("architecture") > 7, "explicit --from redoes architecture under the new anchor"
