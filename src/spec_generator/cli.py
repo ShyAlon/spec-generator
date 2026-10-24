@@ -632,7 +632,7 @@ def _assembly_rebind_lineage(outdir: Path, sid: str, prior_bytes: dict) -> None:
                      settled=bool((entry or {}).get("settled", False)))
 
 
-def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode):
+def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode, constraints=None):
     """Settled-work resume: admit prior-stage state ONLY from lineage-bound disk
     artifacts (task/session/generation + content hash + launch-input hashes), never
     from arbitrary disk files, and never silently regenerate a settled stage.
@@ -717,20 +717,25 @@ def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode):
         raise UserFacingError("settled-work verification refused this resume.", str(exc),
                               "restore the session again from the published manifest (no model calls).")
     if hydrate:
-        graph.update_state(cfg, hydrate, as_node=_predecessor(target, review_mode))
-        prior = {**prior, **hydrate}
+        # The verified launch constraints ride the SAME write as the hydrated stages:
+        # a second update_state would re-anchor the checkpoint's next pointer past a
+        # bounded stop_after (the resume then executes zero nodes and "completes"
+        # without producing the stage artifact), and a fresh host's checkpoint would
+        # lack the values baseline-consuming stages and the checkpoint-era concept
+        # check read. Only record-bound (and therefore verify_inputs-verified) inputs
+        # are seeded; an unbound supplied input stays the checkpoint's own authority.
+        bound_inputs = (record.get("inputs") or {})
+        constraints = constraints or {}
+        seed = {}
+        for key, input_name, supplied in (
+                ("intent_model", "intent_model.json", True),
+                ("system_baseline", "system-baseline.json", args.system_baseline is not None),
+                ("conops", "conops.json", args.conops is not None)):
+            if supplied and input_name in bound_inputs and constraints.get(key) is not None:
+                seed[key] = constraints[key]
+        graph.update_state(cfg, {**hydrate, **seed}, as_node=_predecessor(target, review_mode))
+        prior = {**prior, **hydrate, **seed}
         print(f"Resumed settled stages from the approved record: {', '.join(sorted(hydrate))}.", file=cli_io.stderr())
-        if (args.conops is not None and prior.get("conops") is None
-                and (record.get("inputs") or {}).get("conops.json")):
-            # Fresh-host resume: the checkpoint carries no concept constraint, but the
-            # supplied conops was verified against the record's bound launch input above,
-            # so the record - not the checkpoint - is the constraint authority here. Seed
-            # the verified content so the checkpoint-era resume constraint check compares
-            # this run's actual approved concept instead of refusing a blank checkpoint.
-            # Without the record's conops binding there is nothing to seed and the
-            # legacy-checkpoint refusal below stands. Applies only when hydration restored
-            # settled stages: a fresh run keeps resume=False and its own seeding.
-            prior["conops"] = json.loads(Path(args.conops).read_text())
     return prior
 
 
@@ -1471,7 +1476,9 @@ def _main(argv=None) -> None:
           "as each stage completes)\n", file=cli_io.stderr())
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
-    prior = _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, args.review)
+    prior = _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, args.review,
+                                constraints={"intent_model": intent, "system_baseline": baseline,
+                                             "conops": conops})
     if prior and prior.get("repair_proposal") and not (args.approve_repair or args.reject_repair):
         raise UserFacingError("a repair proposal is waiting for your decision.",
                               f"the repaired requirements are in {outdir / 'repair-proposal.md'} and are NOT applied.",

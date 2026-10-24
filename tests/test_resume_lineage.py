@@ -237,9 +237,17 @@ def test_fresh_host_resume_seeds_verified_conops_constraint(tmp_path, monkeypatc
                           })
     _bind_artifact(tmp_path, "needs", "needs.json", NEEDS)
     args = _args(tmp_path, "srs", conops=conops_path)
-    prior = _hydrate_from_lineage(FakeGraph(), {"configurable": {"thread_id": "s1"}}, {},
-                                  tmp_path, args, "s1", False)
+    graph = FakeGraph()
+    constraints = {"intent_model": {"session_id": "s1"},
+                   "conops": {"session_id": "s1", "concept": {"x": 1}}}
+    prior = _hydrate_from_lineage(graph, {"configurable": {"thread_id": "s1"}}, {},
+                                  tmp_path, args, "s1", False, constraints=constraints)
     assert prior["conops"] == {"session_id": "s1", "concept": {"x": 1}}
+    values, _ = graph.updated
+    assert values["conops"] == {"session_id": "s1", "concept": {"x": 1}}, \
+        "the constraint rides the same checkpoint write as the hydrated stages"
+    assert "needs" in values and "system_baseline" not in values, \
+        "only record-bound inputs are seeded"
 
 
 def test_no_conops_binding_means_no_seed_and_legacy_protection_stands(tmp_path, monkeypatch):
@@ -254,10 +262,15 @@ def test_no_conops_binding_means_no_seed_and_legacy_protection_stands(tmp_path, 
                               _args(tmp_path, "srs").intent_model, name="intent_model.json")})
     _bind_artifact(tmp_path, "needs", "needs.json", NEEDS)
     args = _args(tmp_path, "srs", conops=conops_path)
-    prior = _hydrate_from_lineage(FakeGraph(), {"configurable": {"thread_id": "s1"}}, {},
-                                  tmp_path, args, "s1", False)
+    graph = FakeGraph()
+    prior = _hydrate_from_lineage(graph, {"configurable": {"thread_id": "s1"}}, {},
+                                  tmp_path, args, "s1", False,
+                                  constraints={"intent_model": {"session_id": "s1"},
+                                               "conops": {"session_id": "s1"}})
     assert prior.get("conops") is None
     assert "needs" in prior, "hydration still restored the settled stage"
+    values, _ = graph.updated
+    assert "conops" not in values, "an unbound supplied input is never seeded"
 
 
 def test_fresh_run_with_record_does_not_gain_resume_state(tmp_path, monkeypatch):
