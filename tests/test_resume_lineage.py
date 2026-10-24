@@ -291,3 +291,28 @@ def test_fresh_run_with_record_does_not_gain_resume_state(tmp_path, monkeypatch)
     prior = _hydrate_from_lineage(FakeGraph(), {"configurable": {"thread_id": "s1"}}, {},
                                   tmp_path, args, "s1", False)
     assert not prior, "nothing hydrated, nothing seeded: %r" % (prior,)
+
+
+def test_hydration_recovers_the_exact_in_graph_architecture_body(tmp_path, monkeypatch):
+    """The decisions companion's revision is recorded against the in-graph architecture
+    body. Hydration must recover that exact body: stamping adds ONLY the top-level
+    contract_version at file write, so a recursive strip would also remove nested
+    contract_version fields that are part of the in-graph body and the companion
+    would refuse as 'a different revision'."""
+    monkeypatch.setenv("VMODEL_PROGRESS_TASK_ID", "t1")
+    monkeypatch.setenv("VMODEL_PROGRESS_GENERATION", "7")
+    from spec_generator.architecture_decisions import architecture_revision, companion_for, merge_companion
+    in_graph = {"components": [], "baseline_id": "b", "stack_entries": [], "decisions": [],
+                "non_functionals": {},
+                "stack_entry_dispositions": [{"key": "database", "status": "research_required",
+                                              "research_brief": "Which store fits the data?",
+                                              "contract_version": "1"}]}
+    _bind_artifact(tmp_path, "needs", "needs.json", NEEDS)
+    _bind_artifact(tmp_path, "srs", "srs.json", {"session_id": "s1", "intent_model_ref": "s1", "purpose": "p", "scope_summary": "s", "functional": [], "non_functional": []})
+    _bind_artifact(tmp_path, "architecture", "architecture.json", {"contract_version": "1", **in_graph})
+    prior = _hydrate_from_lineage(FakeGraph(), {}, {}, tmp_path, _args(tmp_path, "items"), "s1", False)
+    assert prior["architecture"] == in_graph, "hydration recovers the in-graph body; nested stamps are part of it"
+    companion = companion_for(in_graph)  # recorded on the producer host against this body
+    assert companion is not None and companion["revision"] == architecture_revision(prior["architecture"])
+    merged = merge_companion(prior["architecture"], companion)  # must not raise 'different revision'
+    assert merged["stack_entry_dispositions"][0]["contract_version"] == "1"

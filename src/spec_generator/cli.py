@@ -691,7 +691,13 @@ def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode, con
                     continue  # no artifact file; the review loop reruns cheaply
                 pending_seen = pending_seen or stage  # pending: this stage runs now
                 continue
-            body = _unstamped(json.loads(path.read_text()))
+            # Recover the exact in-graph body a same-host checkpoint holds: stamping
+            # adds ONLY the top-level contract_version at file write. A recursive strip
+            # would also remove nested contract_version fields that are part of the
+            # in-graph body (e.g. architecture stack dispositions), drifting the body
+            # from everything recorded against it (architecture decisions companion
+            # revision) and failing the resume closed.
+            body = {k: v for k, v in json.loads(path.read_text()).items() if k != "contract_version"}
             try:
                 if stage == "needs":
                     StakeholderNeedsSet.model_validate(normalize_enums(coerce_for_model(body, StakeholderNeedsSet), StakeholderNeedsSet))
