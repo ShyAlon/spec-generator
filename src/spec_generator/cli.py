@@ -720,6 +720,17 @@ def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode):
         graph.update_state(cfg, hydrate, as_node=_predecessor(target, review_mode))
         prior = {**prior, **hydrate}
         print(f"Resumed settled stages from the approved record: {', '.join(sorted(hydrate))}.", file=cli_io.stderr())
+        if (args.conops is not None and prior.get("conops") is None
+                and (record.get("inputs") or {}).get("conops.json")):
+            # Fresh-host resume: the checkpoint carries no concept constraint, but the
+            # supplied conops was verified against the record's bound launch input above,
+            # so the record - not the checkpoint - is the constraint authority here. Seed
+            # the verified content so the checkpoint-era resume constraint check compares
+            # this run's actual approved concept instead of refusing a blank checkpoint.
+            # Without the record's conops binding there is nothing to seed and the
+            # legacy-checkpoint refusal below stands. Applies only when hydration restored
+            # settled stages: a fresh run keeps resume=False and its own seeding.
+            prior["conops"] = json.loads(Path(args.conops).read_text())
     return prior
 
 

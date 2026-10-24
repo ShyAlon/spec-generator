@@ -41,6 +41,64 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+# Launch-input identity contract (scheme-tagged):
+# - "<name>.json" inputs are JSON documents: identity is the sha256 of their
+#   canonical serialization (UTF-8; object keys sorted; compact separators;
+#   array order preserved). Whitespace and object key order are serialization,
+#   not content. Ambiguous documents (duplicate object keys) and non-finite
+#   numbers refuse - they have no single meaning to bind.
+# - Any other input is opaque bytes: identity is the sha256 of the exact bytes.
+# Records carry the scheme explicitly ("jsonv1:" / "sha256:") so a record is
+# never silently reinterpreted under another scheme; a pre-scheme bare-hex
+# record is refused with the explicit re-restore recovery, never re-read.
+JSON_INPUT_SCHEME = "jsonv1"
+BYTES_INPUT_SCHEME = "sha256"
+
+
+def _canonical_json(data: bytes, *, name: str) -> bytes:
+    def _object(pairs):
+        seen = set()
+        out = {}
+        for key, value in pairs:
+            if key in seen:
+                raise LineageRefusal(
+                    f"launch input {name} is ambiguous JSON (duplicate key {key!r}); restore "
+                    "the session again from the published manifest (no model calls).")
+            seen.add(key)
+            out[key] = value
+        return out
+
+    def _constant(token):
+        raise LineageRefusal(
+            f"launch input {name} is non-finite JSON ({token}); restore the session "
+            "again from the published manifest (no model calls).")
+
+    try:
+        parsed = json.loads(data.decode("utf-8"), object_pairs_hook=_object,
+                            parse_constant=_constant)
+    except LineageRefusal:
+        raise
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise LineageRefusal(
+            f"launch input {name} is not well-formed JSON ({exc}); restore the session "
+            "again from the published manifest (no model calls).") from exc
+    try:
+        return json.dumps(parsed, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except ValueError as exc:  # a non-finite literal such as 1e999
+        raise LineageRefusal(
+            f"launch input {name} is non-finite JSON ({exc}); restore the session "
+            "again from the published manifest (no model calls).") from exc
+
+
+def hash_launch_input(path: Path, *, name: str) -> str:
+    """Scheme-tagged launch-input identity under the contract above."""
+    data = Path(path).read_bytes()
+    if name.endswith(".json"):
+        return JSON_INPUT_SCHEME + ":" + hashlib.sha256(_canonical_json(data, name=name)).hexdigest()
+    return BYTES_INPUT_SCHEME + ":" + hashlib.sha256(data).hexdigest()
+
+
 def _record_path(root: Path) -> Path:
     return Path(root) / RECORD_NAME
 
@@ -89,15 +147,22 @@ def record_inputs(root: Path, *, task_id, session_id, generation, input_hashes: 
 
 
 def verify_inputs(record: dict, input_files: dict) -> None:
-    """The current run's launch input files must hash-match the record."""
+    """The current run's launch inputs must match the record under their tagged scheme."""
     bound = (record or {}).get("inputs") or {}
     for name, path in input_files.items():
         if name in bound and Path(path).is_file():
-            actual = sha256_file(path)
-            if actual != bound[name]:
+            stored = str(bound[name])
+            if ":" not in stored:
+                raise LineageRefusal(
+                    f"launch input {name} was recorded before scheme-tagged input identity; "
+                    "the record is not reinterpreted under the current scheme. Restore the "
+                    "session again from the published manifest (no model calls) to re-record it."
+                )
+            actual = hash_launch_input(path, name=name)
+            if actual != stored:
                 raise LineageRefusal(
                     f"launch input {name} differs from the settled record "
-                    f"(recorded {bound[name][:12]}..., found {actual[:12]}...); "
+                    f"(recorded {stored[:19]}..., found {actual[:19]}...); "
                     "this session's approved work was produced from other inputs. "
                     "Restore the session again from the published manifest (no model calls), "
                     "or start a new output directory for the new inputs."

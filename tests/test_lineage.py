@@ -84,12 +84,14 @@ def test_wrong_run_identity_refuses(tmp_path):
 
 
 def test_input_hash_mismatch_refuses(tmp_path):
-    intent = _write(tmp_path / "intent_model.json", b"intent-v1")
+    intent_path = tmp_path / "intent_model.json"
+    intent_path.write_bytes(b'{"v": 1}')
+    intent = lineage.hash_launch_input(intent_path, name="intent_model.json")
     lineage.record_inputs(tmp_path, task_id="t", session_id="s", generation="1",
                           input_hashes={"intent_model.json": intent})
-    _write(tmp_path / "intent_model.json", b"intent-v2")
+    intent_path.write_bytes(b'{"v": 2}')
     with pytest.raises(LineageRefusal, match="differs from the settled record"):
-        lineage.verify_inputs(lineage.load(tmp_path), {"intent_model.json": tmp_path / "intent_model.json"})
+        lineage.verify_inputs(lineage.load(tmp_path), {"intent_model.json": intent_path})
 
 
 def test_invalidate_from_drops_rewound_and_downstream(tmp_path):

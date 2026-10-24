@@ -43,7 +43,7 @@ def test_fresh_host_hydrates_settled_stages_without_regeneration(tmp_path, monke
     monkeypatch.setenv("VMODEL_PROGRESS_TASK_ID", "t1")
     monkeypatch.setenv("VMODEL_PROGRESS_GENERATION", "7")
     lineage.record_inputs(tmp_path, task_id="t1", session_id="s1", generation="7",
-                          input_hashes={"intent_model.json": lineage.sha256_file(_args(tmp_path, "srs").intent_model)})
+                          input_hashes={"intent_model.json": lineage.hash_launch_input(_args(tmp_path, "srs").intent_model, name="intent_model.json")})
     _bind_artifact(tmp_path, "needs", "needs.json", NEEDS)
     graph = FakeGraph()
     prior = _hydrate_from_lineage(graph, {"configurable": {"thread_id": "s1"}}, {},
@@ -119,7 +119,7 @@ def test_input_hash_mismatch_refuses(tmp_path, monkeypatch):
     monkeypatch.setenv("VMODEL_PROGRESS_GENERATION", "7")
     args = _args(tmp_path, "srs")
     lineage.record_inputs(tmp_path, task_id="t1", session_id="s1", generation="7",
-                          input_hashes={"intent_model.json": "0" * 64})
+                          input_hashes={"intent_model.json": "jsonv1:" + "0" * 64})
     _bind_artifact(tmp_path, "needs", "needs.json", NEEDS)
     with pytest.raises(UserFacingError, match="refused this resume"):
         _hydrate_from_lineage(FakeGraph(), {}, {}, tmp_path, args, "s1", False)
@@ -219,3 +219,62 @@ def test_assembly_rebind_preserves_founder_decisions(tmp_path, monkeypatch):
     (tmp_path / "architecture.json").write_text(json.dumps(stripped))
     with pytest.raises(UserFacingError, match="beyond stamping/serialization"):
         _assembly_rebind_lineage(tmp_path, "s1", {"architecture.json": prior})
+
+
+def test_fresh_host_resume_seeds_verified_conops_constraint(tmp_path, monkeypatch):
+    """Hydration restores settled stages; the verified conops becomes the resume
+    constraint so the checkpoint-era check compares real approved content."""
+    monkeypatch.setenv("VMODEL_PROGRESS_TASK_ID", "t1")
+    monkeypatch.setenv("VMODEL_PROGRESS_GENERATION", "7")
+    conops_path = tmp_path / "interview" / "conops.json"
+    conops_path.parent.mkdir(parents=True, exist_ok=True)
+    conops_path.write_text(json.dumps({"session_id": "s1", "concept": {"x": 1}}))
+    lineage.record_inputs(tmp_path, task_id="t1", session_id="s1", generation="7",
+                          input_hashes={
+                              "intent_model.json": lineage.hash_launch_input(
+                                  _args(tmp_path, "srs").intent_model, name="intent_model.json"),
+                              "conops.json": lineage.hash_launch_input(conops_path, name="conops.json"),
+                          })
+    _bind_artifact(tmp_path, "needs", "needs.json", NEEDS)
+    args = _args(tmp_path, "srs", conops=conops_path)
+    prior = _hydrate_from_lineage(FakeGraph(), {"configurable": {"thread_id": "s1"}}, {},
+                                  tmp_path, args, "s1", False)
+    assert prior["conops"] == {"session_id": "s1", "concept": {"x": 1}}
+
+
+def test_no_conops_binding_means_no_seed_and_legacy_protection_stands(tmp_path, monkeypatch):
+    """A record without a conops launch input never invents the constraint."""
+    monkeypatch.setenv("VMODEL_PROGRESS_TASK_ID", "t1")
+    monkeypatch.setenv("VMODEL_PROGRESS_GENERATION", "7")
+    conops_path = tmp_path / "interview" / "conops.json"
+    conops_path.parent.mkdir(parents=True, exist_ok=True)
+    conops_path.write_text(json.dumps({"session_id": "s1"}))
+    lineage.record_inputs(tmp_path, task_id="t1", session_id="s1", generation="7",
+                          input_hashes={"intent_model.json": lineage.hash_launch_input(
+                              _args(tmp_path, "srs").intent_model, name="intent_model.json")})
+    _bind_artifact(tmp_path, "needs", "needs.json", NEEDS)
+    args = _args(tmp_path, "srs", conops=conops_path)
+    prior = _hydrate_from_lineage(FakeGraph(), {"configurable": {"thread_id": "s1"}}, {},
+                                  tmp_path, args, "s1", False)
+    assert prior.get("conops") is None
+    assert "needs" in prior, "hydration still restored the settled stage"
+
+
+def test_fresh_run_with_record_does_not_gain_resume_state(tmp_path, monkeypatch):
+    """A needs-stage launch with a record present hydrates nothing and seeds nothing:
+    resume stays False downstream and the run keeps its own fresh seeding."""
+    monkeypatch.setenv("VMODEL_PROGRESS_TASK_ID", "t1")
+    monkeypatch.setenv("VMODEL_PROGRESS_GENERATION", "7")
+    conops_path = tmp_path / "interview" / "conops.json"
+    conops_path.parent.mkdir(parents=True, exist_ok=True)
+    conops_path.write_text(json.dumps({"session_id": "s1"}))
+    lineage.record_inputs(tmp_path, task_id="t1", session_id="s1", generation="7",
+                          input_hashes={
+                              "intent_model.json": lineage.hash_launch_input(
+                                  _args(tmp_path, "needs").intent_model, name="intent_model.json"),
+                              "conops.json": lineage.hash_launch_input(conops_path, name="conops.json"),
+                          })
+    args = _args(tmp_path, "needs", conops=conops_path)
+    prior = _hydrate_from_lineage(FakeGraph(), {"configurable": {"thread_id": "s1"}}, {},
+                                  tmp_path, args, "s1", False)
+    assert not prior, "nothing hydrated, nothing seeded: %r" % (prior,)
