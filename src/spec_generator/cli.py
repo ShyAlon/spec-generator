@@ -418,6 +418,16 @@ def _refresh_technical_choices(graph, cfg, prior, outdir, persist, log, progress
         _update_architecture_metadata(graph, cfg, update)
         prior = {**prior, **update}
         persist("architecture", architecture, prior)
+        from . import lineage as _lineage
+        for _name in ("architecture.json", "architecture.decisions.json"):
+            if (outdir / _name).is_file():
+                _lineage.bind(outdir,
+                              task_id=os.environ.get("VMODEL_PROGRESS_TASK_ID", ""),
+                              session_id=sid,
+                              generation=os.environ.get("VMODEL_PROGRESS_GENERATION", "standalone"),
+                              phase="architecture", name=_name,
+                              sha256=_lineage.sha256_file(outdir / _name),
+                              source="founder-decision", settled=True)
     _write_decisions_companion(outdir, architecture)
     print("Technical-choice metadata updated. Architecture generation was not rerun; no downstream stage started.", file=cli_io.stderr())
     return prior
@@ -467,7 +477,34 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
             _atomic_write(outdir / "validation.json",
                           json.dumps(_stamped({"session_id": sid, **data}), indent=2))
 
+        _lineage_bind_commit(stage, "stage-commit")
         refresh_docs(outdir, intent=intent, event=stage, state={**state, stage: data})
+
+    def _lineage_bind_commit(stage: str, source: str) -> None:
+        """Bind this commit into the local authority record. A stage commit is
+        PROVISIONAL until its gate is approved (the delivery side flips the entry at
+        approval; a restore of an approved/completed phase binds settled), so gate
+        feedback may still regenerate it. A founder-decision write is settled at
+        once. Overwriting settled bytes without an explicit --from rewind refuses."""
+        from . import lineage
+        names = [f"{stage}.json"]
+        if stage == "srs" and (outdir / "srs.semantic-review.json").is_file():
+            names.append("srs.semantic-review.json")
+        if stage == "architecture" and (outdir / "architecture.decisions.json").is_file():
+            names.append("architecture.decisions.json")
+        try:
+            for name in names:
+                lineage.bind(outdir,
+                             task_id=os.environ.get("VMODEL_PROGRESS_TASK_ID", ""),
+                             session_id=sid,
+                             generation=os.environ.get("VMODEL_PROGRESS_GENERATION", "standalone"),
+                             phase=stage, name=name, sha256=lineage.sha256_file(outdir / name),
+                             source=source,
+                             settled=source != "stage-commit")
+        except lineage.LineageRefusal as exc:
+            raise UserFacingError("a settled artifact would be overwritten.",
+                                  str(exc),
+                                  "use --from <stage> for an explicit redo, or restore the session again from the published manifest (no model calls).")
 
     _persist.review = lambda record: archive_review(outdir, record, intent=intent)
 
@@ -517,6 +554,110 @@ _CLEAR_DOWNSTREAM = {
     "review": {"review_round": 0, "review_fixes": [], "bundle": None, "violations": []},
     "assemble": {"bundle": None, "violations": []},
 }
+
+
+
+_RESUME_PREREQUISITES = {
+    "needs": (), "srs": ("needs",), "architecture": ("needs", "srs"),
+    "items": ("needs", "srs", "architecture"),
+    "tests": ("needs", "srs", "architecture", "items"),
+    "validation": ("needs", "srs", "architecture", "items", "tests"),
+    "review": ("needs", "srs", "architecture", "items", "tests", "validation"),
+    "assemble": ("needs", "srs", "architecture", "items", "tests", "validation", "review"),
+}
+
+
+def _unstamped(value):
+    if isinstance(value, list):
+        return [_unstamped(x) for x in value]
+    if isinstance(value, dict):
+        return {k: _unstamped(v) for k, v in value.items() if k != "contract_version"}
+    return value
+
+
+def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode):
+    """Settled-work resume: admit prior-stage state ONLY from lineage-bound disk
+    artifacts (task/session/generation + content hash + launch-input hashes), never
+    from arbitrary disk files, and never silently regenerate a settled stage.
+    Bindings gate stages the checkpoint does not cover - the cross-host pickup case,
+    where checkpoints.sqlite never travels. A checkpoint-covered stage is same-host
+    continuity and runs as before (later sanctioned folds may still rewrite the
+    artifact without re-binding; the binding re-verifies on any host that lacks
+    the checkpoint)."""
+    from . import lineage
+    record = lineage.load(outdir)
+    hosted = bool(os.environ.get("VMODEL_PROGRESS_TASK_ID"))
+    declared = ("needs.json", "srs.json", "architecture.json", "items.json", "tests.json", "validation.json")
+    if record is None:
+        if hosted and not prior and any((outdir / name).is_file() for name in declared):
+            raise UserFacingError(
+                "this session's settled artifacts cannot be tied to their approved record.",
+                "the local authority record (spec/lineage.json) is missing on this host while settled artifacts are present; resuming now would regenerate approved work",
+                "restore the session again from the published manifest (no model calls); never rerun settled stages.")
+        return prior
+    task_id = os.environ.get("VMODEL_PROGRESS_TASK_ID", "")
+    generation = os.environ.get("VMODEL_PROGRESS_GENERATION", "standalone")
+    input_files = {"intent_model.json": args.intent_model}
+    if args.conops is not None:
+        input_files["conops.json"] = args.conops
+    if args.system_baseline is not None:
+        input_files["system-baseline.json"] = args.system_baseline
+    try:
+        lineage.verify_inputs(record, input_files)
+        target = args.to_stage or "assemble"
+        hydrate = {}
+        pending_seen = None
+        for stage in _RESUME_PREREQUISITES[target]:
+            name = f"{stage}.json"
+            entry = lineage.lookup(record, stage, name)
+            path = outdir / name
+            covered = prior.get(stage) is not None
+            if pending_seen is not None and (covered or entry is not None):
+                raise lineage.LineageRefusal(
+                    f"stage '{stage}' is settled or checkpointed while earlier stage "
+                    f"'{pending_seen}' has neither checkpoint state nor a binding; resuming "
+                    "would regenerate settled downstream work. Restore the session again "
+                    "from the published manifest (no model calls), or rerun with --from.")
+            if covered:
+                continue  # checkpoint covers it: same-host continuity, runs as before
+            if entry is None:
+                if stage in ("review",):
+                    continue  # no artifact file; the review loop reruns cheaply
+                pending_seen = pending_seen or stage  # pending: this stage runs now
+                continue
+            # Bound artifact and no checkpoint coverage: disk must match the binding.
+            lineage.verify_file(record, phase=stage, name=name, path=path,
+                                task_id=task_id, session_id=sid, generation=generation)
+            body = _unstamped(json.loads(path.read_text()))
+            try:
+                if stage == "needs":
+                    StakeholderNeedsSet.model_validate(normalize_enums(coerce_for_model(body, StakeholderNeedsSet), StakeholderNeedsSet))
+                elif stage == "srs":
+                    SRSDocument.model_validate(coerce_for_model(body, SRSDocument))
+                elif stage == "architecture":
+                    validated_architecture({**body, "session_id": sid})
+                elif stage == "items":
+                    for item in body:
+                        ItemSpec.model_validate(coerce_for_model(item, ItemSpec))
+            except Exception as exc:
+                raise lineage.LineageRefusal(
+                    f"settled artifact {stage}/{name} fails contract validation ({exc}); "
+                    "restore the session again from the published manifest (no model calls).")
+            hydrate[stage] = body
+        # Companions: when bound and the checkpoint does not cover the owning stage,
+        # their disk bytes must match before the decide/review folds.
+        for phase, name in (("srs", "srs.semantic-review.json"), ("architecture", "architecture.decisions.json")):
+            if prior.get(phase) is None and lineage.lookup(record, phase, name) is not None:
+                lineage.verify_file(record, phase=phase, name=name, path=outdir / name,
+                                    task_id=task_id, session_id=sid, generation=generation)
+    except lineage.LineageRefusal as exc:
+        raise UserFacingError("settled-work verification refused this resume.", str(exc),
+                              "restore the session again from the published manifest (no model calls).")
+    if hydrate:
+        graph.update_state(cfg, hydrate, as_node=_predecessor(target, review_mode))
+        prior = {**prior, **hydrate}
+        print(f"Resumed settled stages from the approved record: {', '.join(sorted(hydrate))}.", file=cli_io.stderr())
+    return prior
 
 
 SRS_APPLIED_KEY = "srs_applied_sha256"
@@ -1256,6 +1397,7 @@ def _main(argv=None) -> None:
           "as each stage completes)\n", file=cli_io.stderr())
     cfg = {"configurable": {"thread_id": sid}}
     prior = graph.get_state(cfg).values
+    prior = _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, args.review)
     if prior and prior.get("repair_proposal") and not (args.approve_repair or args.reject_repair):
         raise UserFacingError("a repair proposal is waiting for your decision.",
                               f"the repaired requirements are in {outdir / 'repair-proposal.md'} and are NOT applied.",
@@ -1404,6 +1546,9 @@ def _main(argv=None) -> None:
               file=cli_io.stderr())
     if args.from_stage:
         _invalidate_from(graph, cfg, args.from_stage, args.review)
+        from . import lineage as _lineage
+        _idx = STAGE_ORDER.index(args.from_stage)
+        _lineage.invalidate_from(outdir, {st for st in STAGE_ORDER[_idx:] if st not in ("review", "assemble")})
         for key in _PARTIAL_DOWNSTREAM.get(args.from_stage, ()):
             saved = partials.load(key) or {}
             if len(saved):

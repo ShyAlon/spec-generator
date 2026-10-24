@@ -115,3 +115,15 @@ def test_corrupt_record_refuses_with_recovery(tmp_path):
     (tmp_path / "lineage.json").write_text("{not json")
     with pytest.raises(LineageRefusal, match="unreadable"):
         lineage.load(tmp_path)
+
+
+def test_provisional_restore_binding_allows_gate_feedback_regeneration(tmp_path):
+    # awaiting_approval at restore: the open gate may regenerate the phase.
+    old = _write(tmp_path / "srs.json", b"draft-v1")
+    lineage.bind(tmp_path, task_id="t", session_id="s", generation="1",
+                 phase="srs", name="srs.json", sha256=old, source="restore", settled=False)
+    new = _write(tmp_path / "srs.json", b"draft-v2-after-feedback")
+    lineage.bind(tmp_path, task_id="t", session_id="s", generation="1",
+                 phase="srs", name="srs.json", sha256=new, source="stage-commit")
+    assert lineage.verify_file(lineage.load(tmp_path), phase="srs", name="srs.json",
+                               path=tmp_path / "srs.json")["sha256"] == new

@@ -105,9 +105,13 @@ def verify_inputs(record: dict, input_files: dict) -> None:
 
 
 def bind(root: Path, *, task_id, session_id, generation, phase: str, name: str,
-         sha256: str, source: str, revision: str | None = None) -> dict:
-    """Record one settled artifact. A restore-bound entry is never silently
-    replaced by a stage commit: that re-bind IS the settled-work substitution."""
+         sha256: str, source: str, revision: str | None = None, settled: bool = True) -> dict:
+    """Record one artifact binding. A SETTLED entry (approved/completed phase) is
+    never silently replaced by a stage commit: that re-bind IS the settled-work
+    substitution. A provisional entry (awaiting_approval at restore: the gate may
+    legitimately regenerate the phase on founder feedback) may be re-bound by the
+    stage commit that produces it. Explicit --from rewinds invalidate bindings
+    first, so the refusal below only fires on an unsanctioned overwrite."""
     if source not in ("restore", "stage-commit", "founder-decision"):
         raise ValueError(f"unknown lineage source {source!r}")
     record = load(root) or {"version": _VERSION, "inputs": {}, "entries": []}
@@ -115,18 +119,18 @@ def bind(root: Path, *, task_id, session_id, generation, phase: str, name: str,
     entries = [e for e in record["entries"] if not (e["phase"] == phase and e["name"] == name)]
     prior = [e for e in record["entries"] if e["phase"] == phase and e["name"] == name]
     if prior and source == "stage-commit":
-        settled = [e for e in prior if e["source"] in ("restore", "stage-commit", "founder-decision")]
-        if settled and all(e["sha256"] != sha256 for e in settled):
+        hard = [e for e in prior if e.get("settled", True)]
+        if hard and all(e["sha256"] != sha256 for e in hard):
             raise LineageRefusal(
                 f"stage commit for {phase}/{name} would replace settled bytes "
-                f"(settled sha {settled[-1]['sha256'][:12]}... from {settled[-1]['source']}, "
+                f"(settled sha {hard[-1]['sha256'][:12]}... from {hard[-1]['source']}, "
                 f"new {sha256[:12]}...) without an explicit rewind. "
                 "Re-running a settled stage is only allowed via --from <stage>."
             )
-        if settled and any(e["sha256"] == sha256 for e in settled):
+        if prior and any(e["sha256"] == sha256 for e in prior):
             return record  # identical re-commit: no-op
     entry = {"phase": phase, "name": name, "sha256": sha256, "source": source,
-             **_identity(task_id, session_id, generation)}
+             "settled": bool(settled), **_identity(task_id, session_id, generation)}
     if revision is not None:
         entry["revision"] = revision
     entries.append(entry)
