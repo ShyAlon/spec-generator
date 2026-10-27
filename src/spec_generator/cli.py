@@ -865,7 +865,7 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
     if "intent_model" not in initial_state:
         initial_state = {"intent_model": initial_state}
     intent = initial_state["intent_model"]
-    result = graph.invoke(None, cfg) if resume else graph.invoke(initial_state, cfg)
+    result = _child_graph_invoke(graph,None, cfg) if resume else _child_graph_invoke(graph,initial_state, cfg)
     restarted = False
     while True:
         st = graph.get_state(cfg)
@@ -873,7 +873,7 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             return result
         payload = next((t.interrupts[0].value for t in st.tasks if t.interrupts), None)
         if payload is None:
-            result = graph.invoke(None, cfg)
+            result = _child_graph_invoke(graph,None, cfg)
             continue
         gate, artifact = payload["gate"], payload["artifact"]
         advisories = payload.get("advisories") or []
@@ -894,7 +894,7 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
                   "This is the expected one-time heal: discarding it and regenerating "
                   "the stage under the fixed pipeline - the run continues on its own, "
                   "do NOT rerun the command.\n", file=cli_io.stderr())
-            result = graph.invoke(initial_state, cfg)
+            result = _child_graph_invoke(graph,initial_state, cfg)
             continue
         if advisories:
             md += "\n\n## Review advisories\n" + "\n".join(
@@ -923,7 +923,12 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
                 {"value":"r","label":"Reject","summary":"Stop at this checkpoint."}]
             # A hosted run never opens an editor on the server; the app edits through its own review screen.
             if cli_io.bound():options=[o for o in options if o["value"]!="e"]
-            decision=founder_decision(f"{gate}-review",f"Review {title}",f"What should happen at the {gate} gate?",options)
+            from .wire_binding import broker_active
+            gate_context=None
+            if broker_active():
+                import hashlib as _hashlib
+                gate_context={'artifact_sha256':_hashlib.sha256(json.dumps(artifact,sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+            decision=founder_decision(f"{gate}-review",f"Review {title}",f"What should happen at the {gate} gate?",options,context=gate_context)
             cli_io.emit(decision)
             valid=[o["value"] for o in options]
             while True:
@@ -942,7 +947,7 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             raw_feedback = cli_io.read(decision,"Feedback (one line, founder language): ").strip()
             fb = raw_feedback.partition(" - ")[2].strip() if raw_feedback.startswith("feedback - ") else raw_feedback
             if fb:
-                result = graph.invoke(Command(resume={"action": "regenerate", "feedback": fb}), cfg)
+                result = _child_graph_invoke(graph,Command(resume={"action": "regenerate", "feedback": fb}), cfg)
             continue
         if action == "e":
             editor = os.environ.get("EDITOR", "vi")
@@ -958,7 +963,7 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
                     print(e.render() + "\nReopening the editor.", file=cli_io.stderr())
             graph.update_state(cfg, {gate: edited})
             print("Edit accepted and validated.", file=cli_io.stderr())
-        result = graph.invoke(Command(resume={"action": "accept"}), cfg)
+        result = _child_graph_invoke(graph,Command(resume={"action": "accept"}), cfg)
 
 
 def _resume_after_bounded_stop(graph, cfg: dict, prior: dict) -> str | None:
@@ -1122,7 +1127,7 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     persist = _make_persist(intent, outdir, greenfield=baseline["mode"] == "greenfield")
     graph = build_graph(log, progress=bus, persist=persist, partials=_make_partials(outdir),
                         only_stage=args.only_stage)
-    result = graph.invoke(state, {"configurable": {"thread_id": sid + "-" + args.only_stage}})
+    result = _child_graph_invoke(graph,state, {"configurable": {"thread_id": sid + "-" + args.only_stage}})
     if args.only_stage == "review":
         _atomic_write(outdir / "review-fixes.json", json.dumps(result.get("review_fixes") or [], indent=2))
     refresh_docs(outdir, intent=intent, event=args.only_stage, state=result)
@@ -1681,7 +1686,7 @@ def _main(argv=None) -> None:
             _atomic_write(outdir / "expert-opinions.json",json.dumps({"mode":"simulated_expert_opinion","founder_approved":False,"human_review_required":True,"decisions":opinions},indent=2))
             for opinion in opinions:_append_audit(outdir/"audit.jsonl",{"event":"gate.simulated_expert_opinion",**opinion,"founder_approved":False})
     else:
-        result = graph.invoke(None, cfg) if resume else graph.invoke(
+        result = _child_graph_invoke(graph,None, cfg) if resume else _child_graph_invoke(graph,
             {"intent_model": intent, "system_baseline": baseline, "conops": conops}, cfg)
 
     refresh_docs(outdir, intent=intent, conops=conops, state=result)
@@ -1769,8 +1774,10 @@ def _main(argv=None) -> None:
     print(f"Bundle written to {outdir}/  |  generation cost: ${log.total_usd():.4f}", file=cli_io.stdout())
 
 
+
+def _child_graph_invoke(graph,value,cfg):
+    from .child_execution import invoke_graph
+    return invoke_graph(graph,value,cfg)
+
 if __name__ == "__main__":
     run_cli(lambda: run_with_system_awake(main))
-
-
-
