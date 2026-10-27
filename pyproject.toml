@@ -12,6 +12,7 @@ authors = [{ name = "Shy Alon" }]
 dynamic = ["version"]
 dependencies = [
   "vmodel-contracts==0.28.0",
+  "requi-child-contract==0.2.0",
   "langgraph>=0.2",
   "langgraph-checkpoint-sqlite>=2",
   "langchain-core>=0.3",
@@ -37,4 +38,5 @@ packages = ["src/spec_generator"]
 
 # The checked-in wheel is built from the approved contracts revision.
 [tool.uv.sources]
+requi-child-contract = { path = "vendor/requi_child_contract-0.2.0-py3-none-any.whl" }
 vmodel-contracts = { path = "vendor/vmodel_contracts-0.28.0-py3-none-any.whl" }
