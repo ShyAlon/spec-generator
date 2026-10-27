@@ -16,3 +16,10 @@ node/stage/ordinal. The new crash-cursor regression failed before the fix.
 Local acceptance uses disposable migrated Postgres and fake HTTP only. Never
 turn missing completion evidence into a rerun, zero charge or cancellation.
 Draft limitations are recorded in phase-4-local-cutover.md. Hosted CI unverified.
+
+Route changes need their own typed operation with exact published input evidence;
+an answer payload or a parent-owned candidate graph loses the process boundary.
+Use the engine's durable route history for idempotent replay before spawning.
+Quality config belongs in a persistent parent ConfigStore with a validated
+snapshot per launch, not a child-local write lost on exit. Shared wire changes
+require identical vendored wheels, versions and checksum pins across all builds.
