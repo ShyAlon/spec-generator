@@ -109,7 +109,9 @@ def checked_model_invoke(chat_model,messages,*,stage,provider,model,max_output_t
     if wire_model(chat_model,stage=stage,provider=provider,model=model):
         from .stop_fence import check_execution
         check_execution()
-        try:response=chat_model.invoke(messages)
+        try:
+            from .child_execution import invocation
+            with invocation(stage):response=chat_model.invoke(messages)
         except Exception as exc:
             # OpenAI wraps transport control exceptions as connection errors.
             # Preserve Stop identity rather than presenting a provider outage.
@@ -136,8 +138,10 @@ def checked_model_stream(chat_model,messages,*,stage,provider,model,max_output_t
     # The SDK transport owns exactly one reservation and raw terminal settlement.
     # Drain accepted calls while suppressing late chunks. Never stack a messages
     # reservation or mark already-settled raw usage uncertain at scope exit.
-    for chunk in chat_model.stream(messages):
-        try:check_execution()
-        except StopRequested:stopped=True
-        if not stopped:yield chunk
+    from .child_execution import invocation
+    with invocation(stage):
+        for chunk in chat_model.stream(messages):
+            try:check_execution()
+            except StopRequested:stopped=True
+            if not stopped:yield chunk
     check_execution()

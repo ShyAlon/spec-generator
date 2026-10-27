@@ -59,6 +59,8 @@ def _env(key: str) -> str | None:
         if key in runtime.settings:return runtime.settings[key]
         if key.startswith("VMODEL_CAP_") or key in ("SPEC_GENERATOR_FROM","SPEC_GENERATOR_BULK","VMODEL_REPLAY_DIR","SPEC_GENERATOR_LOG_RAW","VMODEL_LLM_DEBUG_HTTP"):
             return None
+    from .wire_binding import broker_active
+    if broker_active():return None
     return os.environ.get(key) or _dotenv().get(key)
 
 
@@ -580,8 +582,9 @@ def bulk_fills_enabled() -> bool:
 def _preflight(cfg: "StageModel", stage: str) -> None:
     from .errors import UserFacingError
 
+    from .wire_binding import broker_active
     env = _API_KEY_ENV.get(cfg.provider)
-    if env and not _env(env):
+    if env and not _env(env) and not broker_active():
         raise UserFacingError(
             f"stage '{stage}' is routed to provider '{cfg.provider}' (model {cfg.model}), but {env} is not set.",
             "no API key in the environment.",
@@ -990,7 +993,8 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
     from .wire_binding import validate_provider
     validate_provider(cfg.provider)
     _preflight(cfg, stage)
-    if cfg.provider == "ollama" and structured and _structured_enabled():
+    from .wire_binding import broker_active
+    if cfg.provider == "ollama" and structured and _structured_enabled() and not broker_active():
         supported, reason = _ollama_structured_support()
         if supported:
             from langchain_ollama import ChatOllama
@@ -1050,7 +1054,7 @@ def build_chat_model(stage: str, structured: bool = True, schema: dict | None = 
             **({"max_retries":0} if installed_clients is not None or os.environ.get("VMODEL_TENANT_OWNER") is not None or os.environ.get("INTERVIEW_ENGINE_TENANTS")=="1" else {}), seed=cfg.seed,
                           max_tokens=_max_tokens_limit(cfg.max_tokens),
                           base_url=_BASE_URLS[cfg.provider],
-                          api_key=(_env(env) or "" if env else "") or "ollama", **extra)
+                          api_key=("parent-broker-no-secret" if broker_active() else (_env(env) or "" if env else "") or "ollama"), **extra)
         if deepseek_tool_schema is not None:
             model=_DeepSeekToolOutputAdapter(model, deepseek_tool_schema, f"return_{stage}_artifact")
         return register_model(model,stage=stage,provider=cfg.provider,model=cfg.model)
