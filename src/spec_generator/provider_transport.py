@@ -215,7 +215,9 @@ class AdmittedTransport(httpx.BaseTransport):
                 exc=sys.exc_info()[1]
                 if response is None and _release_connect_failure(self.gateway,attempt,exc):raise _Released(exc) from exc
                 try:self.gateway.uncertain(attempt)
-                except Exception:pass
+                except Exception as error:
+                    from .attempt_admission import _uncertainty_write_failed
+                    _uncertainty_write_failed(error)
             raise
 
     def close(self):self.inner.close()
@@ -253,7 +255,9 @@ class UsageStream(httpx.SyncByteStream):
         if self.finished or self.marked:return
         self.marked=True
         try:self.gateway.uncertain(self.attempt)
-        except Exception:pass
+        except Exception as error:
+            from .attempt_admission import _uncertainty_write_failed
+            _uncertainty_write_failed(error)
 
     def __iter__(self):
         lines=SSELines();data=[];size=0;usage=None;done=False
@@ -371,7 +375,9 @@ class AsyncAdmittedTransport(httpx.AsyncBaseTransport):
                 exc=sys.exc_info()[1]
                 if response is None and _release_connect_failure(self.gateway,attempt,exc):raise _Released(exc) from exc
                 try:self.gateway.uncertain(attempt)
-                except Exception:pass
+                except Exception as error:
+                    from .attempt_admission import _uncertainty_write_failed
+                    _uncertainty_write_failed(error)
             raise
 
     async def aclose(self):await self.inner.aclose()
@@ -391,7 +397,9 @@ class AsyncUsageStream(httpx.AsyncByteStream):
         if self.finished or self.marked:return
         self.marked=True
         try:self.gateway.uncertain(self.attempt)
-        except Exception:pass
+        except Exception as error:
+            from .attempt_admission import _uncertainty_write_failed
+            _uncertainty_write_failed(error)
 
     async def __aiter__(self):
         lines=SSELines();data=[];size=0;usage=None;done=False

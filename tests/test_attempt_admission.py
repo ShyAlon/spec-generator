@@ -96,3 +96,27 @@ def test_explicit_worker_context_requires_admission_without_environment(monkeypa
         admission.admitted_invoke(lambda:SimpleNamespace(usage_metadata={'input_tokens':1,'output_tokens':2}),**OPTIONS)
     assert [e[0] for e in gateway.events]==['reserve','start','settle']
     assert not admission._cloud()
+
+
+def test_uncertainty_write_failure_warns_without_hiding_original(cloud,caplog):
+    import logging
+    gateway=Gateway()
+    original=RuntimeError('private-provider-failure')
+    def provider():raise original
+    def uncertain(attempt):raise OSError('private-ledger-detail')
+    gateway.uncertain=uncertain
+    with caplog.at_level(logging.WARNING),admission.admission_gateway(gateway),pytest.raises(RuntimeError) as got:
+        admission.admitted_invoke(provider,**OPTIONS)
+    assert got.value is original
+    assert 'attempt.uncertainty_write_failed' in caplog.text and 'OSError' in caplog.text
+    assert 'private-provider-failure' not in caplog.text and 'private-ledger-detail' not in caplog.text
+
+
+def test_broken_warning_sink_cannot_hide_provider_failure(cloud,monkeypatch):
+    import logging
+    gateway=Gateway();original=RuntimeError('original')
+    gateway.uncertain=lambda attempt:(_ for _ in ()).throw(OSError('ledger'))
+    monkeypatch.setattr(logging.Logger,'warning',lambda *a,**k:(_ for _ in ()).throw(OSError('sink')))
+    with admission.admission_gateway(gateway),pytest.raises(RuntimeError) as got:
+        admission.admitted_invoke(lambda:(_ for _ in ()).throw(original),**OPTIONS)
+    assert got.value is original
