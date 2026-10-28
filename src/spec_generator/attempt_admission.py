@@ -70,7 +70,8 @@ def admitted_invoke(call,*,stage,provider,model,messages,max_output_tokens):
         return response
     except BaseException:
         try:gateway.uncertain(attempt)
-        except Exception:pass
+        except Exception as error:
+            _uncertainty_write_failed(error)
         raise
 
 
@@ -145,3 +146,11 @@ def checked_model_stream(chat_model,messages,*,stage,provider,model,max_output_t
             except StopRequested:stopped=True
             if not stopped:yield chunk
     check_execution()
+
+
+def _uncertainty_write_failed(error):
+    # Evidence must never replace the original provider/accounting failure.
+    try:
+        import logging
+        logging.getLogger(__name__).warning('attempt.uncertainty_write_failed category=%s',type(error).__name__)
+    except Exception:pass
