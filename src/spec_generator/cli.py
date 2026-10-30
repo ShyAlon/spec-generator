@@ -1448,9 +1448,9 @@ def _main(argv=None) -> None:
         return
     outdir.mkdir(parents=True, exist_ok=True)
     refresh_docs(outdir, intent=intent, conops=conops, start=True)
-    from vmodel_contracts.runtime import install_plain_log
+    from .document_runtime import plain_log
     run_log = outdir / "run.log"
-    cli_io.set_stderr(install_plain_log(run_log, cli_io.stderr()))
+    cli_io.set_stderr(plain_log(run_log, cli_io.stderr()))
     # Per-call telemetry is part of every normal run, not an experiment-only
     # opt-in. Preserve an explicit external sink, otherwise keep it beside the bundle.
     os.environ.setdefault("VMODEL_LLM_LOG", str(outdir / "llm-calls.jsonl"))

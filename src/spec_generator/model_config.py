@@ -213,21 +213,23 @@ def _capture_rejected_completion(stage: str, item: str | None, attempt: int,
     sink = _llm_log_sink()
     root = Path(sink).expanduser().resolve().parent if sink and sink != "stderr" else Path.cwd()
     rejected = root / "rejected-llm-outputs"
-    rejected.mkdir(parents=True, exist_ok=True)
+    from .document_runtime import configured,exists,atomic_text,append
+    if not configured():rejected.mkdir(parents=True, exist_ok=True)
     safe_item = _re.sub(r"[^A-Za-z0-9_.-]+", "-", item or "call").strip("-")
     safe_reason = _re.sub(r"[^A-Za-z0-9_.-]+", "-", reason).strip("-")[:60] or "rejected"
     stem = f"{stage}--{safe_item}--attempt-{attempt}--{safe_reason}"
     path = rejected / f"{stem}.raw.txt"
     suffix = 2
-    while path.exists():
+    while exists(path):
         path = rejected / f"{stem}--{suffix}.raw.txt"; suffix += 1
-    tmp = path.with_suffix(path.suffix + ".tmp"); tmp.write_text(raw); os.replace(tmp, path)
+    atomic_text(path,raw)
     diag = call_diagnostic(stage, item, attempt)
     manifest = rejected / "manifest.jsonl"
-    with manifest.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"path": str(path), "stage": stage, "item": item,
-                             "attempt": attempt, "reason": reason,
-                             "raw_bytes": len(raw.encode()), **diag}, default=str) + "\n")
+    record={"path": str(path), "stage": stage, "item": item,
+            "attempt": attempt, "reason": reason,"raw_bytes": len(raw.encode()), **diag}
+    if configured():append(manifest,(json.dumps(record,default=str)+"\n").encode())
+    else:
+        with manifest.open("a",encoding="utf-8") as fh:fh.write(json.dumps(record,default=str)+"\n")
     _console_line(f"     - rejected model output saved: {path}")
     return str(path)
 
@@ -245,7 +247,8 @@ def _capture_fitted_output(stage: str, item: str | None, trims: list) -> str:
     sink = _llm_log_sink()
     root = Path(sink).expanduser().resolve().parent if sink and sink != "stderr" else Path.cwd()
     fitted = root / "fitted-llm-outputs"
-    fitted.mkdir(parents=True, exist_ok=True)
+    from .document_runtime import configured,exists,atomic_text,append
+    if not configured():fitted.mkdir(parents=True, exist_ok=True)
     safe_item = _re.sub(r"[^A-Za-z0-9_.-]+", "-", item or "call").strip("-")
     manifest = fitted / "manifest.jsonl"
     last = ""
@@ -254,13 +257,15 @@ def _capture_fitted_output(stage: str, item: str | None, trims: list) -> str:
         stem = f"{stage}--{safe_item}--{safe_field}"
         path = fitted / f"{stem}.original.txt"
         suffix = 2
-        while path.exists():
+        while exists(path):
             path = fitted / f"{stem}--{suffix}.original.txt"; suffix += 1
-        tmp = path.with_suffix(path.suffix + ".tmp"); tmp.write_text(trim["original"], encoding="utf-8"); os.replace(tmp, path)
-        with manifest.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"path": str(path), "stage": stage, "item": item, "field": trim["field"],
-                                 "limit": trim["limit"], "chars_before": trim["before"], "chars_after": trim["after"],
-                                 "fitted_text": trim["fitted"]}, ensure_ascii=False) + "\n")
+        atomic_text(path,trim["original"])
+        record={"path": str(path), "stage": stage, "item": item, "field": trim["field"],
+                "limit": trim["limit"], "chars_before": trim["before"], "chars_after": trim["after"],
+                "fitted_text": trim["fitted"]}
+        if configured():append(manifest,(json.dumps(record,ensure_ascii=False)+"\n").encode())
+        else:
+            with manifest.open("a",encoding="utf-8") as fh:fh.write(json.dumps(record,ensure_ascii=False)+"\n")
         _console_line(f"     - boundary=technical-choice-fit item={item} trimmed:{trim['field']}:{trim['before']}->{trim['after']} original saved: {path}")
         last = str(path)
     return last
@@ -285,8 +290,10 @@ def _log_llm(event: dict) -> None:
         if sink == "stderr":
             _console_line(line)
         else:
-            with open(sink, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+            from .document_runtime import configured,append
+            if configured():append(sink,(line+"\n").encode())
+            else:
+                with open(sink, "a", encoding="utf-8") as f:f.write(line + "\n")
     except OSError as error:
         # Nonfatal telemetry loss must be visible, but a failing sink must
         # never disclose its path, event payload or exception message.

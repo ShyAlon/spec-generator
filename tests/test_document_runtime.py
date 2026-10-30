@@ -115,3 +115,41 @@ def test_bound_cli_usage_sink_retains_exact_rows_without_local_copy(tmp_path):
         sink(SimpleNamespace(model_dump_json=lambda:raw));sink(SimpleNamespace(model_dump_json=lambda:raw))
     assert documents=={'spec/usage.jsonl':(raw+'\n'+raw+'\n').encode()}
     assert not (root/'spec/usage.jsonl').exists()
+
+
+def test_bound_diagnostics_retain_exact_raw_fitted_and_call_evidence_in_documents(tmp_path):
+    from spec_generator import model_config as mc
+    cap,root,runtime,cid,state=setup(tmp_path);documents={}
+    class Documents:
+        def read(self,key):return documents.get(key)
+        def write(self,key,raw):documents[key]=raw
+        def append(self,key,raw):documents[key]=documents.get(key,b'')+raw
+    runtime.documents=Documents()
+    with job_runtime(runtime):
+        rejected=mc.capture_rejected_completion('srs','R-1',1,'  raw rejected\n','bad shape')
+        fitted=mc.capture_fitted_output('srs','R-1',[{'field':'title','original':'exact original\n','fitted':'exact','limit':5,'before':15,'after':5}])
+        mc._log_llm({'event':'test_metadata','tokens':3})
+        from spec_generator.document_runtime import read_text
+        assert read_text(rejected)=='  raw rejected\n'
+        assert read_text(fitted)=='exact original\n'
+    assert any(k.endswith('rejected-llm-outputs/manifest.jsonl') for k in documents)
+    assert any(k.endswith('fitted-llm-outputs/manifest.jsonl') for k in documents)
+    assert json.loads(documents[str(__import__('pathlib').Path(runtime.llm_log).relative_to(root))])['event']=='test_metadata'
+    assert not (root/'private-llm-calls.jsonl').exists()
+    assert not __import__('pathlib').Path(rejected).exists()
+    assert not __import__('pathlib').Path(fitted).exists()
+
+
+def test_bound_plain_run_log_keeps_terminal_text_but_stores_plain_pg_bytes(tmp_path):
+    import io
+    from spec_generator.document_runtime import plain_log
+    cap,root,runtime,cid,state=setup(tmp_path);documents={}
+    class Documents:
+        def append(self,key,raw):documents[key]=documents.get(key,b'')+raw
+    runtime.documents=Documents();terminal=io.StringIO()
+    with job_runtime(runtime):
+        stream=plain_log(root/'spec/run.log',terminal)
+        stream.write('\x1b[31mexact\x1b[0m\n');stream.flush()
+    assert terminal.getvalue()=='\x1b[31mexact\x1b[0m\n'
+    assert documents=={'spec/run.log':b'exact\n'}
+    assert not (root/'spec/run.log').exists()

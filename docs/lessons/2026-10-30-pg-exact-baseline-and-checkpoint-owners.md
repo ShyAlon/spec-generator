@@ -17,3 +17,9 @@ bound document runtime too. Test two exact rows with no local copy and read the
 same bytes through a fresh real PG document reader. Plain run logs and raw
 rejected/fitted diagnostics still need the separate diagnostic-storage audit;
 canonical/checkpoint parity is not proof that every diagnostic file is gone.
+
+Follow-up: bound generator rejected/fitted raw bytes, their manifests, per-call
+metadata and plain run logs now use the document backend too. Keep exact raw
+whitespace, collision-safe names and ANSI-free plain logs. Legacy standalone
+sinks stay unchanged. Fail-first sink regressions and a real PG readback cover
+this addition; the interview diagnostic sinks are a separate outstanding audit.

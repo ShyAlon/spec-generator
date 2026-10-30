@@ -57,3 +57,15 @@ def remove(path):
     from .stop_fence import guarded_publish
     if configured():return guarded_publish(lambda:clear(path))
     return guarded_publish(lambda:Path(path).unlink(missing_ok=True))
+
+
+def plain_log(path,stream):
+    """Preserve the terminal, retain plain diagnostic bytes in the bound backend."""
+    from vmodel_contracts.runtime import install_plain_log,PlainLogMirror
+    if not configured():return install_plain_log(path,stream)
+    # Capture the actual bound backend, not the ContextVar at a later flush.
+    documents,key=_bound(path)
+    class Sink:
+        def write(self,text):documents.append(key,text.encode('utf-8'));return len(text)
+        def flush(self):pass
+    return PlainLogMirror(stream,Sink())
