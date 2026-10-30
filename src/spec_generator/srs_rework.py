@@ -137,12 +137,12 @@ def retain_checkpoint_proposal(*,capability,session_root,checkpoint_id,revision,
     if binding is None:raise ValueError('bound worker fence required')
     fence,generation=binding
     if generation!=capability.generation:raise ValueError('rework generation mismatch')
-    path=session_root/'spec'/'checkpoints.sqlite'
+    workflow=session_root/'spec'
     from .checkpoint_runtime import checkpoint
-    if path.resolve()!=path:raise ValueError('owned source checkpoint required')
+    if workflow.resolve()!=workflow:raise ValueError('owned source checkpoint required')
     config={'configurable':{'thread_id':capability.session_id}}
     def source():
-        saver=checkpoint(path.parent)
+        saver=checkpoint(workflow)
         row=saver.get_tuple(config)
         if row is None or row.config['configurable']['checkpoint_id']!=checkpoint_id:
             raise ValueError('source checkpoint changed')

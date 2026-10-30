@@ -41,12 +41,12 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
     else:
         if anchor is not None:raise ValueError('legacy proposal must not carry later-generation anchor')
         semantic_session_id=capability.session_id
-    source_path=root/'spec'/'checkpoints.sqlite'
+    source_workflow=root/'spec'
     config={'configurable':{'thread_id':capability.session_id}}
     def source():
         validate_authority();fence.check(generation)
         from .checkpoint_runtime import read_state as read_closed_checkpoint
-        return read_closed_checkpoint(source_path,session_id=capability.session_id,expected_checkpoint_id=checkpoint_id)
+        return read_closed_checkpoint(source_workflow,session_id=capability.session_id,expected_checkpoint_id=checkpoint_id)
     original=source()
     prepare_revision_seed(source=original,phase=phase,change_request=change_request,session_id=semantic_session_id)
     parent=root/'spec'/'revision-proposals'

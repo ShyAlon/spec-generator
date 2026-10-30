@@ -26,11 +26,11 @@ def checkpoint(outdir):
         return saver
     raise ValueError('authenticated host checkpoint runtime required; run through delivery-api')
 
-def read_state(path,*,session_id,expected_checkpoint_id,expected_review_phase=None):
+def read_state(workflow,*,session_id,expected_checkpoint_id,expected_review_phase=None):
     if not configured():
         raise ValueError('authenticated host checkpoint runtime required; run through delivery-api')
     if expected_review_phase is not None and expected_review_phase not in ('srs','architecture'):raise ValueError('implemented staged review phase required')
-    saver=checkpoint(Path(path).parent)
+    saver=checkpoint(Path(workflow))
     config={'configurable':{'thread_id':session_id}}
     row=saver.get_tuple(config)
     if row is None or row.config['configurable']['checkpoint_id']!=expected_checkpoint_id:

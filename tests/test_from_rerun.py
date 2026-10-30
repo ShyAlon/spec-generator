@@ -532,7 +532,7 @@ def test_semantic_hash_equivalence_v1_ignores_evidence_but_not_open_questions():
 
 
 def test_full_resume_reconnects_checkpoint_stopped_after_architecture(monkeypatch,tmp_path):
-    """Exact production bug: --to architecture leaves no pending SQLite task; full resume must add the edge."""
+    """Exact production bug: --to architecture leaves no pending checkpoint task; full resume must add the edge."""
     from spec_generator.cli import _resume_after_bounded_stop
     box={}
     monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**kw:box.setdefault(stage,FakeModel(stage)))

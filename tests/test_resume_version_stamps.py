@@ -91,7 +91,6 @@ def resume_case(tmp_path, monkeypatch):
 
     outdir = tmp_path / "spec"
     outdir.mkdir()
-    (outdir / "checkpoints.sqlite").touch()
     intent_file = tmp_path / "intent_model.json"
     intent_file.write_text(json.dumps(dict(INTENT, contract_version=CONTRACT_VERSION)))
     conops_file = tmp_path / "conops.json"

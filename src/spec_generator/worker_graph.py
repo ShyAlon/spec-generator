@@ -34,7 +34,7 @@ def run_fresh_graph(*,capability,session_root,intent,conops,baseline,log,progres
     if intent['session_id']!=capability.session_id or conops['session_id']!=capability.session_id:
         raise ValueError('worker graph session mismatch')
     if not conops['decision']['founder_confirmed']:raise ValueError('confirmed ConOps required')
-    out=session_root/'spec';checkpoint=out/'checkpoints.sqlite'
+    out=session_root/'spec'
     # Do not silently consume or overwrite any prior producer artifacts.
     from .document_runtime import configured as documents_configured
     if not documents_configured() and out.exists():
