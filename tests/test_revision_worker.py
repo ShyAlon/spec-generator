@@ -1,8 +1,7 @@
 from types import SimpleNamespace
 from copy import deepcopy
-import sqlite3
 import pytest
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 from spec_generator.graph import checkpoint_serde
 from spec_generator.stop_fence import StopFence
 from spec_generator.cooperative_run import cli_execution
@@ -10,23 +9,24 @@ from spec_generator.worker_runtime import JobRuntime,job_runtime
 from spec_generator.model_config import StageModel
 from spec_generator.revision_worker import run_revision_proposal
 from test_revision_checkpoint import source
-import os
-
-pytestmark = pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="pinned SQLite reader requires /proc/self/fd (Linux); covered by CI")
-
 
 def setup(tmp_path):
     owner='00000000-0000-0000-0000-000000000001'
     root=tmp_path/'tenants'/owner/'sessions'/'s';(root/'spec').mkdir(parents=True);(root/'interview').mkdir()
     cap=SimpleNamespace(scope=SimpleNamespace(owner_id=owner),task_id='task',session_id='s',generation=1)
     state=source();cfg={'configurable':{'thread_id':'s','checkpoint_ns':''}}
-    conn=sqlite3.connect(root/'spec'/'checkpoints.sqlite');saver=SqliteSaver(conn,serde=checkpoint_serde())
+    saver=MemorySaver(serde=checkpoint_serde());saver.setup=lambda:None
     from langgraph.checkpoint.base import empty_checkpoint
-    checkpoint=empty_checkpoint();checkpoint['channel_values']=state
-    saved=saver.put(cfg,checkpoint,{'source':'input','step':0,'parents':{}},{})
-    conn.close()
+    checkpoint=empty_checkpoint();checkpoint['channel_values']=state;checkpoint['channel_versions']={k:1 for k in state}
+    saved=saver.put(cfg,checkpoint,{'source':'input','step':0,'parents':{}},checkpoint['channel_versions'])
     runtime=JobRuntime({'srs':StageModel('fake','fake')},str(root/'calls.jsonl'),lambda text:None)
     runtime.bind_worker(owner_id=owner,task_id='task',job_id='job',generation=1,session_root=root)
+    savers={'spec':saver}
+    def backend(namespace):
+        if namespace not in savers:
+            savers[namespace]=MemorySaver(serde=checkpoint_serde());savers[namespace].setup=lambda:None
+        return savers[namespace]
+    runtime.checkpoint_factory=backend
     return cap,root,runtime,saved['configurable']['checkpoint_id'],state
 
 
@@ -52,12 +52,12 @@ def factory(state,callback=None):
 
 
 def test_owned_revision_checkpoint_runs_fake_and_never_mutates_source(tmp_path):
-    cap,root,runtime,cid,state=setup(tmp_path);before=(root/'spec'/'checkpoints.sqlite').read_bytes();checks=[]
+    cap,root,runtime,cid,state=setup(tmp_path);before=deepcopy(runtime.checkpoint_factory('spec').get_tuple({'configurable':{'thread_id':cap.session_id}}));checks=[]
     with job_runtime(runtime),cli_execution(StopFence(root/'interview'/'stop-request.json'),None):
         proposal=run_revision_proposal(capability=cap,session_root=root,checkpoint_id=cid,phase='srs',
             change_request='Describe offline behavior',validate_authority=lambda:checks.append(1),log=None,graph_factory=factory(state))
     assert checks and not proposal['committed'] and proposal['requires_fresh_review']
-    assert (root/'spec'/'checkpoints.sqlite').read_bytes()==before
+    assert runtime.checkpoint_factory('spec').get_tuple({'configurable':{'thread_id':cap.session_id}})==before
     assert (root/'spec'/'revision-proposals'/proposal['proposal_id']/'proposal.json').is_file()
 
 
@@ -130,28 +130,33 @@ def setup_later_generation(tmp_path,*,anchor_task='task'):
     from vmodel_contracts.execution_anchor import ExecutionAnchor
     cap,old,runtime,cid,state=setup(tmp_path)
     root=old.parent/'execution2';old.rename(root);cap.session_id='execution2';cap.generation=2
-    conn=sqlite3.connect(root/'spec'/'checkpoints.sqlite');saver=SqliteSaver(conn,serde=checkpoint_serde())
+    saver=MemorySaver(serde=checkpoint_serde());saver.setup=lambda:None
     from langgraph.checkpoint.base import empty_checkpoint
-    cp=empty_checkpoint();cp['channel_values']=state
-    saved=saver.put({'configurable':{'thread_id':'execution2','checkpoint_ns':''}},cp,{'source':'input','step':0,'parents':{}},{})
-    conn.close()
+    cp=empty_checkpoint();cp['channel_values']=state;cp['channel_versions']={k:1 for k in state}
+    saved=saver.put({'configurable':{'thread_id':'execution2','checkpoint_ns':''}},cp,{'source':'input','step':0,'parents':{}},cp['channel_versions'])
     runtime=JobRuntime({'srs':StageModel('fake','fake')},str(root/'calls.jsonl'),lambda text:None)
     runtime.bind_worker(owner_id=cap.scope.owner_id,task_id='task',job_id='job',generation=2,session_root=root)
     anchor=ExecutionAnchor(cap.scope.owner_id,anchor_task,'execution2','s',2,'a'*64,'test-installation')
     (root/'execution-generation.json').write_text(json.dumps(anchor.document()))
     fence=StopFence(root/'interview'/'stop-request.json',execution_anchor=anchor)
+    savers={'spec':saver}
+    def backend(namespace):
+        if namespace not in savers:
+            savers[namespace]=MemorySaver(serde=checkpoint_serde());savers[namespace].setup=lambda:None
+        return savers[namespace]
+    runtime.checkpoint_factory=backend
     return cap,root,runtime,saved['configurable']['checkpoint_id'],state,fence
 
 
 def test_later_generation_proposal_preserves_original_semantic_ids(tmp_path):
     cap,root,runtime,cid,state,fence=setup_later_generation(tmp_path)
-    before=(root/'spec'/'checkpoints.sqlite').read_bytes()
+    before=deepcopy(runtime.checkpoint_factory('spec').get_tuple({'configurable':{'thread_id':cap.session_id}}))
     with job_runtime(runtime),cli_execution(fence,None):
         proposal=run_revision_proposal(capability=cap,session_root=root,checkpoint_id=cid,phase='srs',
             change_request='Describe offline behavior',validate_authority=lambda:None,log=None,graph_factory=factory(state))
     assert proposal['session_id']=='execution2' and proposal['generation']==2
     assert proposal['artifact']['session_id']=='s' and proposal['artifact']['intent_model_ref']=='s'
-    assert before==(root/'spec'/'checkpoints.sqlite').read_bytes()
+    assert before==runtime.checkpoint_factory('spec').get_tuple({'configurable':{'thread_id':cap.session_id}})
     assert not proposal['committed']
 
 

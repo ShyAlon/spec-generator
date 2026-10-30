@@ -175,3 +175,8 @@ def test_conops_current_dump_is_content_identical_after_restamp():
     migrated = restamp(ConOpsDocument.model_validate(stored).model_dump(mode="json"), CONTRACT_VERSION)
     loaded = ConOpsDocument.model_validate_json(json.dumps(migrated)).model_dump(mode="json")
     assert cli._resume_constraint_content(loaded) == cli._resume_constraint_content(stored)
+
+
+# Retained behavior executes through an explicit host-owned checkpoint factory.
+import pytest
+pytestmark=pytest.mark.usefixtures("supported_host_runtime")

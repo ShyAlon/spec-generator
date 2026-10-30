@@ -77,6 +77,9 @@ def test_no_direct_process_stream_left_in_the_command():
 
 
 def test_main_takes_argv_and_ignores_the_process_arguments(monkeypatch):
+    # Exercise argv semantics through the supported host entry only.
+    from spec_generator import checkpoint_runtime
+    monkeypatch.setattr(checkpoint_runtime,'configured',lambda:True)
     monkeypatch.setattr(sys, 'argv', ['generator', '--no-such-option'])
     with pytest.raises(SystemExit) as stop:
         cli.main(['--help'])

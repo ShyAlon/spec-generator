@@ -370,16 +370,15 @@ def test_empty_answer_gets_targeted_proposal_feedback(monkeypatch):
     assert sso["migration_adr_id"] == sso["decision_id"]  # pipeline-generated migration slot
 
 
+@pytest.mark.usefixtures("supported_host_runtime")
 def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monkeypatch, tmp_path):
     # the 2026-09-12 --from architecture crash (KeyError 'system_baseline'):
     # the original run's checkpoint predates the baseline feature and the CLI
     # never injected the --system-baseline flag into resumed state. Now: the
     # stage fails human-readably when absent, and the CLI merges the flag
     # value into the resumed checkpoint so the regen completes.
-    import sqlite3
     import sys
 
-    from langgraph.checkpoint.sqlite import SqliteSaver
 
     from spec_generator import cli
     from spec_generator.errors import UserFacingError
@@ -399,8 +398,9 @@ def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monke
 
     # 1. an OLD checkpoint: state without system_baseline (pre-baseline
     # feature). needs+srs complete; architecture stops human-readably.
-    conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
-    g = build_graph(UsageLog(sid), checkpointer=SqliteSaver(conn, serde=checkpoint_serde()))
+    from spec_generator.checkpoint_runtime import checkpoint
+    saver=checkpoint(outdir)
+    g = build_graph(UsageLog(sid), checkpointer=saver)
     with pytest.raises(UserFacingError, match="no system baseline"):
         g.invoke({"intent_model": dict(intent)}, {"configurable": {"thread_id": sid}})
 
@@ -416,10 +416,9 @@ def test_from_architecture_resume_merges_baseline_flag_into_old_checkpoint(monke
     assert (outdir / "manifest.json").exists()  # downstream bundle assembled
 
 
+@pytest.mark.usefixtures("supported_host_runtime")
 def test_review_resume_after_accepted_srs_merges_baseline_without_rerunning_srs(monkeypatch, tmp_path):
-    import sqlite3
     import sys
-    from langgraph.checkpoint.sqlite import SqliteSaver
     from langgraph.types import Command
     from spec_generator import cli
     from spec_generator.graph import checkpoint_serde
@@ -429,8 +428,9 @@ def test_review_resume_after_accepted_srs_merges_baseline_without_rerunning_srs(
     bp=tmp_path/"baseline.json";bp.write_text(json.dumps(SYSTEM_BASELINE))
     out=tmp_path/"artifacts";out.mkdir();sid=intent["session_id"]
     monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k:_MicroModel(stage,k.get("schema") or {},[]))
-    conn=sqlite3.connect(str(out/"checkpoints.sqlite"),check_same_thread=False)
-    old=build_graph(UsageLog(sid),checkpointer=SqliteSaver(conn,serde=checkpoint_serde()),review=True)
+    from spec_generator.checkpoint_runtime import checkpoint
+    saver=checkpoint(out)
+    old=build_graph(UsageLog(sid),checkpointer=saver,review=True)
     old.invoke({"intent_model":intent},{"configurable":{"thread_id":sid}})
     # accept the already-reviewed SRS; old architecture then fails because its
     # checkpoint has no baseline, reproducing the production lineage.
@@ -774,6 +774,7 @@ def test_brownfield_still_requires_cite_or_migrate(monkeypatch):
         assert "requires baseline refs" in str(e)
 
 
+@pytest.mark.usefixtures("supported_host_runtime")
 def test_fresh_review_cli_carries_baseline_and_conops_into_architecture(monkeypatch,tmp_path,capsys):
     """Real CLI boundary regression: --review used to discard both fields."""
     import sys

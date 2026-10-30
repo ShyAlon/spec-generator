@@ -7,12 +7,24 @@ from spec_generator.worker_runtime import job_runtime
 from spec_generator.cooperative_run import cli_execution
 from spec_generator.stop_fence import StopFence
 from spec_generator.revision_worker import run_revision_proposal
-from test_revision_worker import setup,factory
+from test_revision_worker import factory
+
+def setup(tmp_path):
+    from types import SimpleNamespace
+    from spec_generator.worker_runtime import JobRuntime
+    from spec_generator.model_config import StageModel
+    from test_revision_checkpoint import source
+    owner="00000000-0000-0000-0000-000000000001"
+    root=tmp_path/"tenants"/owner/"sessions"/"s"
+    (root/"spec").mkdir(parents=True);(root/"interview").mkdir()
+    cap=SimpleNamespace(scope=SimpleNamespace(owner_id=owner),task_id="task",session_id="s",generation=1)
+    runtime=JobRuntime({"srs":StageModel("fake","fake")},str(root/"calls.jsonl"),lambda text:None)
+    runtime.bind_worker(owner_id=owner,task_id="task",job_id="job",generation=1,session_root=root)
+    return cap,root,runtime,"unused",source()
 
 
 def test_bound_revision_uses_checkpoint_factory_without_sqlite(tmp_path,monkeypatch):
     cap,root,runtime,old_id,state=setup(tmp_path)
-    (root/'spec/checkpoints.sqlite').unlink()
     savers={}
     def backend(namespace):
         if namespace not in savers:
@@ -57,7 +69,6 @@ def test_read_state_rejects_wrong_review_phase_without_opening_backend(tmp_path)
 def test_bound_proposal_retains_through_host_sink_without_creating_files(tmp_path,monkeypatch):
     from pathlib import Path
     cap,root,runtime,cid,state=setup(tmp_path)
-    (root/'spec/checkpoints.sqlite').unlink()
     savers={};retained=[]
     def backend(namespace):
         if namespace not in savers:
@@ -76,3 +87,21 @@ def test_bound_proposal_retains_through_host_sink_without_creating_files(tmp_pat
             change_request='Describe offline behavior',validate_authority=lambda:None,log=None,graph_factory=factory(state))
     assert retained==[proposal] and not (root/'spec/revision-proposals').exists()
     assert backend('spec').get_tuple(cfg).checkpoint['channel_values']==state
+
+
+def test_unbound_checkpoint_never_creates_a_local_database(tmp_path):
+    from spec_generator.checkpoint_runtime import checkpoint,read_state
+    with pytest.raises(ValueError,match='host checkpoint'):
+        checkpoint(tmp_path/'spec')
+    with pytest.raises(ValueError,match='host checkpoint'):
+        read_state(tmp_path/'spec'/'legacy-state',session_id='s',expected_checkpoint_id='old')
+    assert not list(tmp_path.rglob('*'))
+
+
+def test_standalone_cli_refuses_before_any_command_or_provider_work(monkeypatch):
+    from spec_generator import cli
+    calls=[]
+    monkeypatch.setattr(cli,'_main',lambda *args:calls.append(args))
+    with pytest.raises(ValueError,match='delivery-api'):
+        cli.main(['unused-intent.json'])
+    assert calls==[]

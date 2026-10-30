@@ -68,3 +68,11 @@ class SchemaRoutingArchitectureModel:
 def schema_routing_factory(stage, schema, fallback):
     """Route architecture's current micro-contract while preserving a test's stage fake."""
     return SchemaRoutingArchitectureModel(stage, schema or {}) if stage == "architecture" else fallback()
+
+
+@pytest.fixture
+def supported_host_runtime(tmp_path):
+    from host_checkpoint_fixture import hosted_runtime
+    from spec_generator.worker_runtime import job_runtime
+    runtime=hosted_runtime(tmp_path)
+    with job_runtime(runtime):yield runtime
