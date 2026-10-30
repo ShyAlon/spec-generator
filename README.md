@@ -1,5 +1,10 @@
 # spec-generator
 
+> Execution entry point: run through delivery-api with its authenticated PG
+> runtime. Standalone `python -m spec_generator.cli` runs are retired. The CLI
+> module remains importable by delivery-api's bound child runner. Examples below
+> describe workflow arguments, not a supported unbound local storage backend.
+
 `IntentModel` in, V-model artifact bundle out: stakeholder needs, system
 requirements, architecture, item-level specs, test hierarchy, AGENTS.md,
 numbered build plan, manifest, traceability matrix, punch list.

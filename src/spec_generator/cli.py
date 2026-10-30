@@ -1274,6 +1274,8 @@ def _reconcile_artifacts(intent: dict, baseline: dict, source: Path,
 def main(argv=None, io=None) -> None:
     """Command-line entry. A trusted caller running the generator in its own process passes argv and a cli_io.RunIO
     for one run; the command line passes neither and reads the process arguments, stdin, stdout and stderr."""
+    from .checkpoint_runtime import configured
+    if not configured():raise ValueError('standalone generator runs are retired; run through delivery-api with PG')
     from .cloud_wire import admitted_child_run
     if io is None:
         with admitted_child_run():

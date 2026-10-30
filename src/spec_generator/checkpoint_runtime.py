@@ -1,8 +1,7 @@
 """Checkpoint backend supplied by the authenticated host, not environment/path.
 
-Standalone legacy CLI retains its old backend until retirement. A bound job
-with a checkpoint factory never opens SQLite. Namespace is an internal relative
-workflow name derived only inside its already validated session root.
+Standalone execution is retired. A bound job requires its host factory.
+Namespace is an internal relative workflow name derived only inside its already validated session root.
 """
 from pathlib import Path
 
@@ -25,15 +24,11 @@ def checkpoint(outdir):
         saver=r.checkpoint_factory(namespace)
         saver.setup()
         return saver
-    import sqlite3
-    from langgraph.checkpoint.sqlite import SqliteSaver
-    from .graph import checkpoint_serde
-    return SqliteSaver(sqlite3.connect(str(Path(outdir)/'checkpoints.sqlite'),check_same_thread=False),serde=checkpoint_serde())
+    raise ValueError('authenticated host checkpoint runtime required; run through delivery-api')
 
 def read_state(path,*,session_id,expected_checkpoint_id,expected_review_phase=None):
     if not configured():
-        from .revision_source import read_closed_checkpoint
-        return read_closed_checkpoint(path,session_id=session_id,expected_checkpoint_id=expected_checkpoint_id,expected_review_phase=expected_review_phase)
+        raise ValueError('authenticated host checkpoint runtime required; run through delivery-api')
     if expected_review_phase is not None and expected_review_phase not in ('srs','architecture'):raise ValueError('implemented staged review phase required')
     saver=checkpoint(Path(path).parent)
     config={'configurable':{'thread_id':session_id}}

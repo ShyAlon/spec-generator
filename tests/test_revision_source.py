@@ -1,6 +1,20 @@
 import pytest
 from spec_generator.revision_source import read_closed_checkpoint
-from test_revision_worker import setup
+from test_revision_worker import setup as host_setup
+
+def setup(tmp_path):
+    # Temporary file-reader fixture remains only until delivery no longer
+    # imports revision_source. It is not a production backend.
+    import sqlite3
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from langgraph.checkpoint.base import empty_checkpoint
+    from spec_generator.graph import checkpoint_serde
+    cap,root,runtime,cid,state=host_setup(tmp_path)
+    with sqlite3.connect(root/"spec/checkpoints.sqlite") as conn:
+        cp=empty_checkpoint();cp["channel_values"]=state
+        cfg=SqliteSaver(conn,serde=checkpoint_serde()).put({"configurable":{"thread_id":"s","checkpoint_ns":""}},cp,{"source":"input","step":0,"parents":{}},{})
+    conn.close()
+    return cap,root,runtime,cfg["configurable"]["checkpoint_id"],state
 import os
 
 pytestmark = pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="pinned SQLite reader requires /proc/self/fd (Linux); covered by CI")

@@ -38,6 +38,7 @@ def test_ollama_down_and_unpulled_are_friendly():
     assert "ollama pull" in e.render()
 
 
+@pytest.mark.usefixtures("supported_host_runtime")
 def test_missing_intent_file_is_friendly(tmp_path, capsys):
     import sys
 
@@ -52,6 +53,7 @@ def test_missing_intent_file_is_friendly(tmp_path, capsys):
     assert "not found" in err and "interview" in err
 
 
+@pytest.mark.usefixtures("supported_host_runtime")
 def test_old_contract_intent_fails_loudly(tmp_path, capsys):
     import json as j
     import sys
@@ -117,6 +119,7 @@ def test_stale_system_baseline_names_exact_migration_command(tmp_path):
     assert f"python -m vmodel_contracts.migrate '{path}'" in rendered
 
 
+@pytest.mark.usefixtures("supported_host_runtime")
 def test_stale_intent_names_exact_migration_command(tmp_path, capsys, monkeypatch):
     import json
     import sys

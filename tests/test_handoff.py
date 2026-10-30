@@ -62,6 +62,7 @@ def test_open_founder_data_blocks_final_readiness_and_other_run_is_denied(tmp_pa
  conops=json.loads((interview/'conops.json').read_text());conops['session_id']='other';(interview/'conops.json').write_text(json.dumps(conops))
  with pytest.raises(ValueError,match='different sessions'):build_handoff(interview,spec)
 
+@pytest.mark.usefixtures("supported_host_runtime")
 def test_cli_export_runs_zero_model_calls(tmp_path,monkeypatch,capsys):
  import sys
  from spec_generator.cli import main

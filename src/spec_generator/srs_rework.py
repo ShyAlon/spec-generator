@@ -131,44 +131,34 @@ def retain_checkpoint_proposal(*,capability,session_root,checkpoint_id,revision,
     Never updates source SRS, semantic decisions, checkpoint cursor or downstream
     artifacts. Installing/applying the proposal is a separate reviewed workflow.
     """
-    import json,sqlite3,uuid
+    import json,uuid
     from .cooperative_run import cli_stop_binding
-    from .graph import checkpoint_serde
-    from langgraph.checkpoint.sqlite import SqliteSaver
     binding=cli_stop_binding()
     if binding is None:raise ValueError('bound worker fence required')
     fence,generation=binding
     if generation!=capability.generation:raise ValueError('rework generation mismatch')
     path=session_root/'spec'/'checkpoints.sqlite'
-    from .checkpoint_runtime import configured,checkpoint
-    if path.resolve()!=path or (not configured() and not path.is_file()):raise ValueError('owned source checkpoint required')
+    from .checkpoint_runtime import checkpoint
+    if path.resolve()!=path:raise ValueError('owned source checkpoint required')
     config={'configurable':{'thread_id':capability.session_id}}
     def source():
-        # Read-only SQLite URI, no source schema creation or journal mutation.
-        conn=None
-        if configured():saver=checkpoint(path.parent)
-        else:
-            conn=sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,check_same_thread=False)
-            saver=SqliteSaver(conn,serde=checkpoint_serde())
-        try:
-            row=saver.get_tuple(config)
-            if row is None or row.config['configurable']['checkpoint_id']!=checkpoint_id:
-                raise ValueError('source checkpoint changed')
-            values=row.checkpoint['channel_values']
-            from vmodel_contracts import check_compatible
-            check_compatible(values['intent_model'])
-            if values.get('conops') is not None:check_compatible(values['conops'])
-            if values.get('system_baseline') is not None:check_compatible(values['system_baseline'])
-            review=(values.get('semantic_reviews') or {}).get('srs')
-            if not review or review.get('revision')!=revision or review.get('session_id')!=capability.session_id:
-                raise ValueError('checkpoint SRS review changed')
-            if values.get('srs')!=review.get('candidate'):
-                raise ValueError('checkpoint SRS differs from source review')
-            if values.get('architecture') or values.get('items'):
-                raise ValueError('downstream checkpoint requires explicit invalidation review')
-            return values
-        finally:
-            if conn is not None:conn.close()
+        saver=checkpoint(path.parent)
+        row=saver.get_tuple(config)
+        if row is None or row.config['configurable']['checkpoint_id']!=checkpoint_id:
+            raise ValueError('source checkpoint changed')
+        values=row.checkpoint['channel_values']
+        from vmodel_contracts import check_compatible
+        check_compatible(values['intent_model'])
+        if values.get('conops') is not None:check_compatible(values['conops'])
+        if values.get('system_baseline') is not None:check_compatible(values['system_baseline'])
+        review=(values.get('semantic_reviews') or {}).get('srs')
+        if not review or review.get('revision')!=revision or review.get('session_id')!=capability.session_id:
+            raise ValueError('checkpoint SRS review changed')
+        if values.get('srs')!=review.get('candidate'):
+            raise ValueError('checkpoint SRS differs from source review')
+        if values.get('architecture') or values.get('items'):
+            raise ValueError('downstream checkpoint requires explicit invalidation review')
+        return values
     fence.check(generation);values=source()
     result=(prepare or prepare_model_rework)(intent=deepcopy(values['intent_model']),needs=deepcopy(values['needs']),
         conops=deepcopy(values.get('conops')),review=deepcopy(values['semantic_reviews']['srs']),

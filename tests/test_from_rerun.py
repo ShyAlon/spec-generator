@@ -333,7 +333,7 @@ def test_same_baseline_resume_relabels_nothing(monkeypatch, tmp_path, capsys):
     assert box["items"].calls == 1
 
 
-def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(monkeypatch, tmp_path):
+def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(monkeypatch, tmp_path,supported_host_runtime):
     """Regression for the 2026-09-14 acceptance bundle.
 
     Exercise the actual checkpoint rewind -> architecture node -> incremental
@@ -386,6 +386,7 @@ def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(mon
             return {"stack_keys": ["data_persistence_service"]}
 
     box = {}
+    supported_host_runtime.settings['SPEC_GENERATOR_BULK']=None
     monkeypatch.delenv("SPEC_GENERATOR_BULK", raising=False)
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: box.setdefault(stage, AcceptanceModel(stage)))
@@ -781,3 +782,8 @@ def test_baseline_change_refuses_to_invalidate_approved_settled_work(monkeypatch
     err = capsys.readouterr().err
     assert "WARNING: the --system-baseline for this run differs" in err
     assert ledger.calls("architecture") > 7, "explicit --from redoes architecture under the new anchor"
+
+
+# Retained behavior executes through an explicit host-owned checkpoint factory.
+import pytest
+pytestmark=pytest.mark.usefixtures("supported_host_runtime")

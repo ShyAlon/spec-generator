@@ -1,10 +1,8 @@
 import copy
 import json
-import sqlite3
 import sys
 
 import pytest
-from langgraph.checkpoint.sqlite import SqliteSaver
 from vmodel_contracts import CONTRACT_VERSION, ConOpsDocument, SystemBaseline
 
 from conftest import ModelFactoryLedger, SchemaRoutingArchitectureModel
@@ -16,6 +14,7 @@ from spec_generator import cli, model_config
 from spec_generator.artifact_lifecycle import ArchitectureLifecycle, stable_hash
 from spec_generator.errors import UserFacingError
 from spec_generator.graph import build_graph, checkpoint_serde
+from spec_generator.checkpoint_runtime import checkpoint
 from spec_generator.telemetry import UsageLog
 
 
@@ -34,8 +33,8 @@ def test_cli_crash_retry_reseals_without_repeating_architecture(tmp_path,monkeyp
  current=SystemBaseline.model_validate(SYSTEM_BASELINE).model_dump(mode="json")
  old=restamp(current,"0.19.0");new=restamp(current,CONTRACT_VERSION)
  cfg={"configurable":{"thread_id":"s"}}
- conn=sqlite3.connect(outdir/"checkpoints.sqlite",check_same_thread=False)
- first=build_graph(UsageLog("s"),checkpointer=SqliteSaver(conn,serde=checkpoint_serde()),stop_after="architecture")
+ saver=checkpoint(outdir)
+ first=build_graph(UsageLog("s"),checkpointer=saver,stop_after="architecture")
  state=first.invoke({"intent_model":dict(INTENT),"system_baseline":old},cfg)
  body={**state["architecture"],"session_id":"s"}
  cli.validated_architecture(body)
@@ -43,7 +42,7 @@ def test_cli_crash_retry_reseals_without_repeating_architecture(tmp_path,monkeyp
  if legacy_anchor:life.anchor_hash=stable_hash(new)
  if recorded_resume:life.resume("items")
  if reconnected:
-  full=build_graph(UsageLog("s"),checkpointer=SqliteSaver(conn,serde=checkpoint_serde()))
+  full=build_graph(UsageLog("s"),checkpointer=saver)
   cli._resume_after_bounded_stop(full,cfg,state)
  before=life.path.read_bytes();arch_calls=ledger.calls("architecture")
  intent=tmp_path/"intent.json";intent.write_text(json.dumps(dict(INTENT,contract_version=CONTRACT_VERSION)))
@@ -61,15 +60,13 @@ def test_cli_crash_retry_reseals_without_repeating_architecture(tmp_path,monkeyp
  cli.main()
  assert ledger.calls("architecture")==arch_calls
  assert {stage:model.calls for stage,model in box.items()}==counts
- conn.close()
 
 
 def test_incompatible_conops_does_not_reconnect_or_append_lifecycle(tmp_path,monkeypatch):
  from vmodel_contracts import runtime
  monkeypatch.setattr(runtime,"install_plain_log",lambda path,stream:stream)
  outdir=tmp_path/"spec";outdir.mkdir()
- conn=sqlite3.connect(outdir/"checkpoints.sqlite",check_same_thread=False)
- saver=SqliteSaver(conn,serde=checkpoint_serde())
+ saver=checkpoint(outdir)
  graph=build_graph(UsageLog("s"),checkpointer=saver)
  cfg={"configurable":{"thread_id":"s"}}
  graph.update_state(cfg,{"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,
@@ -78,16 +75,20 @@ def test_incompatible_conops_does_not_reconnect_or_append_lifecycle(tmp_path,mon
  life=ArchitectureLifecycle(outdir,"s",SYSTEM_BASELINE)
  life.bootstrap_complete({"completed":True},SYSTEM_BASELINE)
  log_before=life.path.read_bytes()
- db_before=list(conn.execute("SELECT * FROM checkpoints"))
- writes_before=list(conn.execute("SELECT * FROM writes"))
+ db_before=copy.deepcopy(saver.storage)
+ writes_before=copy.deepcopy(saver.writes)
  intent=tmp_path/"intent.json";intent.write_text(json.dumps(dict(INTENT,contract_version=CONTRACT_VERSION)))
  baseline=tmp_path/"baseline.json";baseline.write_text(json.dumps(SYSTEM_BASELINE))
  changed=conops();changed["decision"]["rationale"]="changed"
  concept=tmp_path/"conops.json";concept.write_text(json.dumps(changed))
  monkeypatch.setattr(sys,"argv",["cli",str(intent),"--conops",str(concept),"--system-baseline",str(baseline),"--out",str(outdir)])
  with pytest.raises(UserFacingError,match="Concept of Operations"):cli.main()
- assert list(conn.execute("SELECT * FROM checkpoints"))==db_before
- assert list(conn.execute("SELECT * FROM writes"))==writes_before
+ assert saver.storage==db_before
+ assert saver.writes==writes_before
  assert graph.get_state(cfg).config==snapshot.config
  assert life.path.read_bytes()==log_before
- conn.close()
+
+
+# Retained behavior executes through an explicit host-owned checkpoint factory.
+import pytest
+pytestmark=pytest.mark.usefixtures("supported_host_runtime")

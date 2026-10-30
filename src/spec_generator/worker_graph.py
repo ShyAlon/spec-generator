@@ -4,7 +4,6 @@ Not the process-oriented CLI. Resume, rewind, gate decisions and repair commands
 remain unavailable here until their revision-safe lifecycle is installed.
 """
 from copy import deepcopy
-import sqlite3
 from vmodel_contracts import IntentModel,ConOpsDocument,SystemBaseline,check_compatible
 from .cooperative_run import cli_stop_binding
 from .worker_runtime import current_runtime
@@ -22,7 +21,6 @@ def run_fresh_graph(*,capability,session_root,intent,conops,baseline,log,progres
     from .graph import checkpoint_serde
     from .artifact_lifecycle import ArchitectureLifecycle
     from .cli import _make_partials,_make_persist
-    from langgraph.checkpoint.sqlite import SqliteSaver
     binding=cli_stop_binding();runtime=current_runtime()
     if binding is None or runtime is None:raise ValueError('private bound job runtime required')
     if stop_after not in ('needs','srs'):raise ValueError('fresh worker currently supports needs/SRS only')
@@ -51,21 +49,17 @@ def run_fresh_graph(*,capability,session_root,intent,conops,baseline,log,progres
     if not documents_configured():guarded_publish(lambda:out.mkdir(parents=True,exist_ok=True))
     from .checkpoint_runtime import checkpoint as open_checkpoint
     saver=guarded_publish(lambda:open_checkpoint(out))
-    try:
-        if documents_configured():
-            from .document_runtime import exists
-            if saver.get_tuple({'configurable':{'thread_id':capability.session_id}}) is not None or any(exists(out/name) for name in ('needs.json','srs.json','architecture.json','items.json','tests.json','validation.json','artifact-lifecycle.jsonl','lineage.json')):
-                raise ValueError('fresh worker output is not empty; explicit resume required')
-        lifecycle=ArchitectureLifecycle(out,capability.session_id,baseline)
-        graph=(graph_factory or build_graph)(log,checkpointer=saver,
-            progress=progress,review=False,stop_after=stop_after,
-            stop_fence=fence,stop_generation=generation,
-            persist=_make_persist(intent,out,greenfield=baseline['mode']=='greenfield',conops_present=True,architecture_lifecycle=lifecycle),
-            partials=_make_partials(out,lifecycle))
-        config={'configurable':{'thread_id':capability.session_id}}
-        result=graph.invoke(deepcopy({'intent_model':intent,'conops':conops,'system_baseline':baseline}),config)
-        fence.check(generation)
-        return result
-    finally:
-        from .checkpoint_runtime import configured
-        if not configured():saver.conn.close()
+    if documents_configured():
+        from .document_runtime import exists
+        if saver.get_tuple({'configurable':{'thread_id':capability.session_id}}) is not None or any(exists(out/name) for name in ('needs.json','srs.json','architecture.json','items.json','tests.json','validation.json','artifact-lifecycle.jsonl','lineage.json')):
+            raise ValueError('fresh worker output is not empty; explicit resume required')
+    lifecycle=ArchitectureLifecycle(out,capability.session_id,baseline)
+    graph=(graph_factory or build_graph)(log,checkpointer=saver,
+        progress=progress,review=False,stop_after=stop_after,
+        stop_fence=fence,stop_generation=generation,
+        persist=_make_persist(intent,out,greenfield=baseline['mode']=='greenfield',conops_present=True,architecture_lifecycle=lifecycle),
+        partials=_make_partials(out,lifecycle))
+    config={'configurable':{'thread_id':capability.session_id}}
+    result=graph.invoke(deepcopy({'intent_model':intent,'conops':conops,'system_baseline':baseline}),config)
+    fence.check(generation)
+    return result
