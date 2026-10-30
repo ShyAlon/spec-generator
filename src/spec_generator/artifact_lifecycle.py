@@ -1,6 +1,6 @@
 """Architecture artifact lifecycle pilot.
 
-SQLite remains the workflow checkpoint. This adapter gates architecture partial
+The host PostgreSQL checkpoint retains workflow position. This adapter gates architecture partial
 and artifact reads/writes with the canonical vmodel-contracts transition table
 and appends the resulting evidence to artifact-lifecycle.jsonl.
 """

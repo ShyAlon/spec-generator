@@ -12,7 +12,7 @@ tmp+rename - a late failure leaves all completed work on disk):
   validation.json                  after stage 6/7 (what only a person can judge)
   AGENTS.md / traceability.json / manifest.json   at assembly (stage 7/7)
   gate_srs.* / gate_architecture.* (--review)     at the gates
-  usage.jsonl / checkpoints.sqlite                run bookkeeping
+  usage.jsonl / hosted PG checkpoints             run bookkeeping
 """
 from __future__ import annotations
 from .docs import refresh_docs, archive_review
@@ -984,7 +984,7 @@ def _resume_after_bounded_stop(graph, cfg: dict, prior: dict) -> str | None:
     """Re-open a checkpoint intentionally ended by --to STAGE.
 
     A stop-after graph records a complete state with no pending task. Rebuilding
-    the graph without --to cannot manufacture the missing edge from SQLite, so
+    the graph without --to cannot manufacture the missing edge from a checkpoint, so
     explicitly replay the last completed node against the new full topology.
     """
     if prior.get("bundle") or graph.get_state(cfg).next:
@@ -1424,8 +1424,7 @@ def _main(argv=None) -> None:
         print(json.dumps(handoff), file=cli_io.stdout());return
     if args.preflight:
         from .checkpoint_runtime import checkpoint,configured
-        cp=outdir / "checkpoints.sqlite"
-        if configured() or cp.exists():
+        if configured():
             probe=build_graph(UsageLog(sid),checkpointer=checkpoint(outdir),review=args.review)
             prior=probe.get_state({"configurable":{"thread_id":sid}}).values
             if prior:
@@ -1439,7 +1438,7 @@ def _main(argv=None) -> None:
                         "choose a fresh -o directory, or explicitly rerun from architecture under the new baseline.")
         print(f"Preflight OK: session={sid}; seed=intent_model,system_baseline,conops; "
               f"baseline={baseline['baseline_id']}; conops={conops is not None}; "
-              f"checkpoint={'checked' if configured() else 'compatible' if cp.exists() else 'fresh'}", file=cli_io.stdout())
+              f"checkpoint={'checked' if configured() else 'fresh'}", file=cli_io.stdout())
         return
     if args.reconcile_artifacts:
         audit = _reconcile_artifacts(intent, baseline, outdir, args.reconcile_out,
@@ -1553,7 +1552,7 @@ def _main(argv=None) -> None:
                         and _resume_constraint_content(prior["system_baseline"]) != _resume_constraint_content(baseline))
     if resume and not baseline_changed:
         next_artifact = "gate_architecture" if args.review else "items"
-        # Check a previously recorded continuation even if SQLite was already
+        # Check a previously recorded continuation even if the checkpoint was already
         # reconnected before the crash. Never reseal an arbitrary partial.
         if (prior.get("architecture") and architecture_lifecycle.state.value == "partial"):
             body = {**prior["architecture"], "session_id": sid}

@@ -59,9 +59,9 @@ By default the output directory is `<workspace>/artifacts/artifacts-YYYY-MM-DD_H
 
 Live per-stage progress lines (`-> Drafting architecture overview (stage 3/6)...`)
 come from structured `ProgressEvent`s (progress.py) - the same stream the UI
-will consume later (ADR-0010). Checkpoints persist inside the artifacts directory (for example, `artifacts-2026-09-10_16-41-00/checkpoints.sqlite`):
-a crash mid-generation is recovered by rerunning the same command - completed
-stages are never re-paid (ADR-0011).
+will consume later (ADR-0010). The authenticated delivery host supplies PostgreSQL checkpoints and owns recovery.
+Standalone CLI execution is retired; run through the delivery host with its
+reviewed session and generation binding.
 
 ## Boundary rule
 
@@ -272,7 +272,7 @@ downstream closure while preserving complete needs/SRS. `--from` performs
 `invalidate` then `restart`. A checkpoint intentionally stopped by `--to`
 requires a guarded `resume` naming its next artifact and legal outgoing arc.
 No `invalidated` artifact may feed downstream, and no changed anchor may be
-reported as `complete`. The lifecycle guard runs before architecture partial/artifact reads and writes. SQLite still
+reported as `complete`. The lifecycle guard runs before architecture partial/artifact reads and writes. The host PostgreSQL checkpoint
 owns workflow position; `artifact-lifecycle.jsonl` is the auditable artifact-state record.
 The contracts README is the canonical transition and guard reference.
 

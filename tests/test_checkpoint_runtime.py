@@ -62,7 +62,7 @@ def test_read_state_rejects_wrong_review_phase_without_opening_backend(tmp_path)
     calls=[];runtime.checkpoint_factory=lambda ns:calls.append(ns)
     with job_runtime(runtime):
         with pytest.raises(ValueError,match='review phase'):
-            read_state(root/'spec/checkpoints.sqlite',session_id='s',expected_checkpoint_id=cid,expected_review_phase='needs')
+            read_state(root/'spec',session_id='s',expected_checkpoint_id=cid,expected_review_phase='needs')
     assert calls==[]
 
 
@@ -94,7 +94,7 @@ def test_unbound_checkpoint_never_creates_a_local_database(tmp_path):
     with pytest.raises(ValueError,match='host checkpoint'):
         checkpoint(tmp_path/'spec')
     with pytest.raises(ValueError,match='host checkpoint'):
-        read_state(tmp_path/'spec'/'legacy-state',session_id='s',expected_checkpoint_id='old')
+        read_state(tmp_path/'spec',session_id='s',expected_checkpoint_id='old')
     assert not list(tmp_path.rglob('*'))
 
 
