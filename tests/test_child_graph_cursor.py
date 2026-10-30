@@ -27,31 +27,31 @@ def test_gate_suspends_without_process_local_answer_and_reuses_durable_answer():
     assert DurableGate({gate_key(decision):'a'},published.append)(decision)=='a'
 
 
-def test_real_cli_gate_suspension_releases_checkpoint_then_fresh_restore(tmp_path):
-    import sqlite3,io
+def test_real_cli_gate_suspension_then_fresh_graph_restore(tmp_path):
+    import io
     from langgraph.graph import StateGraph,START,END
     from langgraph.types import interrupt,Command
-    from langgraph.checkpoint.sqlite import SqliteSaver
+    from reference_checkpoint import reference_checkpoint
     from spec_generator.child_execution import DurableGate,GateSuspended
     from spec_generator.cli import _run_with_gates
     from spec_generator.cli_io import bind,RunIO
-    # Actual CLI gate loop with a tiny persisted graph. Renderer is real and
+    # Actual CLI gate loop with a fresh graph over the same reference saver. Renderer is real and
     # uses contract-shaped SRS, not a process-local fake answer queue.
     from test_progress import INTENT,CONTRACT_SRS
     def gate(state):
         interrupt({'gate':'srs','artifact':CONTRACT_SRS,'advisories':[]})
         return {'done':True}
-    def graph(conn):
+    def graph(key):
         builder=StateGraph(dict);builder.add_node('gate',gate);builder.add_edge(START,'gate');builder.add_edge('gate',END)
-        return builder.compile(checkpointer=SqliteSaver(conn))
+        return builder.compile(checkpointer=reference_checkpoint(key))
     cfg={'configurable':{'thread_id':'gate-session'}};events=[]
-    with sqlite3.connect(tmp_path/'checkpoints.sqlite',check_same_thread=False) as conn:
-        with bind(RunIO(io.StringIO(),io.StringIO(),DurableGate({},events.append))):
-            with pytest.raises(GateSuspended):_run_with_gates(graph(conn),cfg,dict(INTENT),tmp_path)
+    key=tmp_path/'gate-reference'
+    with bind(RunIO(io.StringIO(),io.StringIO(),DurableGate({},events.append))):
+        with pytest.raises(GateSuspended):_run_with_gates(graph(key),cfg,dict(INTENT),tmp_path)
     assert events and events[0]['kind']=='gate'
-    with sqlite3.connect(tmp_path/'checkpoints.sqlite',check_same_thread=False) as conn:
-        with bind(RunIO(io.StringIO(),io.StringIO(),DurableGate({events[0]['key']:'a'},events.append))):
-            result=_run_with_gates(graph(conn),cfg,dict(INTENT),tmp_path,resume=True)
+    key=tmp_path/'gate-reference'
+    with bind(RunIO(io.StringIO(),io.StringIO(),DurableGate({events[0]['key']:'a'},events.append))):
+        result=_run_with_gates(graph(key),cfg,dict(INTENT),tmp_path,resume=True)
     assert result['done'] is True and len(events)==1
 
 

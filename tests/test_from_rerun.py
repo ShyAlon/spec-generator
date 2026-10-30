@@ -4,11 +4,11 @@ re-runs under the CURRENT code (his 2026-09-09 need: the completed run held
 pre-fix items with invented requirement ids; a plain resume re-reported the
 old violations without re-running anything)."""
 import json
-import sqlite3
+
 import sys
 
 import pytest
-from langgraph.checkpoint.sqlite import SqliteSaver
+from reference_checkpoint import reference_checkpoint
 
 from spec_generator import model_config
 from spec_generator.cli import _invalidate_from, _make_partials, _PARTIAL_DOWNSTREAM, main
@@ -31,7 +31,7 @@ def _run_once(box, monkeypatch, db):
         return box.setdefault(stage, FakeModel(stage))
     monkeypatch.setattr(model_config, "build_chat_model", factory)
     box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
-    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
+    g = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(db))
     cfg = {"configurable": {"thread_id": "s"}}
     g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     return g, cfg
@@ -39,7 +39,7 @@ def _run_once(box, monkeypatch, db):
 
 def test_from_items_reruns_downstream_only(monkeypatch, tmp_path):
     box = {}
-    db = str(tmp_path / "cp.sqlite")
+    db = str(tmp_path / "cp.reference")
     g, cfg = _run_once(box, monkeypatch, db)
     counts = {k: v.calls for k, v in box.items()}
     assert counts == {"srs": 1, "architecture": 7, "items": 1, "tests": 1, "validation": 1, "review": 1}  # architecture: 3 plans + 3 slot fills
@@ -56,7 +56,7 @@ def test_review_loop_runs_fresh_after_rewind(monkeypatch, tmp_path):
     """review_round is reset, so the rewind doesn't land on the 'already 2
     passes' shortcut and skip the review."""
     box = {}
-    db = str(tmp_path / "cp.sqlite")
+    db = str(tmp_path / "cp.reference")
     g, cfg = _run_once(box, monkeypatch, db)
     g.update_state(cfg, {"review_round": 2})  # simulate a completed two-pass loop
     _invalidate_from(g, cfg, "items", review_mode=False)
@@ -66,7 +66,7 @@ def test_review_loop_runs_fresh_after_rewind(monkeypatch, tmp_path):
 
 def test_from_review_reruns_only_review_and_assembly(monkeypatch, tmp_path):
     box = {}
-    db = str(tmp_path / "cp.sqlite")
+    db = str(tmp_path / "cp.reference")
     g, cfg = _run_once(box, monkeypatch, db)
     _invalidate_from(g, cfg, "review", review_mode=False)
     g.invoke(None, cfg)
@@ -76,12 +76,11 @@ def test_from_review_reruns_only_review_and_assembly(monkeypatch, tmp_path):
 
 def test_from_unknown_stage_and_missing_checkpoint(monkeypatch, tmp_path):
     box = {}
-    db = str(tmp_path / "cp.sqlite")
+    db = str(tmp_path / "cp.reference")
     g, cfg = _run_once(box, monkeypatch, db)
     with pytest.raises(UserFacingError, match="unknown stage"):
         _invalidate_from(g, cfg, "banana", review_mode=False)
-    g2 = build_graph(UsageLog("other"), checkpointer=SqliteSaver(
-        sqlite3.connect(str(tmp_path / "empty.sqlite"), check_same_thread=False)))
+    g2 = build_graph(UsageLog("other"), checkpointer=reference_checkpoint(str(tmp_path / "empty.reference")))
     with pytest.raises(UserFacingError, match="no checkpoint"):
         _invalidate_from(g2, {"configurable": {"thread_id": "nobody"}}, "items", review_mode=False)
 
@@ -390,11 +389,11 @@ def test_from_architecture_real_node_persists_resolution_and_matrix_evidence(mon
     monkeypatch.delenv("SPEC_GENERATOR_BULK", raising=False)
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: box.setdefault(stage, AcceptanceModel(stage)))
-    db = str(tmp_path / "checkpoints.sqlite")
+    db = str(tmp_path / "checkpoints.reference")
     outdir = tmp_path / "bundle"; outdir.mkdir(); (outdir / "specs").mkdir()
     intent = {**INTENT, "open_questions": [question]}
     g = build_graph(UsageLog("s"),
-                    checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)),
+                    checkpointer=reference_checkpoint(db),
                     persist=_make_persist(intent, outdir, greenfield=True))
     cfg = {"configurable": {"thread_id": "s"}}
     g.invoke({"intent_model": intent,
@@ -425,8 +424,8 @@ def test_to_architecture_stops_real_checkpoint_before_downstream(monkeypatch, tm
         return box.setdefault(stage, FakeModel(stage))
     monkeypatch.setattr(model_config, "build_chat_model", factory)
     box["architecture"] = type("Counter", (), {"calls": property(lambda _self: ledger.calls("architecture"))})()
-    db = sqlite3.connect(str(tmp_path / "to.sqlite"), check_same_thread=False)
-    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(db), stop_after="architecture")
+    db = str(tmp_path / "to.reference")
+    g = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(db), stop_after="architecture")
     cfg = {"configurable": {"thread_id": "to-s"}}
     result = g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     assert result["architecture"]
@@ -537,11 +536,11 @@ def test_full_resume_reconnects_checkpoint_stopped_after_architecture(monkeypatc
     from spec_generator.cli import _resume_after_bounded_stop
     box={}
     monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**kw:box.setdefault(stage,FakeModel(stage)))
-    db_path=str(tmp_path/"bounded.sqlite"); cfg={"configurable":{"thread_id":"bounded"}}
-    first=build_graph(UsageLog("bounded"),checkpointer=SqliteSaver(sqlite3.connect(db_path,check_same_thread=False)),stop_after="architecture")
+    db_path=str(tmp_path/"bounded.reference"); cfg={"configurable":{"thread_id":"bounded"}}
+    first=build_graph(UsageLog("bounded"),checkpointer=reference_checkpoint(db_path),stop_after="architecture")
     stopped=first.invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE},cfg)
     assert stopped.get("architecture") and not stopped.get("bundle") and not first.get_state(cfg).next
-    full=build_graph(UsageLog("bounded"),checkpointer=SqliteSaver(sqlite3.connect(db_path,check_same_thread=False)))
+    full=build_graph(UsageLog("bounded"),checkpointer=reference_checkpoint(db_path))
     prior=full.get_state(cfg).values
     assert _resume_after_bounded_stop(full,cfg,prior)=="architecture"
     resumed=full.invoke(None,cfg)
@@ -580,7 +579,7 @@ def test_from_srs_resets_expert_budget_and_architecture_preserves_srs_history(mo
     monkeypatch.setattr(model_config, "build_chat_model", factory)
     graph = build_graph(
         UsageLog("s"),
-        checkpointer=SqliteSaver(sqlite3.connect(str(tmp_path / "expert-rewind.sqlite"), check_same_thread=False)),
+        checkpointer=reference_checkpoint(str(tmp_path / "expert-rewind.reference")),
         review=True,
         expert_opinion=True,
     )
@@ -691,8 +690,8 @@ def test_from_boundary_invalidation_matrix(
     assert lifecycle.read_bytes() == before_lifecycle  # append-only audit evidence
 
 def test_from_refuses_missing_sequential_prerequisite(monkeypatch,tmp_path):
-    db=str(tmp_path/'missing-prereq.sqlite')
-    graph=build_graph(UsageLog('missing'),checkpointer=SqliteSaver(sqlite3.connect(db,check_same_thread=False)))
+    db=str(tmp_path/'missing-prereq.reference')
+    graph=build_graph(UsageLog('missing'),checkpointer=reference_checkpoint(db))
     cfg={'configurable':{'thread_id':'missing'}}
     graph.update_state(cfg,{'intent_model':dict(INTENT),'system_baseline':SYSTEM_BASELINE,'needs':{'stakeholders':[]}},as_node='needs')
     with pytest.raises(UserFacingError) as caught:_invalidate_from(graph,cfg,'items',review_mode=False)
@@ -702,7 +701,7 @@ def test_from_refuses_missing_sequential_prerequisite(monkeypatch,tmp_path):
 
 
 def test_from_accepts_fulfilled_sequential_prerequisites(monkeypatch,tmp_path):
-    box={};graph,cfg=_run_once(box,monkeypatch,str(tmp_path/'fulfilled.sqlite'))
+    box={};graph,cfg=_run_once(box,monkeypatch,str(tmp_path/'fulfilled.reference'))
     _invalidate_from(graph,cfg,'items',review_mode=False)
     state=graph.get_state(cfg).values
     assert state['needs'] is not None and state['srs'] is not None and state['architecture'] is not None
@@ -710,18 +709,18 @@ def test_from_accepts_fulfilled_sequential_prerequisites(monkeypatch,tmp_path):
 
 
 def test_bounded_checkpoint_can_reconnect_into_later_bounded_graph(tmp_path):
-    """One process per phase still advances the shared checkpoint."""
-    import sqlite3
-    from langgraph.checkpoint.sqlite import SqliteSaver
+    """Fresh graph instances advance one shared reference checkpoint."""
+
+    from reference_checkpoint import reference_checkpoint
     from spec_generator.cli import _resume_after_bounded_stop
     from spec_generator.graph import build_graph
     from spec_generator.telemetry import UsageLog
     cfg={"configurable":{"thread_id":"bounded-to-bounded"}}
-    db_path=str(tmp_path/"bounded.sqlite")
-    first=build_graph(UsageLog("bounded"),checkpointer=SqliteSaver(sqlite3.connect(db_path,check_same_thread=False)),stop_after="needs")
+    db_path=str(tmp_path/"bounded.reference")
+    first=build_graph(UsageLog("bounded"),checkpointer=reference_checkpoint(db_path),stop_after="needs")
     # A minimal complete node value is enough to exercise checkpoint topology.
     first.update_state(cfg,{"needs":{"stakeholder_needs":[]}},as_node="needs")
-    later=build_graph(UsageLog("bounded"),checkpointer=SqliteSaver(sqlite3.connect(db_path,check_same_thread=False)),stop_after="srs")
+    later=build_graph(UsageLog("bounded"),checkpointer=reference_checkpoint(db_path),stop_after="srs")
     prior=later.get_state(cfg).values
     assert _resume_after_bounded_stop(later,cfg,prior)=="needs"
     assert later.get_state(cfg).next
@@ -733,12 +732,12 @@ def test_bounded_items_checkpoint_reconnects_to_tests_without_repeating_items(mo
     from spec_generator.graph import build_graph
     box={}
     monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**kw:box.setdefault(stage,FakeModel(stage)))
-    path=str(tmp_path/'items-to-tests.sqlite');cfg={'configurable':{'thread_id':'items-to-tests'}}
-    first=build_graph(UsageLog('items-to-tests'),checkpointer=SqliteSaver(sqlite3.connect(path,check_same_thread=False)),stop_after='items')
+    path=str(tmp_path/'items-to-tests.reference');cfg={'configurable':{'thread_id':'items-to-tests'}}
+    first=build_graph(UsageLog('items-to-tests'),checkpointer=reference_checkpoint(path),stop_after='items')
     stopped=first.invoke({'intent_model':dict(INTENT),'system_baseline':SYSTEM_BASELINE},cfg)
     assert stopped.get('items') and not stopped.get('tests') and not first.get_state(cfg).next
     items_calls=box['items'].calls
-    later=build_graph(UsageLog('items-to-tests'),checkpointer=SqliteSaver(sqlite3.connect(path,check_same_thread=False)),stop_after='tests')
+    later=build_graph(UsageLog('items-to-tests'),checkpointer=reference_checkpoint(path),stop_after='tests')
     assert _resume_after_bounded_stop(later,cfg,later.get_state(cfg).values)=='items'
     result=later.invoke(None,cfg)
     assert result.get('tests') and box['items'].calls==items_calls

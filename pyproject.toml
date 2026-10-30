@@ -14,7 +14,6 @@ dependencies = [
   "vmodel-contracts==0.28.0",
   "requi-child-contract==0.3.0",
   "langgraph>=0.2",
-  "langgraph-checkpoint-sqlite>=2",
   "langchain-core>=0.3",
   "langchain-openai>=0.2",
   "langchain-ollama>=0.2",

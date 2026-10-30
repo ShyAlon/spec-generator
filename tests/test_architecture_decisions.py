@@ -178,13 +178,13 @@ def test_targeted_refresh_updates_missing_metadata_only_and_is_resumable(tmp_pat
 
 
 def test_real_checkpoint_consumes_saved_default_without_requeueing_architecture(tmp_path):
-    import sqlite3
-    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    from reference_checkpoint import reference_checkpoint
     from spec_generator.graph import build_graph, checkpoint_serde
     from spec_generator.cli import _apply_saved_architecture_decisions
     from spec_generator.telemetry import UsageLog
-    conn=sqlite3.connect(tmp_path/'checkpoints.sqlite',check_same_thread=False)
-    graph=build_graph(UsageLog('s'),checkpointer=SqliteSaver(conn,serde=checkpoint_serde()))
+    conn=tmp_path/'checkpoints.reference'
+    graph=build_graph(UsageLog('s'),checkpointer=reference_checkpoint(conn, serde=checkpoint_serde()))
     cfg={'configurable':{'thread_id':'s'}}
     prior={'architecture':_default_arch(),'items':[], 'findings_ledger':Ledger().to_dict()}
     graph.update_state(cfg,prior,as_node='architecture')
@@ -198,7 +198,6 @@ def test_real_checkpoint_consumes_saved_default_without_requeueing_architecture(
     assert writes[0][0]=='architecture'
     again=_apply_saved_architecture_decisions(graph,cfg,result,tmp_path,lambda *a:writes.append(a))
     assert again==result and len(writes)==1
-    conn.close()
 
 
 def test_targeted_refresh_rejects_existing_downstream_before_model_call(tmp_path,monkeypatch):

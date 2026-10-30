@@ -76,3 +76,11 @@ def supported_host_runtime(tmp_path):
     from spec_generator.worker_runtime import job_runtime
     runtime=hosted_runtime(tmp_path)
     with job_runtime(runtime):yield runtime
+
+
+@pytest.fixture(autouse=True)
+def _isolated_reference_checkpoints():
+    from reference_checkpoint import clear_reference_checkpoints
+    clear_reference_checkpoints()
+    yield
+    clear_reference_checkpoints()

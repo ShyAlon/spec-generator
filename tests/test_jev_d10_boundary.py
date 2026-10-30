@@ -1,10 +1,10 @@
 """JEV-D10 at the pipeline boundary: control plane, acceptance, quarantine, evidence."""
 import json
-import sqlite3
+
 
 import pytest
 from langchain_core.messages import AIMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
+from reference_checkpoint import reference_checkpoint
 from conftest import SYSTEM_BASELINE
 
 from spec_generator import model_config
@@ -58,7 +58,7 @@ def _run(monkeypatch, tmp_path, bodies, name="r", seen=None):
     monkeypatch.setattr(model_config, "build_chat_model", lambda stage, **kw: factory(stage, kw.get("schema") or {}))
     partials = _make_partials(tmp_path)
     persist = _make_persist(dict(INTENT), tmp_path)
-    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(str(tmp_path / f"{name}.db"), check_same_thread=False)),
+    g = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(str(tmp_path / f"{name}.db")),
                     persist=persist, partials=partials)
     return g, partials
 

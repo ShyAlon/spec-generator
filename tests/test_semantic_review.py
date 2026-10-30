@@ -22,8 +22,8 @@ def test_replace_preserves_structure_and_other_session_is_denied():
  with pytest.raises(ValueError):reviewed_srs(INTENT,r.model_dump(),d)
 
 def test_reviewed_srs_resumes_a_real_checkpoint_without_authoring(monkeypatch,tmp_path):
- import sqlite3,json
- from langgraph.checkpoint.sqlite import SqliteSaver
+ import json
+ from reference_checkpoint import reference_checkpoint
  from spec_generator.graph import build_graph,checkpoint_serde
  from spec_generator.cli import _predecessor
  from spec_generator.semantic_review import load_reviewed_srs
@@ -32,8 +32,8 @@ def test_reviewed_srs_resumes_a_real_checkpoint_without_authoring(monkeypatch,tm
  from test_progress import FakeModel
  from conftest import SYSTEM_BASELINE,schema_routing_factory
  r=review();d=r.model_dump();d['decisions']=[{'item_id':'R-1','action':'accept','actor':'founder'}]
- db=sqlite3.connect(tmp_path/'checkpoint.sqlite',check_same_thread=False)
- saver=SqliteSaver(db,serde=checkpoint_serde());cfg={'configurable':{'thread_id':'s'}}
+ db=tmp_path/'checkpoint.reference'
+ saver=reference_checkpoint(db, serde=checkpoint_serde());cfg={'configurable':{'thread_id':'s'}}
  g=build_graph(UsageLog('s'),checkpointer=saver,stop_after='architecture')
  g.update_state(cfg,{'intent_model':INTENT,'system_baseline':SYSTEM_BASELINE,'srs':r.candidate,'semantic_reviews':{'srs':r.model_dump()},'needs':{'session_id':'s','needs':[{'need_id':'N-1','stakeholder':'founder','statement':'specs','kind':'functional','intent_fields':['problem_statement'],'intent_need_ids':['SN-1']}]}},as_node='srs')
  (tmp_path/'srs.semantic-review.json').write_text(json.dumps(d))
