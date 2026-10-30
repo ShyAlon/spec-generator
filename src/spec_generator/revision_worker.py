@@ -46,20 +46,21 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
     config={'configurable':{'thread_id':capability.session_id}}
     def source():
         validate_authority();fence.check(generation)
-        from .revision_source import read_closed_checkpoint
+        from .checkpoint_runtime import read_state as read_closed_checkpoint
         return read_closed_checkpoint(source_path,session_id=capability.session_id,expected_checkpoint_id=checkpoint_id)
     original=source()
     prepare_revision_seed(source=original,phase=phase,change_request=change_request,session_id=semantic_session_id)
     parent=root/'spec'/'revision-proposals'
     if parent.resolve()!=parent:raise ValueError('unsafe revision proposal directory')
-    guarded_publish(lambda:parent.mkdir(exist_ok=True))
+    if runtime.proposal_sink is None:guarded_publish(lambda:parent.mkdir(exist_ok=True))
     destination=parent/uuid.uuid4().hex
-    guarded_publish(lambda:destination.mkdir())
-    conn=guarded_publish(lambda:sqlite3.connect(str(destination/'checkpoints.sqlite'),check_same_thread=False))
+    if runtime.proposal_sink is None:guarded_publish(lambda:destination.mkdir())
+    from .checkpoint_runtime import checkpoint,configured
+    backend=guarded_publish(lambda:checkpoint(destination))
     try:
         # No artifact persistence or prior partial reuse: the checkpoint holds a
         # private proposal only until typed validation and evidence CAS succeed.
-        saver=FencedCheckpointer(SqliteSaver(conn,serde=checkpoint_serde()),publication_guard(fence,generation))
+        saver=FencedCheckpointer(backend,publication_guard(fence,generation))
         graph=(graph_factory or build_graph)(log,checkpointer=saver,progress=progress,
             review=False,stop_after=phase,stop_fence=fence,stop_generation=generation)
         seed_fresh_revision_checkpoint(source=original,source_checkpoint_id=checkpoint_id,expected_checkpoint_id=checkpoint_id,
@@ -85,6 +86,9 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
             'change_request':change_request.strip(),'proposal_checkpoint_id':snapshot.config['configurable']['checkpoint_id']}
         def publish():
             validate_authority();fence.check(generation)
+            if runtime.proposal_sink is not None:
+                if not callable(runtime.proposal_sink):raise ValueError('bound proposal sink required')
+                runtime.proposal_sink(body);return
             with (destination/'proposal.json').open('x') as file:
                 json.dump(body,file,sort_keys=True,indent=2);file.flush();os.fsync(file.fileno())
             fd=os.open(destination,os.O_RDONLY)
@@ -92,4 +96,5 @@ def run_revision_proposal(*,capability,session_root,checkpoint_id,phase,change_r
             finally:os.close(fd)
         guarded_publish(publish)
         return body
-    finally:conn.close()
+    finally:
+        if not configured():backend.conn.close()

@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 from vmodel_contracts import SRSDocument
 from vmodel_contracts.semantic_review import SemanticReview
+from .document_runtime import exists,read_text
 from .graph import srs_document_data
 
 def reviewed_srs(intent,original,proposal):
@@ -18,5 +19,5 @@ def load_reviewed_srs(intent,outdir,prior):
     original=(prior.get('semantic_reviews') or {}).get('srs')
     if not original or not original.get('findings'):return None
     path=Path(outdir)/'srs.semantic-review.json'
-    if not path.is_file():raise ValueError('semantic candidate review is missing')
-    return reviewed_srs(intent,original,json.loads(path.read_text()))
+    if not exists(path):raise ValueError('semantic candidate review is missing')
+    return reviewed_srs(intent,original,json.loads(read_text(path)))

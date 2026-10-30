@@ -228,9 +228,10 @@ class GroundingCache:
     """Cache keyed on hashes of cleaned text, so a formatting-only edit still hits and a content edit misses."""
     def __init__(self, path: Path | None = None):
         self.path, self.data = path, {}
-        if path and path.exists():
+        from .document_runtime import exists,read_text
+        if path and exists(path):
             try:
-                self.data = json.loads(path.read_text())
+                self.data = json.loads(read_text(path))
             except ValueError:
                 self.data = {}
 
@@ -240,7 +241,8 @@ class GroundingCache:
     def put(self, k, v):
         self.data[k] = v
         if self.path:
-            self.path.write_text(json.dumps(self.data, sort_keys=True))
+            from .document_runtime import atomic_text
+            atomic_text(self.path,json.dumps(self.data, sort_keys=True))
 
 
 def _worst_yn(values: list[str], bad: str) -> str:

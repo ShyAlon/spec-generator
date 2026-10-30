@@ -16,6 +16,12 @@ from vmodel_contracts import (ArtifactState, LifecycleEvent, LifecycleTransition
 
 def append_lifecycle_event(path,event):
     from .stop_fence import guarded_publish
+    from .document_runtime import configured,append
+    if configured():
+        from vmodel_contracts import validate_transition
+        typed=validate_transition(event)
+        guarded_publish(lambda:append(path,(typed.model_dump_json()+"\n").encode()))
+        return typed
     return guarded_publish(lambda:_append_lifecycle_event(path,event))
 
 
@@ -31,10 +37,11 @@ class ArchitectureLifecycle:
         self.anchor_hash = stable_hash(anchor)
 
     def _events(self) -> list[dict]:
-        if not self.path.exists():
+        from .document_runtime import exists,read_text
+        if not exists(self.path):
             return []
         events=[]
-        for line in self.path.read_text().splitlines():
+        for line in read_text(self.path).splitlines():
             if line.strip():
                 value=json.loads(line)
                 if value.get("artifact_id")==self.artifact_id:

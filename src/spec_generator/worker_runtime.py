@@ -18,6 +18,9 @@ class JobRuntime:
     diagnostics:dict=field(default_factory=dict)
     lock:object=field(default_factory=RLock)
     watchdog:object=field(default_factory=lambda:AdaptiveCallWatchdog(multiplier=8.0,floor_s=240.0))
+    checkpoint_factory:object=field(default=None,kw_only=True)
+    proposal_sink:object=field(default=None,kw_only=True)
+    documents:object=field(default=None,kw_only=True)
     worker_binding:tuple|None=field(default=None,init=False)
 
     def bind_worker(self,*,owner_id,task_id,job_id,generation,session_root):

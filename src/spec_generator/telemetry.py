@@ -16,6 +16,8 @@ Sink = Callable[[StageTokenUsage], None]
 
 def jsonl_sink(path: str | Path) -> Sink:
     def _write(u: StageTokenUsage) -> None:
+        from .document_runtime import configured,append
+        if configured():return append(path,(u.model_dump_json()+"\n").encode())
         with open(path, "a") as f:
             f.write(u.model_dump_json() + "\n")
     return _write

@@ -42,8 +42,12 @@ from .render import (render_agents_md, render_architecture, render_needs,
 from .telemetry import UsageLog, jsonl_sink
 
 
+from .document_runtime import read_text as _document_text,read_bytes as _document_bytes,exists as _document_exists,remove as _document_remove
+
 def _append_audit(path,record):
     from .stop_fence import guarded_publish
+    from .document_runtime import configured,append as append_document
+    if configured():return guarded_publish(lambda:append_document(path,(json.dumps(record)+"\n").encode()))
     def append():
         with path.open("a") as fh:fh.write(json.dumps(record)+"\n")
     guarded_publish(append)
@@ -123,6 +127,8 @@ def _backfill_persist(persist, values: dict) -> list[str]:
 def _atomic_write(path: Path, text: str) -> None:
     """tmp + rename: a crash mid-write can never leave a torn artifact."""
     from .stop_fence import guarded_publish
+    from .document_runtime import configured,write as write_document
+    if configured():return guarded_publish(lambda:write_document(path,text.encode()))
     def write():
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
@@ -136,7 +142,7 @@ def _decided_review_on_disk(path: Path, semantic: dict) -> bool:
     review and the checkpoint copy has none. A resume's backfill must never
     replace recorded decisions with the checkpoint's undecided copy."""
     try:
-        disk = json.loads(path.read_text())
+        disk = json.loads(_document_text(path))
     except (OSError, ValueError):
         return False
     return (isinstance(disk, dict) and bool(disk.get("decisions")) and not semantic.get("decisions")
@@ -162,6 +168,11 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
     class _Partials:
         def load(self, key: str):
             p = outdir / FILES[key]
+            from .document_runtime import configured,read
+            if configured():
+                raw=read(p)
+                if key=='architecture' and architecture_lifecycle and raw is not None:architecture_lifecycle.guard_partial_read()
+                return json.loads(raw) if raw is not None else None
             if key == "architecture" and architecture_lifecycle and p.exists():
                 architecture_lifecycle.guard_partial_read()
             return json.loads(p.read_text()) if p.exists() else None
@@ -189,6 +200,8 @@ def _make_partials(outdir: Path, architecture_lifecycle=None):
 
         def clear(self, key: str) -> None:
             p = outdir / FILES[key]
+            from .document_runtime import configured,clear
+            if configured():return clear(p)
             if p.exists():
                 p.unlink()
 
@@ -326,13 +339,13 @@ def _write_decisions_companion(outdir: Path, architecture: dict) -> None:
     path = outdir / COMPANION_NAME
     companion = companion_for(architecture)
     if companion is None:
-        if path.is_file() and not path.is_symlink():
-            path.unlink()
+        if _document_exists(path) and not path.is_symlink():
+            _document_remove(path)
         return
     earlier: dict[tuple[str, str], dict] = {}
-    if path.is_file() and not path.is_symlink():
+    if _document_exists(path) and not path.is_symlink():
         try:
-            for s in json.loads(path.read_text()).get("slots") or []:
+            for s in json.loads(_document_text(path)).get("slots") or []:
                 answer = s.get("founder_decision") or s.get("prefill")
                 if answer:
                     earlier[(s.get("key"), s.get("brief"))] = answer
@@ -353,14 +366,15 @@ def _update_architecture_metadata(graph, cfg, update):
     # Source node is observable in checkpoint versions even when update metadata
     # has no writes field (current LangGraph serialization).
     checkpoint = graph.checkpointer.get_tuple(cfg).checkpoint
-    seen = checkpoint.get("versions_seen") or {}
+    from langgraph.pregel._checkpoint import versions_seen_without_bumps
+    seen = versions_seen_without_bumps(checkpoint.get("versions_seen") or {})
     ranked = sorted((version, node) for node, channels in seen.items()
-                    if node != "__start__" for version in channels.values())
+                    if not node.startswith("__") for version in channels.values())
     if ranked:
         latest = ranked[-1][0]
         nodes = {node for version, node in ranked if version == latest}
     else:
-        nodes = {node for node in seen if node != "__start__"}
+        nodes = {node for node in seen if not node.startswith("__")}
     if len(nodes) != 1:
         raise UserFacingError("Checkpoint metadata owner is ambiguous.",
                               "cannot safely preserve its scheduled continuation.",
@@ -375,10 +389,10 @@ def _apply_saved_architecture_decisions(graph, cfg, prior: dict, outdir: Path, p
     from .findings_ledger import Ledger
     path = outdir / COMPANION_NAME
     arch = prior.get("architecture")
-    if not arch or not path.is_file() or path.is_symlink():
+    if not arch or not _document_exists(path) or path.is_symlink():
         return prior
     try:
-        merged = merge_companion(arch, json.loads(path.read_text()))
+        merged = merge_companion(arch, json.loads(_document_text(path)))
     except ValueError as exc:
         raise UserFacingError("Saved architecture decisions are not usable.", str(exc),
                               "open the architecture gate, review the decisions and save them again.") from exc
@@ -423,7 +437,7 @@ def _refresh_technical_choices(graph, cfg, prior, outdir, persist, log, progress
         persist("architecture", architecture, prior)
         from . import lineage as _lineage
         for _name in ("architecture.json", "architecture.decisions.json"):
-            if (outdir / _name).is_file():
+            if _document_exists(outdir / _name):
                 _lineage.bind(outdir,
                               task_id=os.environ.get("VMODEL_PROGRESS_TASK_ID", ""),
                               session_id=sid,
@@ -491,9 +505,9 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
         once. Overwriting settled bytes without an explicit --from rewind refuses."""
         from . import lineage
         names = [f"{stage}.json"]
-        if stage == "srs" and (outdir / "srs.semantic-review.json").is_file():
+        if stage == "srs" and _document_exists(outdir / "srs.semantic-review.json"):
             names.append("srs.semantic-review.json")
-        if stage == "architecture" and (outdir / "architecture.decisions.json").is_file():
+        if stage == "architecture" and _document_exists(outdir / "architecture.decisions.json"):
             names.append("architecture.decisions.json")
         try:
             for name in names:
@@ -514,14 +528,14 @@ def _make_persist(intent: dict, outdir: Path, greenfield: bool = False,
     def _content_evidence(record: dict) -> None:
         """Rejected candidates are evidence: kept verbatim, never deleted by a rerun."""
         path = outdir / "content-rejections.json"
-        prior = json.loads(path.read_text()) if path.exists() else []
+        prior = json.loads(_document_text(path)) if _document_exists(path) else []
         _atomic_write(path, json.dumps(prior + [record], indent=2))
 
     _persist.content_evidence = _content_evidence
     def _grounding(spec_id: str, envelope: dict) -> None:
         path = outdir / "grounding-evidence.json"
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(_document_text(path))
         except (OSError, ValueError):
             data = {}
         data[spec_id] = envelope
@@ -594,12 +608,12 @@ def _assembly_rebind_lineage(outdir: Path, sid: str, prior_bytes: dict) -> None:
     for phase, name in (("architecture", "architecture.json"), ("tests", "tests.json"),
                         ("validation", "validation.json")):
         path = outdir / name
-        if not path.is_file():
+        if not _document_exists(path):
             continue
         entry = lineage.lookup(record, phase, name)
         if entry is not None and name in prior_bytes:
             old = _unstamped(json.loads(prior_bytes[name]))
-            new = _unstamped(json.loads(path.read_bytes()))
+            new = _unstamped(json.loads(_document_bytes(path)))
             if phase == "architecture":
                 old = ArchitectureOverview.model_validate(
                     coerce_for_model(old, ArchitectureOverview)).model_dump(mode="json")
@@ -647,7 +661,7 @@ def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode, con
     hosted = bool(os.environ.get("VMODEL_PROGRESS_TASK_ID"))
     declared = ("needs.json", "srs.json", "architecture.json", "items.json", "tests.json", "validation.json")
     if record is None:
-        if hosted and not prior and any((outdir / name).is_file() for name in declared):
+        if hosted and not prior and any(_document_exists(outdir / name) for name in declared):
             raise UserFacingError(
                 "this session's settled artifacts cannot be tied to their approved record.",
                 "the local authority record (spec/lineage.json) is missing on this host while settled artifacts are present; resuming now would regenerate approved work",
@@ -697,7 +711,7 @@ def _hydrate_from_lineage(graph, cfg, prior, outdir, args, sid, review_mode, con
             # in-graph body (e.g. architecture stack dispositions), drifting the body
             # from everything recorded against it (architecture decisions companion
             # revision) and failing the resume closed.
-            body = {k: v for k, v in json.loads(path.read_text()).items() if k != "contract_version"}
+            body = {k: v for k, v in json.loads(_document_text(path)).items() if k != "contract_version"}
             try:
                 if stage == "needs":
                     StakeholderNeedsSet.model_validate(normalize_enums(coerce_for_model(body, StakeholderNeedsSet), StakeholderNeedsSet))
@@ -1004,15 +1018,23 @@ def _migration_command(path: Path) -> str:
     return f"python -m vmodel_contracts.migrate {shlex.quote(str(path))}"
 
 
+def _persist_system_baseline(source,outdir,baseline):
+    from .document_runtime import configured
+    # The PG input already is the canonical output. Normalizing it here would
+    # silently replace founder-approved bytes and invalidate the manifest hash.
+    if configured() and source == outdir / "system-baseline.json":return
+    _atomic_write(outdir / "system-baseline.json",json.dumps(baseline,indent=2))
+
+
 def _load_system_baseline(path: Path) -> dict:
-    if not path.is_file():
+    if not _document_exists(path):
         raise UserFacingError(
             f"system baseline file not found: {path}.",
             "architecture generation requires an explicit existing or greenfield baseline.",
             "pass --system-baseline <file>; copy examples/system-baseline.greenfield.json for a new product.",
         )
     try:
-        raw = json.loads(path.read_text())
+        raw = json.loads(_document_text(path))
         from vmodel_contracts import ContractVersionMismatch, check_compatible
         check_compatible(raw)
         return SystemBaseline.model_validate(raw).model_dump(mode="json")
@@ -1060,10 +1082,10 @@ def _load_stage_state(source: Path, intent: dict, baseline: dict, stage: str) ->
     missing = []
     for key in _ONLY_STAGE_INPUTS[stage]:
         path = source / _ARTIFACT_FILES[key]
-        if not path.is_file():
+        if not _document_exists(path):
             missing.append(str(path))
             continue
-        state[key] = json.loads(path.read_text())
+        state[key] = json.loads(_document_text(path))
     if missing:
         raise UserFacingError(
             f"cannot run only stage '{stage}': required upstream artifacts are missing.",
@@ -1105,7 +1127,7 @@ def _run_only_stage(args, intent: dict, sid: str) -> None:
     baseline = _load_system_baseline(args.system_baseline)
     state = _load_stage_state(source, intent, baseline, args.only_stage)
     _prepare_stage_iteration(source, outdir)
-    _atomic_write(outdir / "system-baseline.json", json.dumps(baseline, indent=2))
+    _persist_system_baseline(args.system_baseline,outdir,baseline)
     if conops:
         _atomic_write(outdir / "conops.json", json.dumps(conops, indent=2))
     loaded = [*(_ONLY_STAGE_INPUTS[args.only_stage])]
@@ -1232,7 +1254,7 @@ def _reconcile_artifacts(intent: dict, baseline: dict, source: Path,
     cause = ("semantic basis changed during deterministic reconciliation: " + ", ".join(changed)
              if changed else "deterministic views refreshed; semantic basis unchanged")
     status_path = destination / "artifact-status.json"
-    status = json.loads(status_path.read_text()) if status_path.exists() else {"artifacts": {}}
+    status = json.loads(_document_text(status_path)) if _document_exists(status_path) else {"artifacts": {}}
     if changed:
         for name in ("items.json", "tests.json", "validation.json", "specs", "AGENTS.md", "traceability.json", "manifest.json"):
             status["artifacts"][name] = {"state": "stale", "cause": cause,
@@ -1329,14 +1351,14 @@ def _main(argv=None) -> None:
     if args.reconcile_artifacts and (args.from_stage or args.only_stage or args.to_stage or args.review):
         ap.error("--reconcile-artifacts cannot be combined with --from, --to, --only-stage, or --review")
 
-    if not args.intent_model.exists():
+    if not _document_exists(args.intent_model):
         raise UserFacingError(
             f"intent model file not found: {args.intent_model}",
             "wrong path, or the interview has not been run yet.",
             "run the interview first (interview-engine CLI) or pass the correct path to out/<session>/intent_model.json.",
         )
     try:
-        intent = json.loads(args.intent_model.read_text())
+        intent = json.loads(_document_text(args.intent_model))
     except json.JSONDecodeError as e:
         raise UserFacingError(
             f"{args.intent_model} is not valid JSON ({e}).",
@@ -1365,7 +1387,7 @@ def _main(argv=None) -> None:
     if args.conops is not None:
         from vmodel_contracts import ConOpsDocument
         try:
-            conops = ConOpsDocument.model_validate_json(args.conops.read_text()).model_dump(mode="json")
+            conops = ConOpsDocument.model_validate_json(_document_text(args.conops)).model_dump(mode="json")
         except Exception as e:
             raise UserFacingError(
                 f"Concept of Operations file is invalid: {args.conops}.",
@@ -1399,12 +1421,10 @@ def _main(argv=None) -> None:
         handoff=build_handoff(args.intent_model.parent,outdir)
         print(json.dumps(handoff), file=cli_io.stdout());return
     if args.preflight:
-        import sqlite3
+        from .checkpoint_runtime import checkpoint,configured
         cp=outdir / "checkpoints.sqlite"
-        if cp.exists():
-            from langgraph.checkpoint.sqlite import SqliteSaver
-            conn=sqlite3.connect(str(cp),check_same_thread=False)
-            probe=build_graph(UsageLog(sid),checkpointer=SqliteSaver(conn,serde=checkpoint_serde()),review=args.review)
+        if configured() or cp.exists():
+            probe=build_graph(UsageLog(sid),checkpointer=checkpoint(outdir),review=args.review)
             prior=probe.get_state({"configurable":{"thread_id":sid}}).values
             if prior:
                 if _resume_constraint_content(prior.get("conops")) != _resume_constraint_content(conops):
@@ -1417,7 +1437,7 @@ def _main(argv=None) -> None:
                         "choose a fresh -o directory, or explicitly rerun from architecture under the new baseline.")
         print(f"Preflight OK: session={sid}; seed=intent_model,system_baseline,conops; "
               f"baseline={baseline['baseline_id']}; conops={conops is not None}; "
-              f"checkpoint={'compatible' if cp.exists() else 'fresh'}", file=cli_io.stdout())
+              f"checkpoint={'checked' if configured() else 'compatible' if cp.exists() else 'fresh'}", file=cli_io.stdout())
         return
     if args.reconcile_artifacts:
         audit = _reconcile_artifacts(intent, baseline, outdir, args.reconcile_out,
@@ -1428,15 +1448,15 @@ def _main(argv=None) -> None:
         return
     outdir.mkdir(parents=True, exist_ok=True)
     refresh_docs(outdir, intent=intent, conops=conops, start=True)
-    from vmodel_contracts.runtime import install_plain_log
+    from .document_runtime import plain_log
     run_log = outdir / "run.log"
-    cli_io.set_stderr(install_plain_log(run_log, cli_io.stderr()))
+    cli_io.set_stderr(plain_log(run_log, cli_io.stderr()))
     # Per-call telemetry is part of every normal run, not an experiment-only
     # opt-in. Preserve an explicit external sink, otherwise keep it beside the bundle.
     os.environ.setdefault("VMODEL_LLM_LOG", str(outdir / "llm-calls.jsonl"))
     print(f"Run log: {run_log.resolve()} (plain text)", file=cli_io.stderr())
     (outdir / "specs").mkdir(exist_ok=True)
-    _atomic_write(outdir / "system-baseline.json", json.dumps(baseline, indent=2))
+    _persist_system_baseline(args.system_baseline,outdir,baseline)
 
     log = UsageLog(sid, sink=jsonl_sink(outdir / "usage.jsonl"))
     bus = ProgressBus()
@@ -1450,11 +1470,8 @@ def _main(argv=None) -> None:
 
     # Disk checkpoints: a crash mid-generation resumes from the last completed
     # stage on rerun (same command) - no stage is paid for twice.
-    import sqlite3
-
-    from langgraph.checkpoint.sqlite import SqliteSaver
-
-    conn = sqlite3.connect(str(outdir / "checkpoints.sqlite"), check_same_thread=False)
+    from .checkpoint_runtime import checkpoint
+    saver = checkpoint(outdir)
     from .artifact_lifecycle import ArchitectureLifecycle, stable_hash
     architecture_lifecycle = ArchitectureLifecycle(outdir, sid, baseline)
     partials = _make_partials(outdir, architecture_lifecycle)
@@ -1473,7 +1490,7 @@ def _main(argv=None) -> None:
     stop_binding=cli_stop_binding()
     graph = build_graph(log, stop_fence=stop_binding[0] if stop_binding else None,
                         stop_generation=stop_binding[1] if stop_binding else None,
-                        checkpointer=SqliteSaver(conn, serde=checkpoint_serde()), progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding, require_decisions=args.require_decisions,
+                        checkpointer=saver, progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding, require_decisions=args.require_decisions,
                         persist=persist_fn,
                         partials=partials, stop_after=args.to_stage)
     from . import model_config as _mc
@@ -1587,7 +1604,7 @@ def _main(argv=None) -> None:
         from . import lineage as _lineage_bf
         _bound_stages = {entry["phase"]
                          for entry in (_lineage_bf.load(outdir) or {}).get("entries") or []
-                         if (outdir / entry["name"]).is_file()}
+                         if _document_exists(outdir / entry["name"])}
         written = _backfill_persist(_make_persist(intent, outdir,
                                                         conops_present=conops is not None,
                                                         architecture_lifecycle=checkpoint_lifecycle),
@@ -1747,8 +1764,8 @@ def _main(argv=None) -> None:
     _asm_prior = {}
     for _name in ("architecture.json", "tests.json", "validation.json"):
         _p = outdir / _name
-        if _p.is_file():
-            _asm_prior[_name] = _p.read_bytes()
+        if _document_exists(_p):
+            _asm_prior[_name] = _document_bytes(_p)
     _atomic_write((outdir / "architecture.json"),arch.model_dump_json(indent=2))
     for i in items:
         _atomic_write((outdir / "specs" / f"{i.spec_id}.md"),render_spec_file(i))

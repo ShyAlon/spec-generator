@@ -19,6 +19,8 @@ import json
 import os
 from pathlib import Path
 
+from .document_runtime import read_bytes,read_text,exists,atomic_text
+
 RECORD_NAME = "lineage.json"
 _VERSION = 1
 
@@ -38,7 +40,7 @@ class LineageRefusal(Exception):
 
 
 def sha256_file(path: Path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    return hashlib.sha256(read_bytes(path)).hexdigest()
 
 
 # Launch-input identity contract (scheme-tagged):
@@ -93,7 +95,7 @@ def _canonical_json(data: bytes, *, name: str) -> bytes:
 
 def hash_launch_input(path: Path, *, name: str) -> str:
     """Scheme-tagged launch-input identity under the contract above."""
-    data = Path(path).read_bytes()
+    data = read_bytes(path)
     if name.endswith(".json"):
         return JSON_INPUT_SCHEME + ":" + hashlib.sha256(_canonical_json(data, name=name)).hexdigest()
     return BYTES_INPUT_SCHEME + ":" + hashlib.sha256(data).hexdigest()
@@ -106,10 +108,10 @@ def _record_path(root: Path) -> Path:
 def load(root: Path) -> dict | None:
     """None when no record exists (standalone runs before any restore)."""
     path = _record_path(root)
-    if not path.is_file():
+    if not exists(path):
         return None
     try:
-        record = json.loads(path.read_text())
+        record = json.loads(read_text(path))
     except (ValueError, OSError) as exc:
         raise LineageRefusal(
             f"lineage record at {path} is unreadable ({exc}); restore the session again "
@@ -127,9 +129,7 @@ def load(root: Path) -> dict | None:
 
 def _write(root: Path, record: dict) -> None:
     path = _record_path(root)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(record, indent=2, sort_keys=True))
-    os.replace(tmp, path)
+    atomic_text(path,json.dumps(record, indent=2, sort_keys=True))
 
 
 def _identity(task_id, session_id, generation) -> dict:
@@ -150,7 +150,7 @@ def verify_inputs(record: dict, input_files: dict) -> None:
     """The current run's launch inputs must match the record under their tagged scheme."""
     bound = (record or {}).get("inputs") or {}
     for name, path in input_files.items():
-        if name in bound and Path(path).is_file():
+        if name in bound and exists(path):
             stored = str(bound[name])
             if ":" not in stored:
                 raise LineageRefusal(
@@ -223,7 +223,7 @@ def verify_file(record: dict, *, phase: str, name: str, path: Path,
             f"no settled binding for {phase}/{name}; the file on disk is not authoritative. "
             "Restore the session again from the published manifest (no model calls)."
         )
-    if not Path(path).is_file():
+    if not exists(path):
         raise LineageRefusal(
             f"settled artifact {phase}/{name} is missing on disk; "
             "restore the session again from the published manifest (no model calls)."
