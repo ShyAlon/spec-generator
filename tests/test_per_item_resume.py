@@ -6,11 +6,11 @@ completed stages. Plus: the plan phase no longer masquerades as item lines,
 and micro-calls print a start line when they begin (+ tokens when reported).
 """
 import json
-import sqlite3
+
 
 import pytest
 from langchain_core.messages import AIMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
+from reference_checkpoint import reference_checkpoint
 
 from spec_generator import model_config
 from spec_generator.cli import _make_partials
@@ -102,8 +102,8 @@ def _build(monkeypatch, calls, tmp_path, name, fail_after_bodies=None, partials=
     bus = ProgressBus()
     events = []
     bus.subscribe(events.append)
-    db = str(tmp_path / f"{name}.sqlite")
-    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)),
+    db = str(tmp_path / f"{name}.reference")
+    g = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(db),
                     progress=bus, partials=partials)
     return g, events
 

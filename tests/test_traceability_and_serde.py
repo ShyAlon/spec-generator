@@ -9,10 +9,10 @@ from conftest import SYSTEM_BASELINE, schema_routing_factory
    allowed_msgpack_modules; new state is dumped mode='json' (plain strings)."""
 import json
 import logging
-import sqlite3
+
 
 import pytest
-from langgraph.checkpoint.sqlite import SqliteSaver
+from reference_checkpoint import reference_checkpoint
 
 from spec_generator import model_config
 from spec_generator.graph import (_items_payload, _items_validator, _prompt_view,

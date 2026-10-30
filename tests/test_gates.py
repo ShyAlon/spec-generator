@@ -210,17 +210,17 @@ POISONED_SRS = {
 }  # his live checkpoint shape: 10 requirements (4F+6NF), every title stripped by the old grammar bug
 
 
-def test_heal_restart_end_to_end_sqlite_skeleton_mode(tmp_path, monkeypatch, capsys):
+def test_heal_restart_end_to_end_reference_skeleton_mode(tmp_path, monkeypatch, capsys):
     """THE live path (his 2:58 paste): a pre-fix checkpoint holding a poisoned
-    title-less SRS, resumed under --review with SqliteSaver. The gate render
+    title-less SRS, resumed under --review with a reference saver. The gate render
     fails on the old draft ONCE, the heal restarts calmly (no Error block),
     the SRS stage regenerates in skeleton mode, and the gate then renders the
     merged, title-ful artifact. Proves the old-draft error text is the heal's
     first render, NOT a hole in the skeleton flow."""
-    import sqlite3
+
 
     import pytest
-    from langgraph.checkpoint.sqlite import SqliteSaver
+    from reference_checkpoint import reference_checkpoint
     from test_progress import INTENT, FakeModel
 
     from spec_generator.cli import _run_with_gates
@@ -230,8 +230,8 @@ def test_heal_restart_end_to_end_sqlite_skeleton_mode(tmp_path, monkeypatch, cap
     def factory(stage, **kw):
         return ledger.build(stage, kw.get("schema")) if stage == "architecture" else box.setdefault(stage, FakeModel(stage))
     monkeypatch.setattr(model_config, "build_chat_model", factory)
-    conn = sqlite3.connect(str(tmp_path / "checkpoints.sqlite"), check_same_thread=False)
-    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(conn),
+    conn = str(tmp_path / "checkpoints.reference")
+    g = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(conn),
                     progress=ProgressBus(), review=True)
     cfg = {"configurable": {"thread_id": "heal-e2e"}}
     g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)

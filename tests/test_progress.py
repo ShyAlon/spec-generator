@@ -1,7 +1,7 @@
 from conftest import SYSTEM_BASELINE, schema_routing_factory
 """Progress events + crash-resume for the generation pipeline."""
 import json
-import sqlite3
+
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage
 from spec_generator import model_config
 from spec_generator.graph import build_graph
 from spec_generator.progress import ProgressBus
-from langgraph.checkpoint.sqlite import SqliteSaver
+from reference_checkpoint import reference_checkpoint
 from spec_generator.telemetry import UsageLog
 
 PAYLOADS = {
@@ -142,15 +142,15 @@ def test_crash_mid_pipeline_resumes_without_repaying(tmp_path, fake_models):
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: fake_models.setdefault(stage, DieAtArch(stage) if stage == "architecture" else FakeModel(stage)))
-    db = str(tmp_path / "cp.sqlite")
+    db = str(tmp_path / "cp.reference")
     cfg = {"configurable": {"thread_id": "s"}}
-    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
+    g = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(db))
     with pytest.raises(RuntimeError):
         g.invoke({"intent_model": INTENT, "system_baseline": SYSTEM_BASELINE}, cfg)
 
     # "fix" and rerun: healthy models, same db
     fake_models["architecture"] = FakeModel("architecture")
-    g2 = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
+    g2 = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(db))
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: schema_routing_factory(stage, kw.get("schema"), lambda: fake_models.setdefault(stage, FakeModel(stage))))
     r = g2.invoke(None, cfg)

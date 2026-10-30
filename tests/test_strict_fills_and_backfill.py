@@ -7,10 +7,10 @@ from conftest import SYSTEM_BASELINE, schema_routing_factory
 3. Stages completed before persistence shipped never hit the bundle dir on
    resume - _backfill_persist writes them from checkpoint state."""
 import json
-import sqlite3
+
 
 import pytest
-from langgraph.checkpoint.sqlite import SqliteSaver
+from reference_checkpoint import reference_checkpoint
 
 from spec_generator import model_config
 from spec_generator.cli import _backfill_persist, _make_persist
@@ -49,8 +49,8 @@ def test_strict_schema_reaches_the_model_build(monkeypatch, tmp_path):
         return schema_routing_factory(stage, schema, lambda: FakeModel(stage))
 
     monkeypatch.setattr(model_config, "build_chat_model", build)
-    db = str(tmp_path / "cp.sqlite")
-    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
+    db = str(tmp_path / "cp.reference")
+    g = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(db))
     g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, {"configurable": {"thread_id": "s"}})
     assert seen["srs"]["properties"]["fills"]["required"] == ["R-1"]
     assert seen["tests"]["properties"]["fills"]["required"] == ["T-1", "T-2"]
@@ -83,15 +83,15 @@ def test_backfill_writes_completed_stages_without_rerunning(monkeypatch, tmp_pat
     box = {}
     monkeypatch.setattr(model_config, "build_chat_model",
                         lambda stage, **kw: schema_routing_factory(stage, kw.get("schema"), lambda: box.setdefault(stage, FakeModel(stage))))
-    db = str(tmp_path / "cp.sqlite")
+    db = str(tmp_path / "cp.reference")
     cfg = {"configurable": {"thread_id": "s"}}
-    g = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
+    g = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(db))
     g.invoke({"intent_model": dict(INTENT), "system_baseline": SYSTEM_BASELINE}, cfg)
     calls_at_completion = {k: v.calls for k, v in box.items()}
 
     outdir = tmp_path / "bundle"
     outdir.mkdir()
-    g2 = build_graph(UsageLog("s"), checkpointer=SqliteSaver(sqlite3.connect(db, check_same_thread=False)))
+    g2 = build_graph(UsageLog("s"), checkpointer=reference_checkpoint(db))
     prior = g2.get_state(cfg).values
     written = _backfill_persist(_make_persist(dict(INTENT), outdir), prior)
     assert written == ["needs", "srs", "architecture", "items", "tests", "validation"]
