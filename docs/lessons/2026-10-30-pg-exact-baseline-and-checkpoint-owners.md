@@ -10,3 +10,10 @@ still refusing genuinely ambiguous real-node owners. The regression uses
 LangGraph's bookkeeping helper rather than an invented metadata shape.
 
 Local full suite: 1,115 tests passed after these changes. Hosted CI is unverified.
+
+A host worker's own UsageLog does not prove the default CLI sink is PG-backed.
+The CLI constructs its own jsonl_sink, so that shared sink must recognize the
+bound document runtime too. Test two exact rows with no local copy and read the
+same bytes through a fresh real PG document reader. Plain run logs and raw
+rejected/fitted diagnostics still need the separate diagnostic-storage audit;
+canonical/checkpoint parity is not proof that every diagnostic file is gone.

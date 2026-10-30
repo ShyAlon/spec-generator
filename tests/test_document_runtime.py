@@ -101,3 +101,17 @@ def test_pg_baseline_self_copy_preserves_exact_approved_bytes(tmp_path):
         _persist_system_baseline(root/'spec/system-baseline.json',root/'spec',{'baseline_id':'approved','normalized_default':[]})
     assert documents=={'spec/system-baseline.json':raw}
     assert not (root/'spec/system-baseline.json').exists()
+
+
+def test_bound_cli_usage_sink_retains_exact_rows_without_local_copy(tmp_path):
+    from spec_generator.telemetry import jsonl_sink
+    from types import SimpleNamespace
+    cap,root,runtime,cid,state=setup(tmp_path);documents={}
+    class Documents:
+        def append(self,key,raw):documents[key]=documents.get(key,b'')+raw
+    runtime.documents=Documents();raw='{"stage":"needs","prompt_tokens":3}'
+    with job_runtime(runtime):
+        sink=jsonl_sink(root/'spec/usage.jsonl')
+        sink(SimpleNamespace(model_dump_json=lambda:raw));sink(SimpleNamespace(model_dump_json=lambda:raw))
+    assert documents=={'spec/usage.jsonl':(raw+'\n'+raw+'\n').encode()}
+    assert not (root/'spec/usage.jsonl').exists()
