@@ -214,3 +214,17 @@ def test_proposed_default_is_validated_against_known_required_technology():
     state={'intent_model':{'tech_preferences':[{'area':'database','strength':'required','preference':'PostgreSQL'}]}}
     with pytest.raises(ValueError,match='required'):
         _check_technical_choice_constraints(state,'database',FRAMING)
+
+
+def test_architecture_metadata_ignores_langgraph_scheduling_bumps():
+    from types import SimpleNamespace
+    from langgraph.pregel._checkpoint import _mark_bumps_seen
+    from spec_generator.cli import _update_architecture_metadata
+    calls=[]
+    seen=_mark_bumps_seen({'srs':{'srs':'0002'},'architecture':{'architecture':'0003'}},
+        {'srs':('0002','0004'),'architecture':('0003','0004')},{})
+    seen['__interrupt__']={'branch:to:architecture':'0004'}
+    graph=SimpleNamespace(checkpointer=SimpleNamespace(get_tuple=lambda cfg:SimpleNamespace(checkpoint={'versions_seen':seen})),
+        update_state=lambda cfg,update,**kw:calls.append(kw))
+    _update_architecture_metadata(graph,{}, {'architecture':{}})
+    assert calls==[{'as_node':'architecture'}]

@@ -402,6 +402,9 @@ class AsyncUsageStream(httpx.AsyncByteStream):
             _uncertainty_write_failed(error)
 
     async def __aiter__(self):
+        # The async SDK may ask for the same iterator again while closing DONE.
+        # Terminal settlement is final; do not reopen the consumed response.
+        if self.finished:return
         lines=SSELines();data=[];size=0;usage=None;done=False
         try:
             async for chunk in self.response.aiter_bytes():

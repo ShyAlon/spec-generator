@@ -38,7 +38,8 @@ def run_fresh_graph(*,capability,session_root,intent,conops,baseline,log,progres
     if not conops['decision']['founder_confirmed']:raise ValueError('confirmed ConOps required')
     out=session_root/'spec';checkpoint=out/'checkpoints.sqlite'
     # Do not silently consume or overwrite any prior producer artifacts.
-    if out.exists():
+    from .document_runtime import configured as documents_configured
+    if not documents_configured() and out.exists():
         entries=list(out.iterdir())
         retained_baseline=out/'system-baseline.json'
         if entries:
@@ -47,11 +48,16 @@ def run_fresh_graph(*,capability,session_root,intent,conops,baseline,log,progres
                 or not retained_baseline.is_file() or retained_baseline.stat().st_size>2*1024*1024
                 or SystemBaseline.model_validate(json.loads(retained_baseline.read_text())).model_dump(mode='json')!=baseline):
                 raise ValueError('fresh worker output is not empty; explicit resume required')
-    guarded_publish(lambda:out.mkdir(parents=True,exist_ok=True))
-    conn=guarded_publish(lambda:sqlite3.connect(str(checkpoint),check_same_thread=False))
+    if not documents_configured():guarded_publish(lambda:out.mkdir(parents=True,exist_ok=True))
+    from .checkpoint_runtime import checkpoint as open_checkpoint
+    saver=guarded_publish(lambda:open_checkpoint(out))
     try:
+        if documents_configured():
+            from .document_runtime import exists
+            if saver.get_tuple({'configurable':{'thread_id':capability.session_id}}) is not None or any(exists(out/name) for name in ('needs.json','srs.json','architecture.json','items.json','tests.json','validation.json','artifact-lifecycle.jsonl','lineage.json')):
+                raise ValueError('fresh worker output is not empty; explicit resume required')
         lifecycle=ArchitectureLifecycle(out,capability.session_id,baseline)
-        graph=(graph_factory or build_graph)(log,checkpointer=SqliteSaver(conn,serde=checkpoint_serde()),
+        graph=(graph_factory or build_graph)(log,checkpointer=saver,
             progress=progress,review=False,stop_after=stop_after,
             stop_fence=fence,stop_generation=generation,
             persist=_make_persist(intent,out,greenfield=baseline['mode']=='greenfield',conops_present=True,architecture_lifecycle=lifecycle),
@@ -60,4 +66,6 @@ def run_fresh_graph(*,capability,session_root,intent,conops,baseline,log,progres
         result=graph.invoke(deepcopy({'intent_model':intent,'conops':conops,'system_baseline':baseline}),config)
         fence.check(generation)
         return result
-    finally:conn.close()
+    finally:
+        from .checkpoint_runtime import configured
+        if not configured():saver.conn.close()

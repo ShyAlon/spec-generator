@@ -7,6 +7,8 @@ import os
 import re
 from pathlib import Path
 
+from .document_runtime import read_text,exists,atomic_text,remove
+
 STAGES = ('needs', 'srs', 'architecture', 'items', 'tests', 'validation', 'review', 'assemble')
 
 def _json(value):
@@ -16,13 +18,11 @@ def _hash(value):
     return hashlib.sha256(_json(value).encode()).hexdigest()
 
 def _atomic(path, text):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + '.tmp')
-    temp.write_text(text, encoding='utf-8'); os.replace(temp, path)
+    return atomic_text(path,text)
 
 def _read(path, default=None):
-    if not path.is_file(): return default
-    try: return json.loads(path.read_text())
+    if not exists(path): return default
+    try: return json.loads(read_text(path))
     except (ValueError, OSError): return default
 
 def _md(value, depth=2):
@@ -181,13 +181,13 @@ def _refresh_docs(spec, intent=None, conops=None, event=None, state=None, invali
     usage=[];calls=[]
     for filename,rows in [('usage.jsonl',usage),('llm-calls.jsonl',calls)]:
         path=spec/filename
-        if path.exists():
-            for line in path.read_text().splitlines():
+        if exists(path):
+            for line in read_text(path).splitlines():
                 try:rows.append(json.loads(line))
                 except ValueError:pass
     telemetry={'stage_status':stages,'usage_rows':len(usage),'call_starts':sum(x.get('event')=='llm_call_start' for x in calls),'call_ends':sum(x.get('event')=='llm_call_end' for x in calls),'call_errors':sum(x.get('event')=='llm_call_error' for x in calls),'prompt_tokens':sum(x.get('prompt_tokens',0)for x in usage),'output_tokens':sum(x.get('completion_tokens',0)for x in usage),'recorded_cost_usd':sum((x.get('prompt_tokens',0)*x.get('price_per_mtok_prompt_usd',0)+x.get('completion_tokens',0)*x.get('price_per_mtok_completion_usd',0))/1e6 for x in usage),'cost_caveat':'Recorded rates only; zero-priced local compute and unmetered failed calls are excluded. Tests have not been run by this renderer.','sources':['../spec/run.log','../spec/rejected-llm-outputs/manifest.jsonl']}
     log=spec/'run.log'
-    telemetry['self_heal_messages']=[line for line in log.read_text().splitlines() if 'WARNING self-heal' in line] if log.exists() else []
+    telemetry['self_heal_messages']=[line for line in read_text(log).splitlines() if 'WARNING self-heal' in line] if exists(log) else []
     telemetry['rejected_outputs']=_read_rejections(spec)
     telemetry['per_stage']={}
     for stage in sorted({x.get('stage','unknown')for x in usage+calls}):
@@ -199,18 +199,18 @@ def _refresh_docs(spec, intent=None, conops=None, event=None, state=None, invali
     previous=ledger.get('generated_files',[])
     for name in previous:
         if name not in files and name.startswith(('specs/','tests/')) and '..' not in Path(name).parts:
-            (docs/name).unlink(missing_ok=True)
+            remove(docs/name)
     for name,text in files.items():_atomic(docs/name,text)
     ledger['generated_files']=list(files);_atomic(spec/'docs-state.json',_json(ledger))
     # Never overwrite an existing hand-authored root README.
     readme=root/'README.md'
-    if not readme.exists():_atomic(readme,'# Run output\n\nStart with [the readable document index](docs/README.md).\n')
+    if not exists(readme):_atomic(readme,'# Run output\n\nStart with [the readable document index](docs/README.md).\n')
     return files
 
 def _read_rejections(spec):
     path=spec/'rejected-llm-outputs/manifest.jsonl';rows=[]
-    if path.exists():
-        for line in path.read_text().splitlines():
+    if exists(path):
+        for line in read_text(path).splitlines():
             try:
                 x=json.loads(line);rows.append({k:v for k,v in x.items() if k in ('stage','item','attempt','reason','path','ts')})
             except ValueError:pass

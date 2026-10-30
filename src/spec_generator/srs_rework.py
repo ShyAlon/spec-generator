@@ -140,13 +140,18 @@ def retain_checkpoint_proposal(*,capability,session_root,checkpoint_id,revision,
     fence,generation=binding
     if generation!=capability.generation:raise ValueError('rework generation mismatch')
     path=session_root/'spec'/'checkpoints.sqlite'
-    if path.resolve()!=path or not path.is_file():raise ValueError('owned source checkpoint required')
+    from .checkpoint_runtime import configured,checkpoint
+    if path.resolve()!=path or (not configured() and not path.is_file()):raise ValueError('owned source checkpoint required')
     config={'configurable':{'thread_id':capability.session_id}}
     def source():
         # Read-only SQLite URI, no source schema creation or journal mutation.
-        conn=sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,check_same_thread=False)
+        conn=None
+        if configured():saver=checkpoint(path.parent)
+        else:
+            conn=sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,check_same_thread=False)
+            saver=SqliteSaver(conn,serde=checkpoint_serde())
         try:
-            row=SqliteSaver(conn,serde=checkpoint_serde()).get_tuple(config)
+            row=saver.get_tuple(config)
             if row is None or row.config['configurable']['checkpoint_id']!=checkpoint_id:
                 raise ValueError('source checkpoint changed')
             values=row.checkpoint['channel_values']
@@ -162,7 +167,8 @@ def retain_checkpoint_proposal(*,capability,session_root,checkpoint_id,revision,
             if values.get('architecture') or values.get('items'):
                 raise ValueError('downstream checkpoint requires explicit invalidation review')
             return values
-        finally:conn.close()
+        finally:
+            if conn is not None:conn.close()
     fence.check(generation);values=source()
     result=(prepare or prepare_model_rework)(intent=deepcopy(values['intent_model']),needs=deepcopy(values['needs']),
         conops=deepcopy(values.get('conops')),review=deepcopy(values['semantic_reviews']['srs']),
