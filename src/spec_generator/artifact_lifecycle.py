@@ -37,9 +37,11 @@ class ArchitectureLifecycle:
         self.anchor_hash = stable_hash(anchor)
 
     def _events(self) -> list[dict]:
-        from .document_runtime import exists,read_text
-        if not exists(self.path):
-            return []
+        from .document_runtime import configured,_bound,read_text
+        if configured():
+            documents,key=_bound(self.path)
+            return documents.recent_lifecycle_events(key,self.artifact_id)
+        if not self.path.is_file():return []
         events=[]
         for line in read_text(self.path).splitlines():
             if line.strip():
