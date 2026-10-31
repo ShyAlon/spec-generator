@@ -1302,6 +1302,8 @@ def _main(argv=None) -> None:
                          "items, tests, review, assemble)")
     ap.add_argument("--to", dest="to_stage", choices=("needs", "srs", "architecture", "items", "tests", "validation"),
                     help="stop after this stage; completed state remains resumable")
+    ap.add_argument("--final-review", action="store_true",
+                    help="with --to validation: run content review, retain findings, stop before assembly or repair")
     ap.add_argument("--reconcile-artifacts", action="store_true",
                     help="zero-LLM deterministic reconciliation of existing SRS/architecture and views")
     ap.add_argument("--reconcile-out", type=Path, default=None,
@@ -1493,9 +1495,11 @@ def _main(argv=None) -> None:
                         stop_generation=stop_binding[1] if stop_binding else None,
                         checkpointer=saver, progress=bus, review=args.review, expert_opinion=args.expert_opinion, grounding=grounding, require_decisions=args.require_decisions,
                         persist=persist_fn,
-                        partials=partials, stop_after=args.to_stage)
+                        partials=partials, stop_after=args.to_stage, final_review=args.final_review)
     from . import model_config as _mc
 
+    if args.final_review and (args.to_stage != "validation" or args.from_stage not in (None,"validation") or args.only_stage or args.repair):
+        ap.error("--final-review requires --to validation and no upstream rewind, isolated stage or repair")
     if args.from_stage:
         os.environ["SPEC_GENERATOR_FROM"] = args.from_stage  # guardrail errors must not echo --from back
     print(f"Generating bundle for session {sid} (crash? {_mc._rerun_guidance('')})", file=cli_io.stderr())

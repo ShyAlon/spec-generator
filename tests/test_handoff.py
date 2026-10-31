@@ -140,3 +140,18 @@ def test_handoff_denies_validation_plan_from_another_session(tmp_path,monkeypatc
  interview,spec,_=outputs(tmp_path,monkeypatch)
  (spec/'validation.json').write_text(json.dumps(_plan('another-session')))
  with pytest.raises(ValueError,match='another session'):build_handoff(interview,spec)
+
+
+def test_semantic_candidate_nested_defaults_compare_as_typed_values(tmp_path,monkeypatch):
+ from vmodel_contracts.semantic_review import make_review
+ interview,spec,_=outputs(tmp_path,monkeypatch)
+ srs=json.loads((spec/'srs.json').read_text())
+ from vmodel_contracts import SRSDocument
+ candidate=SRSDocument.model_validate(srs).model_dump(mode='json',exclude_defaults=True)
+ assert candidate['functional']!=srs['functional']
+ review=make_review(srs['session_id'],'srs',candidate,[])
+ (spec/'srs.semantic-review.json').write_text(review.model_dump_json())
+ assert not build_handoff(interview,spec)['blocked_reasons']
+ srs['functional'][0]['statement']='Changed outside review'
+ (spec/'srs.json').write_text(json.dumps(srs))
+ with pytest.raises(ValueError,match='differs from reviewed'):build_handoff(interview,spec)
