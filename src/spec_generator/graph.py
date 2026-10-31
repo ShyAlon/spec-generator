@@ -2362,7 +2362,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 review: bool = False, persist=None, partials=None,
                 only_stage: str | None = None, stop_after: str | None = None,
                 expert_opinion: bool = False, grounding=None,
-                require_decisions: bool = False, stop_fence=None, stop_generation=None):
+                require_decisions: bool = False, stop_fence=None, stop_generation=None, final_review: bool = False):
     """persist(stage, data, state): optional side-effect hook fired after each
     authoring stage completes - the CLI uses it to write the bundle
     incrementally, so a late failure leaves all completed work on disk.
@@ -3601,6 +3601,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                 "quick_stop": bool(state.get("repair_quick")), "repair_quick": False}
 
     def route_review(state: GenState) -> str:
+        if final_review:return "stop"  # evidence only: never repair or rewrite settled phase outputs
         # JEV-D10: no unattended replay. Repair runs only when explicitly requested for
         # named findings and only under the attempt ceiling. Otherwise assembly decides,
         # and its gate blocks while anything is open.
@@ -3972,7 +3973,9 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         edge("architecture", "items")
     edge("items", "tests")
     edge("tests", "validation")
-    edge("validation", "review")
+    if final_review and stop_after != "validation":raise ValueError("final review requires validation boundary")
+    if final_review:g.add_edge("validation", "review")
+    else:edge("validation", "review")
     g.add_conditional_edges("review", route_review, {"apply_fixes": "apply_fixes", "assemble": "assemble", "stop": END})
     g.add_conditional_edges(
         "apply_fixes",

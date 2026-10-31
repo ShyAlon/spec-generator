@@ -786,3 +786,20 @@ def test_baseline_change_refuses_to_invalidate_approved_settled_work(monkeypatch
 # Retained behavior executes through an explicit host-owned checkpoint factory.
 import pytest
 pytestmark=pytest.mark.usefixtures("supported_host_runtime")
+
+
+def test_final_review_stops_before_assembly_and_preserves_settled_state(monkeypatch,tmp_path):
+    box={}
+    monkeypatch.setattr(model_config,'build_chat_model',lambda stage,**kw:box.setdefault(stage,FakeModel(stage)))
+    cfg={'configurable':{'thread_id':'bounded-review'}}
+    graph=build_graph(UsageLog('bounded-review'),stop_after='validation',final_review=True)
+    result=graph.invoke({'intent_model':dict(INTENT),'system_baseline':SYSTEM_BASELINE},cfg)
+    assert result['review_round']==1 and result['findings_ledger'] is not None
+    assert not result.get('bundle') and not graph.get_state(cfg).next
+    assert not result.get('repair_proposal')
+
+
+def test_final_review_requires_validation_boundary():
+    import pytest
+    with pytest.raises(ValueError,match='validation boundary'):
+        build_graph(UsageLog('refused'),stop_after='tests',final_review=True)

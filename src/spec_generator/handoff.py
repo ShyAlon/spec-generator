@@ -38,7 +38,9 @@ def build_handoff(interview:Path,spec:Path)->dict:
             if review.session_id!=intent.session_id:raise ValueError('Semantic review belongs to another session')
             resolved=review.resolved_candidate(lambda c:None)
             semantic_records[('interview/' if path.parent==interview else 'spec/')+path.name]=review
-            if any(canonical.get(k)!=v for k,v in resolved.items() if k!='founder_register'):raise ValueError('Canonical output differs from reviewed candidate')
+            # Compare typed contract values, including nested defaults added by validation.
+            normalized=(IntentModel if path.parent==interview else SRSDocument).model_validate(resolved).model_dump(mode='json')
+            if any(canonical.get(k)!=normalized[k] for k in resolved if k!='founder_register'):raise ValueError('Canonical output differs from reviewed candidate')
     reqs=RequirementSet(session_id=intent.session_id,requirements=srs.requirements())
     violations=validate_traceability(needs,reqs,items,tests)
     if violations:raise ValueError('Traceability is incomplete: '+'; '.join(violations[:6]))
