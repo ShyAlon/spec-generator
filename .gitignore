@@ -27,3 +27,6 @@ rejected-llm-outputs/
 # Remove later
 founder-script*
 item6*
+# Ad-hoc local diagnostics from the owner machine
+/debug.txt
+/req-install.sh
