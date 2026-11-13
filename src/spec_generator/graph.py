@@ -1077,7 +1077,7 @@ def _merge_duplicate_adr_pair(slots: list[dict], bodies: dict, left_id: str, rig
         left_slot[key] = list(dict.fromkeys((left_slot.get(key) or []) + (right_slot.get(key) or [])))
     left_slot["migration"] = bool(left_slot.get("migration") or right_slot.get("migration"))
     for key in ("options_considered", "baseline_refs", "evidence", "affected_repositories",
-                "executes_concept_ids", "founder_decision_refs", "rejected"):
+                "executes_concept_ids", "founder_decision_refs", "founder_citations", "rejected"):
         values = (left.get(key) or []) + (right.get(key) or [])
         # Dict/list values need structural identity, not hashability.
         seen=set(); merged=[]
@@ -1236,11 +1236,9 @@ def _check_baseline_reconciliation(arch: ArchitectureOverview, baseline: SystemB
             raise ModelStructureError(f"{d.decision_id} {d.title}: evidence/affected_repositories only belong on migration ADRs")
 
 
-def _decided_founder_sources(intent_model: dict) -> dict[str, dict]:
-    items=((intent_model.get("founder_register") or {}).get("items") or [])
-    return {str(item["item_id"]): item for item in items
-            if item.get("item_id") and item.get("status")=="decided"
-            and str(item.get("decision") or "").strip() and str(item.get("reason") or "").strip()}
+from .citations import (decided_sources as _decided_founder_sources,
+                        prepare_adr_sources, check_snapshots, raise_support_findings,
+                        support_advisories)
 
 
 def _check_adr_driver_source(body: dict, intent_model: dict, conops: dict | None = None) -> None:
@@ -1248,13 +1246,9 @@ def _check_adr_driver_source(body: dict, intent_model: dict, conops: dict | None
     refs=body.get("founder_decision_refs") or []
     if not isinstance(refs,list) or any(not isinstance(ref,str) for ref in refs):
         raise ModelStructureError("founder_decision_refs must be a list of exact item ids")
-    sources=_decided_founder_sources(intent_model)
+    check_snapshots(body, intent_model)
     text=" ".join(str(body.get(k) or "") for k in ("title","decision","rationale"))
-    normalize=lambda value: " ".join(str(value).casefold().replace("\\\"", "\"").replace("\"", "'").rstrip(". ").split())
-    unknown=[ref for ref in refs if ref not in sources]
-    if unknown:raise ModelStructureError(f"{body.get('decision_id','ADR')}: unknown or undecided founder decision refs: {unknown}")
-    unrelated=[ref for ref in refs if normalize(sources[ref]["decision"]) not in normalize(text)]
-    if unrelated:raise ModelStructureError(f"{body.get('decision_id','ADR')}: cite the recorded decision text for founder decision refs: {unrelated}")
+    normalize=lambda value: " ".join(str(value).casefold().split())
     driver=body.get("driver")
     if driver is None:raise ModelStructureError(f"{body.get('decision_id','ADR')}: no driver - classify why the chosen option won")
     if driver != "founder_constraint":return
@@ -1263,7 +1257,7 @@ def _check_adr_driver_source(body: dict, intent_model: dict, conops: dict | None
     concept=bool(selected and selected[0] in (body.get("executes_concept_ids") or []))
     preference=any(normalize(pref) in normalize(text) for pref in prefs)
     if not (concept or preference or refs):
-        raise ModelStructureError(f"{body.get('decision_id','ADR')} '{body.get('title','')}': driver founder_constraint requires an executes_concept_ids link to the founder-confirmed CONOPS concept, a named founder technology preference, or a founder_decision_refs link with its recorded decided founder-register decision quoted in the ADR")
+        raise ModelStructureError(f"{body.get('decision_id','ADR')} '{body.get('title','')}': driver founder_constraint requires an executes_concept_ids link to the founder-confirmed CONOPS concept, a named founder technology preference, or a founder_decision_refs link to its code-owned recorded source snapshot (support remains a human review question)")
 
 
 def _check_decision_drivers(arch: ArchitectureOverview, intent_model: dict, conops: dict | None = None) -> None:
@@ -1567,7 +1561,7 @@ def _resolve_answered_open_questions(state: dict, persist, *, architecture: dict
 
 def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
                            comp_slots: list, comp_bodies: dict, adr_slots: list,
-                           adr_bodies: dict, nfr: dict) -> dict:
+                           adr_bodies: dict, nfr: dict, intent_model: dict | None = None) -> dict:
     """Code-owned projection: ADR selections are canonical; stack is derived."""
     decisions = []
     stack_entries = []
@@ -1575,6 +1569,8 @@ def _assemble_architecture(*, session_id: str, baseline_id: str, entries: dict,
     for slot in adr_slots:
         did = slot["decision_id"]
         body = {**adr_bodies[did]}
+        if intent_model is not None:
+            body = prepare_adr_sources(body, slot, intent_model)
         selections = []
         for target in slot["authorizes"]:
             if not target.startswith("stack:"):
@@ -2920,6 +2916,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             for slot in part["adr_slots"]:
                 did = slot["decision_id"]
                 if did in adr_bodies:
+                    adr_bodies[did] = prepare_adr_sources(adr_bodies[did], slot, state["intent_model"])
+                    _check_adr_driver_source({**adr_bodies[did], "decision_id": did}, state["intent_model"], state.get("conops"))
                     continue
                 def _v_adr(d, slot=slot):
                     raw_title = str(d.get("title", "")).strip()
@@ -2973,12 +2971,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                             f"{slot['decision_id']} '{body['title']}': options_considered must contain "
                             "objects {option: non-empty string, reason: non-empty string}; bare strings "
                             "cannot preserve why an alternative lost")
-                    required_concepts = set(slot.get("required_concept_ids") or [])
-                    missing_concepts = sorted(required_concepts - set(body["executes_concept_ids"]))
-                    if missing_concepts:
-                        raise ModelStructureError(
-                            f"{slot['decision_id']} '{body['title']}': this code-owned CONOPS execution slot "
-                            f"must declare these exact ids in executes_concept_ids: {missing_concepts}")
+                    body = prepare_adr_sources(body, slot, state["intent_model"])
                     _check_adr_driver_source({**body,"decision_id":slot["decision_id"]},state["intent_model"],state.get("conops"))
                     adr_text = (body["title"] + " " + body["decision"] + " " + body["rationale"]).lower()
                     if body["driver"] != "founder_constraint" and _re.search(r"mandat\w* by the founder|founder(-|\')s? (mandate|preference|requirement|decision)", adr_text):
@@ -3006,12 +2999,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                     "architecture",
                     context + "\n\nTHE ADR SLOT (fixed - ids, migration flag and authorizations are pipeline-owned):\n"
                     + json.dumps({"decision_id": did, "slug": slot["slug"],
-                                  "migration": slot["migration"], "authorizes": slot["authorizes"]})
+                                  "migration": slot["migration"], "authorizes": slot["authorizes"],
+                                  "required_concept_ids": slot.get("required_concept_ids") or []})
                     + "\n\nDECIDED STACK (key: value):\n"
                     + json.dumps({k: (e.get("value") or e.get("status")) for k, e in entries.items()})
                     + lost_block + candidate_feedback + "\n\n" + ARCH_ADR_BODY + feedback,
                     log, progress, validate=_v_adr,
-                    schema=arch_adr_body_schema(valid_refs, repo_names, [__import__("vmodel_contracts").canonical_concept_id(str(o.get("name", ""))) for o in (state.get("conops") or {}).get("concept_options", [])], list(_decided_founder_sources(state["intent_model"]))),
+                    schema=arch_adr_body_schema(valid_refs, repo_names, [__import__("vmodel_contracts").canonical_concept_id(str(o.get("name", ""))) for o in (state.get("conops") or {}).get("concept_options", [])], list(_decided_founder_sources(state["intent_model"])), required_concept_ids=slot.get("required_concept_ids") or []),
                     stream_items=False, item_label=f"{did} {slot['slug']}")
                 _save()
 
@@ -3045,7 +3039,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
             merged = _assemble_architecture(
                 session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
                 comp_slots=part["component_slots"], comp_bodies=comp_bodies,
-                adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
+                adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr, intent_model=state["intent_model"])
             try:
                 arch = ArchitectureOverview.model_validate(merged)
                 _check_decision_drivers(arch, state["intent_model"], state.get("conops"))  # ADR-0021
@@ -3088,13 +3082,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         lambda: ArchitectureOverview.model_validate(_assemble_architecture(
                             session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
                             comp_slots=part["component_slots"], comp_bodies=comp_bodies,
-                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)),
+                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr, intent_model=state["intent_model"])),
                         label="adr-duplicate-merge-first")
                     try:
                         merged_try = _assemble_architecture(
                             session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
                             comp_slots=part["component_slots"], comp_bodies=comp_bodies,
-                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
+                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr, intent_model=state["intent_model"])
                         arch_try = ArchitectureOverview.model_validate(merged_try)
                         _check_decision_drivers(arch_try, state["intent_model"], state.get("conops"))
                         _check_baseline_reconciliation(arch_try, baseline)
@@ -3136,13 +3130,13 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
                         lambda: ArchitectureOverview.model_validate(_assemble_architecture(
                             session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
                             comp_slots=part["component_slots"], comp_bodies=comp_bodies,
-                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)),
+                            adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr, intent_model=state["intent_model"])),
                         label="adr-duplicate-fallback")
                     _save()
                     merged = _assemble_architecture(
                         session_id=sid, baseline_id=baseline.baseline_id, entries=entries,
                         comp_slots=part["component_slots"], comp_bodies=comp_bodies,
-                        adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr)
+                        adr_slots=part["adr_slots"], adr_bodies=adr_bodies, nfr=nfr, intent_model=state["intent_model"])
                     arch = ArchitectureOverview.model_validate(merged)
                     _check_adr_substance(arch)
                     break
@@ -3156,6 +3150,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if partials:
             partials.clear("architecture")
         data = merged
+        _advisories += support_advisories(data)
         revisions = dict(state.get("artifact_revisions") or {})
         prior_revision = revisions.get("architecture") or {}
         revision = int(prior_revision.get("revision") or 0) + 1
@@ -3172,6 +3167,7 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         from . import architecture_decisions as _AD
         _ledger = Ledger.from_dict(state.get("findings_ledger"))
         _AD.raise_findings(_ledger, data)
+        raise_support_findings(_ledger, data)
         result["findings_ledger"] = _ledger.to_dict()
         # Nested mutation is not a LangGraph state update. Return the changed
         # SRS explicitly so the resolution marker survives the checkpoint and
@@ -3691,6 +3687,11 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         if state.get("findings_ledger") is None:
             raise AssemblyBlocked(["no findings ledger: this checkpoint was never content-reviewed (unreviewed, not clean)"], [])
         gate_ledger = Ledger.from_dict(state["findings_ledger"])
+        # Gate edits and checkpoint resumes can change ADRs without rerunning
+        # generation. Recheck source integrity and rebind review evidence before
+        # packaging; an earlier disposition never approves changed choices.
+        _check_decision_drivers(validated_architecture(state["architecture"]), state["intent_model"], state.get("conops"))
+        raise_support_findings(gate_ledger, state["architecture"])
         gate = gate_ledger.gate({i.get("spec_id"): revision_of(i.get("body_markdown") or "") for i in state.get("items") or []})
         if gate["blocked"]:
             getattr(persist, "ledger", lambda *_: None)(gate_ledger.to_dict())
@@ -3779,6 +3780,8 @@ def build_graph(log: UsageLog, checkpointer=None, progress: ProgressBus | None =
         def _make_gate(stage_key: str, artifact_key: str):
             def node_gate(state: GenState) -> dict:
                 advisories=state.get("architecture_advisories", []) if stage_key == "architecture" else []
+                if stage_key == "architecture":
+                    advisories = [a for a in advisories if a.get("rule") != "architecture.founder_citation_support"] + support_advisories(state.get("architecture") or {})
                 if expert_opinion:
                     all_prior_regenerations = [o for o in (state.get("expert_opinions") or [])
                                                if o.get("gate") == stage_key and o.get("action") == "regenerate"]

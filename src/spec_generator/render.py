@@ -316,7 +316,17 @@ def render_architecture(arch: ArchitectureOverview, greenfield: bool = False,
                              f"({_driver_evidence(d)})")
             else:
                 lines.append("  Driver: (not recorded - pre-0.8.0 artifact)")
-            lines.append(f"  Why: {d.rationale}")
+            lines.append(f"  Why (system architecture reasoning): {d.rationale}")
+            for citation in d.founder_citations:
+                lines.append(f"  Recorded founder constraint [{citation.source_ref}] (source revision {citation.source_revision}):")
+                lines.append("")
+                lines.extend(f"  > {line}" for line in citation.source["decision"].splitlines())
+                lines.append("")
+                lines.append(f"  Recorded reason: {citation.source['reason']}")
+                lines.append("")
+                lines.append("  Source support requires human review. This quotation is not founder approval of the architecture choice.")
+            if d.founder_decision_refs and not d.founder_citations:
+                lines.append("  Legacy source refs (no recorded citation snapshot; support not reviewed): " + ", ".join(d.founder_decision_refs))
             if d.baseline_refs:
                 lines.append(f"  Baseline: {', '.join(d.baseline_refs)}")
             if d.migration:
@@ -336,3 +346,13 @@ def render_architecture(arch: ArchitectureOverview, greenfield: bool = False,
         lines += [f"- {f}" for f in flags]
     return "\n".join(lines) + "\n"
 
+
+
+def render_architecture_advisories(advisories: list[dict]) -> str:
+    lines = []
+    for advisory in advisories:
+        if advisory.get("rule") == "architecture.founder_citation_support":
+            lines.append(f"- {advisory['message']} {advisory['action']}")
+        else:
+            lines.append(f"- {advisory['left_id']} {advisory['left_slug']} and {advisory['right_id']} {advisory['right_slug']}: {advisory['reason']}. Nothing was merged; decide at this gate.")
+    return "\n".join(lines)

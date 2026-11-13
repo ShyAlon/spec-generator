@@ -263,14 +263,17 @@ class Ledger:
                 after = (f["closure"] or {}).get("after_revision")
                 if any(t in current and current[t] != after for t in f["targets"]):
                     stale.append(f["finding_id"])
-        open_ = [f["finding_id"] for f in self.open_findings()]
+        from .citations import SUPPORT_RULE, SUPPORT_REVIEW_BLOCKS_PACKAGING
+        informational = [f["finding_id"] for f in self.open_findings()
+                         if f["rule_id"] == SUPPORT_RULE and not SUPPORT_REVIEW_BLOCKS_PACKAGING]
+        open_ = [f["finding_id"] for f in self.open_findings() if f["finding_id"] not in informational]
         cleared = [m["scope"] for m in self.incomplete if self._overflow_decided(m)]
         incomplete = [m for m in self.incomplete if m["scope"] not in cleared]
         reasons = ([f"{len(open_)} open finding(s)"] if open_ else []) \
             + ([f"{len(incomplete)} incomplete required check(s)"] if incomplete else []) \
             + ([f"{len(stale)} stale closure(s)"] if stale else [])
         return {"blocked": bool(reasons), "reasons": reasons, "open": open_,
-                "incomplete": incomplete, "stale": stale, "overflow_cleared": cleared}
+                "incomplete": incomplete, "stale": stale, "overflow_cleared": cleared, "informational": informational}
 
     _OVERFLOW_SCOPE = re.compile(r"review:round-(\d+)-chunk-\d+")
 

@@ -110,7 +110,13 @@ def build_handoff(interview:Path,spec:Path)->dict:
     if not ledger_path.is_file() or ledger_path.is_symlink():
         blockers.append('findings ledger missing: this bundle was never content-reviewed (unreviewed, not clean)')
     else:
-        gate=Ledger.from_dict(json.loads(ledger_path.read_text())).gate({i.spec_id:revision_of(i.body_markdown or '') for i in items})
+        from .citations import check_snapshots, raise_support_findings
+        architecture=arch.model_dump(mode='json')
+        for decision in architecture['decisions']:
+            check_snapshots(decision,json.loads((interview/'intent_model.json').read_text()))
+        ledger=Ledger.from_dict(json.loads(ledger_path.read_text()))
+        raise_support_findings(ledger,architecture)
+        gate=ledger.gate({i.spec_id:revision_of(i.body_markdown or '') for i in items})
         blockers+=[f'open finding {fid}: blocks handoff' for fid in gate['open']]+[r for r in gate['reasons'] if 'open finding' not in r]
     from vmodel_contracts.handoff import CodingHandoff
     return CodingHandoff.model_validate({'version':1,'session_id':intent.session_id,'files':files,'blocked_reasons':blockers,
