@@ -1,0 +1,13 @@
+{
+  "tech_preferences": [],
+  "founder_register": {
+    "items": [
+      {
+        "item_id": "FD-missing-empty_states",
+        "status": "decided",
+        "decision": "The extension shouldn't do anything if the data in the page isn't the data it expected.",
+        "reason": "It should be as non-intrusive as possible"
+      }
+    ]
+  }
+}

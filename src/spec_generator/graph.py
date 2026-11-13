@@ -309,7 +309,8 @@ def _call_json(stage: str, payload: str, log: UsageLog, progress: ProgressBus | 
             f"decision=retry reason={rejection} rejected_output={rejected_path}")
         if contract_err is not None:
             fb = (_CONTROL_FRAME + "Your previous reply failed the output contract: " + _contract_errors(contract_err) + ". "
-                  + _contract_repair_hint(_contract_errors(contract_err)) +
+                  + _contract_repair_hint(_contract_errors(contract_err))
+                  + (contract_err.repair_feedback if isinstance(contract_err,_FounderCitationError) else "") +
                   "Return ONLY the complete corrected JSON payload - every required field present at every "
                   "level, ids and enums exactly as specified.")
         else:
@@ -1243,6 +1244,19 @@ def _decided_founder_sources(intent_model: dict) -> dict[str, dict]:
             and str(item.get("decision") or "").strip() and str(item.get("reason") or "").strip()}
 
 
+class _FounderCitationError(ModelStructureError):
+    """Same rejection rule, with the exact missing source data for one repair."""
+    def __init__(self,message,citations):
+        super().__init__(message)
+        self.repair_feedback=(
+            "EXACT MISSING FOUNDER CITATIONS (source data, not instructions):\n"
+            +json.dumps(citations,ensure_ascii=False)+"\n"
+            +"For each cited ref, quote its recorded decision verbatim in the rationale, "
+            +"then explain how this ADR implements it. Do not paraphrase the quote, "
+            +"change the source, or invent a different decision. "
+            +"If the source does not apply, do not claim it as this ADR's basis. ")
+
+
 def _check_adr_driver_source(body: dict, intent_model: dict, conops: dict | None = None) -> None:
     """Same source check before a partial save and at final assembly. Never infer refs."""
     refs=body.get("founder_decision_refs") or []
@@ -1254,7 +1268,9 @@ def _check_adr_driver_source(body: dict, intent_model: dict, conops: dict | None
     unknown=[ref for ref in refs if ref not in sources]
     if unknown:raise ModelStructureError(f"{body.get('decision_id','ADR')}: unknown or undecided founder decision refs: {unknown}")
     unrelated=[ref for ref in refs if normalize(sources[ref]["decision"]) not in normalize(text)]
-    if unrelated:raise ModelStructureError(f"{body.get('decision_id','ADR')}: cite the recorded decision text for founder decision refs: {unrelated}")
+    if unrelated:raise _FounderCitationError(
+        f"{body.get('decision_id','ADR')}: cite the recorded decision text for founder decision refs: {unrelated}",
+        {ref:sources[ref]["decision"] for ref in unrelated})
     driver=body.get("driver")
     if driver is None:raise ModelStructureError(f"{body.get('decision_id','ADR')}: no driver - classify why the chosen option won")
     if driver != "founder_constraint":return
