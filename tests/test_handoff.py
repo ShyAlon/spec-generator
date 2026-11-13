@@ -155,3 +155,26 @@ def test_semantic_candidate_nested_defaults_compare_as_typed_values(tmp_path,mon
  srs['functional'][0]['statement']='Changed outside review'
  (spec/'srs.json').write_text(json.dumps(srs))
  with pytest.raises(ValueError,match='differs from reviewed'):build_handoff(interview,spec)
+
+
+def test_handoff_cannot_use_old_disposition_after_cited_adr_edit(tmp_path,monkeypatch):
+ from spec_generator.citations import prepare_adr_sources,raise_support_findings
+ from spec_generator.findings_ledger import Ledger
+ interview,spec,intent=outputs(tmp_path,monkeypatch)
+ item={'item_id':'FD-empty','data_class':'empty_states','question':'Unexpected page?','owner':'founder','status':'decided','decision':'Do nothing on unexpected page data.','reason':'Avoid intrusion.','scope':'Page behavior','source':'Founder input'}
+ intent['founder_register']['items']=[item]
+ (interview/'intent_model.json').write_text(json.dumps(intent))
+ srs=json.loads((spec/'srs.json').read_text());srs['founder_register']=intent['founder_register'];(spec/'srs.json').write_text(json.dumps(srs))
+ arch=json.loads((spec/'architecture.json').read_text())
+ arch['decisions'][0]['founder_decision_refs']=['FD-empty']
+ arch['decisions'][0]=prepare_adr_sources(arch['decisions'][0],{},intent)
+ (spec/'architecture.json').write_text(json.dumps(arch))
+ assert build_handoff(interview,spec)['blocked_reasons']  # clean ledger cannot bypass support review
+ ledger=Ledger();raise_support_findings(ledger,arch)
+ for f in ledger.open_findings():
+  ledger.founder_dispose(f['finding_id'],actor='founder',source='decision-page',rationale='Reviewed source support.',artifact_revision=f['artifact_revision'])
+ (spec/'findings-ledger.json').write_text(json.dumps(ledger.to_dict()))
+ assert not build_handoff(interview,spec)['blocked_reasons']
+ arch['decisions'][0]['decision']='A changed unreviewed architecture choice'
+ (spec/'architecture.json').write_text(json.dumps(arch))
+ assert build_handoff(interview,spec)['blocked_reasons']

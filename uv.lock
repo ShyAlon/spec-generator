@@ -1278,7 +1278,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.6,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "requi-child-contract", path = "vendor/requi_child_contract-0.3.0-py3-none-any.whl" },
-    { name = "vmodel-contracts", path = "vendor/vmodel_contracts-0.28.0-py3-none-any.whl" },
+    { name = "vmodel-contracts", path = "vendor/vmodel_contracts-0.29.0-py3-none-any.whl" },
 ]
 provides-extras = ["anthropic", "dev"]
 
@@ -1555,14 +1555,14 @@ wheels = [
 
 [[package]]
 name = "vmodel-contracts"
-version = "0.28.0"
-source = { path = "vendor/vmodel_contracts-0.28.0-py3-none-any.whl" }
+version = "0.29.0"
+source = { path = "vendor/vmodel_contracts-0.29.0-py3-none-any.whl" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
 wheels = [
-    { filename = "vmodel_contracts-0.28.0-py3-none-any.whl", hash = "sha256:a91e0765b4195a9a6ccafd9ed825cdf0e24a38369bc18b3dc3f14007335476cf" },
+    { filename = "vmodel_contracts-0.29.0-py3-none-any.whl", hash = "sha256:ebebe112cf59418239a831d122c6e4634d6f4ad79e01f4255b72e3cb73673942" },
 ]
 
 [package.metadata]

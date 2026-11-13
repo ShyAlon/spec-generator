@@ -824,7 +824,7 @@ def test_conops_execution_gate_repairs_by_redrafting_adr(monkeypatch):
     assert any("concept:pwa" in d["executes_concept_ids"] for d in result["architecture"]["decisions"])
 
 
-def test_conops_execution_slot_exhaustion_is_human_readable(monkeypatch):
+def test_mandatory_conops_link_is_inserted_without_a_copying_retry(monkeypatch):
     class OmitsConcept(_MicroModel):
         def stream(self, messages):
             for chunk in super().stream(messages):
@@ -833,13 +833,9 @@ def test_conops_execution_slot_exhaustion_is_human_readable(monkeypatch):
                     data["executes_concept_ids"]=[]
                 yield AIMessage(content=json.dumps(data))
     monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: OmitsConcept(stage,k.get("schema") or {},[]))
-    with pytest.raises(UserFacingError) as ei:
-        build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-fail"}})
-    rendered=ei.value.render()
-    assert rendered.startswith("Error: stage 'architecture'")
-    assert "model's output does not satisfy the contract" in rendered
-    assert "Likely cause:" in rendered and "concept:pwa" in rendered
-    assert "Next:" in rendered
+    # Mandatory identifiers are code obligations now, not reasons to re-ask prose.
+    result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-code-owned"}})
+    assert any("concept:pwa" in d["executes_concept_ids"] for d in result["architecture"]["decisions"])
 
 def test_pwa_python_fastapi_adrs_do_not_dedupe_and_repair_reaches_body(monkeypatch):
     from spec_generator.graph import _dedupe_adr_slots
@@ -854,7 +850,7 @@ def test_pwa_python_fastapi_adrs_do_not_dedupe_and_repair_reaches_body(monkeypat
     assert [s["slug"] for s in slots]==["adopt-pwa-concept","choose-python-for-backend","select-fastapi-framework"]
 
 
-def test_conops_repair_feedback_is_in_adr_body_prompt(monkeypatch):
+def test_mandatory_conops_context_is_in_first_adr_body_prompt(monkeypatch):
     seen=[]
     class CaptureRepair(_MicroModel):
         def stream(self,messages):
@@ -867,7 +863,9 @@ def test_conops_repair_feedback_is_in_adr_body_prompt(monkeypatch):
             yield from super().stream(messages)
     monkeypatch.setattr(model_config,"build_chat_model",lambda stage,**k: CaptureRepair(stage,k.get("schema") or {},[]))
     result=build_graph(UsageLog("s")).invoke({"intent_model":dict(INTENT),"system_baseline":SYSTEM_BASELINE,"conops":_pwa_conops()},{"configurable":{"thread_id":"pwa-body-feedback"}})
-    assert any("must declare these exact ids" in p for p in seen)
+    # The first prompt carries the obligation as context; no id-copy repair is needed.
+    assert all("must declare these exact ids" not in p for p in seen)
+    assert any('"required_concept_ids": ["concept:pwa"]' in p for p in seen)
     assert any("concept:pwa" in d["executes_concept_ids"] for d in result["architecture"]["decisions"])
 
 def test_advisory_subject_uses_each_fixed_slot_not_repeated_model_title():

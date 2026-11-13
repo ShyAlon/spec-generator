@@ -4,6 +4,7 @@ import pytest
 from spec_generator.graph import _check_adr_driver_source,_decided_founder_sources
 from spec_generator.schemas import arch_adr_body_schema
 from spec_generator.graph import ModelStructureError
+from spec_generator.citations import prepare_adr_sources
 
 SOURCE={'item_id':'FD-missing-error_states','status':'decided','decision':'A clear error message with a "Tell us about it" button.','reason':"This way we'll be notified of bugs and improve."}
 INTENT={'tech_preferences':[],'founder_register':{'items':[SOURCE]}}
@@ -14,6 +15,8 @@ def test_raw_failure_needs_real_register_link(file):
     body=json.loads((Path(__file__).parent/'fixtures'/file).read_text())
     with pytest.raises(ModelStructureError):_check_adr_driver_source(body,INTENT)
     body['founder_decision_refs']=['FD-missing-error_states']
+    # The approved design replaces model quotation checks with code-owned evidence.
+    body=prepare_adr_sources(body,{},INTENT)
     _check_adr_driver_source(body,INTENT)
     for status in ('open','deferred'):
         with pytest.raises(ModelStructureError):_check_adr_driver_source(body,{'founder_register':{'items':[{**SOURCE,'status':status}]}})
@@ -39,7 +42,12 @@ def test_literal_backslash_quote_source_echo_is_compared_without_changing_payloa
     body=json.loads((Path(__file__).parent/'fixtures'/file).read_text())
     original=json.dumps(body,sort_keys=True)
     assert '\\"Tell us about it\\"' in body['rationale']
-    _check_adr_driver_source(body,INTENT)
+    prepared=prepare_adr_sources(body,{},INTENT)
+    _check_adr_driver_source(prepared,INTENT)
     assert json.dumps(body,sort_keys=True)==original
-    body['rationale']=body['rationale'].replace('Tell us about it','Tell them about it')
-    with pytest.raises(ModelStructureError):_check_adr_driver_source(body,INTENT)
+    # Prose is not a source checksum: altered explanations require semantic review,
+    # while a changed source snapshot still fails the deterministic boundary.
+    prepared['rationale']=prepared['rationale'].replace('Tell us about it','Tell them about it')
+    _check_adr_driver_source(prepared,INTENT)
+    prepared['founder_citations'][0]['source']['decision']='Changed source'
+    with pytest.raises(ModelStructureError):_check_adr_driver_source(prepared,INTENT)

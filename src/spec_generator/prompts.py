@@ -189,10 +189,14 @@ decision (for example, "consolidate into ADR-2"); name the concrete architecture
 Slots shown as research_required are unresolved: do not claim, imply, or select a technology for them.
 DRIVER DISCIPLINE (hard rule, checked mechanically): founder_constraint needs one of three sources:
 - A recorded founder technology preference, named in the ADR.
-- The founder-confirmed CONOPS concept, linked by its exact executes_concept_ids value.
+- The founder-confirmed CONOPS concept. Code inserts mandatory executes_concept_ids from the fixed slot; choose only optional concept links.
 - A decided founder-register item with decision and reason, linked by exact founder_decision_refs id.
-For a register source, quote its recorded decision text verbatim in the rationale, then explain how
-this ADR implements it. Open, deferred, unknown or unrelated register items are not sources.
+For a register source, select its exact ref and explain how this ADR implements that constraint.
+Do not copy its sentence, source snapshot, revision or hash: code inserts the exact recorded source.
+This is a system architecture choice, not a founder-decided architecture. The source only constrains
+what it actually says; it does not approve technologies or implementation choices it never names.
+Source support is a separate human review question, not proved by a quote.
+Open, deferred, unknown or unrelated register items are not sources.
 Use [] for founder_decision_refs when this ADR does not use a register decision. Never invent a link.
 Without one of these sources use the real non-founder driver, not founder-mandate language.
 The rationale is load-bearing - why this option won. driver is exactly one of

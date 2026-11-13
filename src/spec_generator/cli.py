@@ -911,9 +911,8 @@ def _run_with_gates(graph, cfg: dict, initial_state: dict, outdir, resume: bool 
             result = _child_graph_invoke(graph,initial_state, cfg)
             continue
         if advisories:
-            md += "\n\n## Review advisories\n" + "\n".join(
-                f"- {a['left_id']} {a['left_slug']} and {a['right_id']} {a['right_slug']}: {a['reason']}. Nothing was merged; decide at this gate."
-                for a in advisories)
+            from .render import render_architecture_advisories
+            md += "\n\n## Review advisories\n" + render_architecture_advisories(advisories)
         _atomic_write(outdir / f"gate_{gate}.md",md)
         _atomic_write(outdir / f"gate_{gate}.json",json.dumps(artifact, indent=2))
         _atomic_write(outdir / f"gate_{gate}.advisories.json",json.dumps({"gate":gate,"advisories":advisories},indent=2))

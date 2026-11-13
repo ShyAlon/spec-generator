@@ -7,15 +7,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_vendored_contracts_version_hash_and_no_private_git_install():
-    wheel = ROOT / "vendor/vmodel_contracts-0.28.0-py3-none-any.whl"
+    wheel = ROOT / "vendor/vmodel_contracts-0.29.0-py3-none-any.whl"
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
-    assert digest == "a91e0765b4195a9a6ccafd9ed825cdf0e24a38369bc18b3dc3f14007335476cf"
+    assert digest == "ebebe112cf59418239a831d122c6e4634d6f4ad79e01f4255b72e3cb73673942"
     assert digest in (ROOT / "uv.lock").read_text()
-    assert digest in (ROOT / "vendor/RECOVERY-WHEEL.md").read_text()
+    assert digest in (ROOT / "vendor/SERVER-CITATIONS-CONTRACTS.md").read_text()
     with zipfile.ZipFile(wheel) as archive:
         assert "vmodel_contracts/execution_anchor.py" in archive.namelist()
-        metadata = archive.read("vmodel_contracts-0.28.0.dist-info/METADATA").decode()
-    assert "Version: 0.28.0" in metadata
+        metadata = archive.read("vmodel_contracts-0.29.0.dist-info/METADATA").decode()
+    assert "Version: 0.29.0" in metadata
     assert "git+https://github.com/ShyAlon/vmodel-contracts" not in (ROOT / "pyproject.toml").read_text()
 
 

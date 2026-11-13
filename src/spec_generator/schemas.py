@@ -325,9 +325,11 @@ def arch_adr_plan_schema() -> dict:
     return {"type": "array", "items": slot}
 
 
-def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str], concept_ids: list[str], founder_decision_ids: list[str] | None = None) -> dict:
+def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str], concept_ids: list[str], founder_decision_ids: list[str] | None = None, *, required_concept_ids: list[str] | None = None) -> dict:
     """One ADR against its fixed slot. Ids, migration flag, and authorizations
     stay pipeline-owned; the model authors the decision substance."""
+    optional_concepts = [c for c in concept_ids if c not in (required_concept_ids or [])]
+    concept_links = {"type": "array", "items": {"enum": optional_concepts}} if optional_concepts else {"type": "array", "items": {"type": "string"}, "maxItems": 0}
     return {"type": "object",
             "properties": {"title": {"type": "string"},
                            "decision": {"type": "string"},
@@ -345,7 +347,7 @@ def arch_adr_body_schema(valid_refs: list[str], repo_names: list[str], concept_i
                            "evidence": {"type": "array", "items": {"type": "string"}},
                            "affected_repositories": {"type": "array",
                                                      "items": _enum_or_str(repo_names)},
-                           "executes_concept_ids": {"type": "array", "items": _enum_or_str(concept_ids)},
+                           "executes_concept_ids": concept_links,
                            "founder_decision_refs": {"type": "array", "items": {"enum": founder_decision_ids} if founder_decision_ids else {"type":"string"}, "maxItems":len(founder_decision_ids or [])}},
             "required": ["title", "decision", "rationale", "driver", "options_considered",
                          "baseline_refs", "evidence", "affected_repositories", "executes_concept_ids", "founder_decision_refs"],
@@ -393,6 +395,7 @@ def _raw_stage_schema(stage: str) -> dict:
         comp["required"] = sorted(set(comp.get("required", [])) | {"baseline_refs", "migration", "migration_adr_title"})
         dec = sch["$defs"]["ArchitectureDecision"]
         dec["properties"].pop("decision_id", None)
+        dec["properties"].pop("founder_citations", None)
         dec["required"] = [r for r in dec.get("required", []) if r != "decision_id"]
         dec["required"] = sorted(set(dec["required"]) | {"baseline_refs", "migration", "evidence", "affected_repositories"})
         # ADR-0021: the contract keeps driver nullable ONLY for pre-0.8.0
