@@ -640,7 +640,7 @@ def invoke_checked(chat_model, messages, stage: str, item: str | None = None):
         t0 = time.monotonic()
         try:
             _set_model_timeout(chat_model, effective_timeout)
-            resp = _run_with_deadline(lambda: __import__("spec_generator.attempt_admission",fromlist=["checked_model_invoke"]).checked_model_invoke(chat_model,messages,stage=stage,provider=cfg.provider,model=cfg.model,max_output_tokens=_max_tokens_limit(cfg.max_tokens)), effective_timeout, stage)
+            resp = _run_with_deadline(lambda: __import__("spec_generator.attempt_admission",fromlist=["checked_model_invoke"]).checked_model_invoke(chat_model,messages,stage=stage,provider=cfg.provider,model=cfg.model,max_output_tokens=_max_tokens_limit(cfg.max_tokens),**({"item":item} if item is not None else {})), effective_timeout, stage)
             elapsed = time.monotonic() - t0
             _watchdog().complete(stage, elapsed)
             _check_truncated(resp, stage, cfg)
@@ -724,7 +724,7 @@ def stream_checked(chat_model, messages, stage: str, item: str | None = None,
 
     def _pump() -> None:
         try:
-            for chunk in __import__("spec_generator.attempt_admission",fromlist=["checked_model_stream"]).checked_model_stream(chat_model,messages,stage=stage,provider=cfg.provider,model=cfg.model,max_output_tokens=_max_tokens_limit(cfg.max_tokens)):
+            for chunk in __import__("spec_generator.attempt_admission",fromlist=["checked_model_stream"]).checked_model_stream(chat_model,messages,stage=stage,provider=cfg.provider,model=cfg.model,max_output_tokens=_max_tokens_limit(cfg.max_tokens),**({"item":item} if item is not None else {})):
                 q.put(("chunk", chunk))
             q.put(("done", None))
         except Exception as e:  # noqa: BLE001 - delivered to the consumer below

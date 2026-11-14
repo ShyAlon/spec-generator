@@ -1222,14 +1222,14 @@ wheels = [
 
 [[package]]
 name = "requi-child-contract"
-version = "0.3.0"
-source = { path = "vendor/requi_child_contract-0.3.0-py3-none-any.whl" }
+version = "0.4.0"
+source = { path = "vendor/requi_child_contract-0.4.0-py3-none-any.whl" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
 wheels = [
-    { filename = "requi_child_contract-0.3.0-py3-none-any.whl", hash = "sha256:ab670b145804e5571cf98e784a49115ae86993ae3e56a91b4e967f5f9b75efb9" },
+    { filename = "requi_child_contract-0.4.0-py3-none-any.whl", hash = "sha256:68b47c19c9ad84cf096977201e19ce910dfdda01d167dad8f18991e06dc5f056" },
 ]
 
 [package.metadata]
@@ -1277,7 +1277,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=0.2" },
     { name = "pydantic", specifier = ">=2.6,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "requi-child-contract", path = "vendor/requi_child_contract-0.3.0-py3-none-any.whl" },
+    { name = "requi-child-contract", path = "vendor/requi_child_contract-0.4.0-py3-none-any.whl" },
     { name = "vmodel-contracts", path = "vendor/vmodel_contracts-0.29.0-py3-none-any.whl" },
 ]
 provides-extras = ["anthropic", "dev"]
