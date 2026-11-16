@@ -29,7 +29,7 @@ def invoke_graph(graph,value,cfg):
     with graph_execution(graph,cfg):return graph.invoke(value,cfg)
 
 @contextmanager
-def invocation(stage):
+def invocation(stage,item=None):
     context=_execution.get()
     if context is None:token=_call.set(None)
     else:
@@ -43,7 +43,10 @@ def invocation(stage):
         else:step=0;node=''
         key=(anchor,step,node,stage);ordinal=cursors.get(key,0);cursors[key]=ordinal+1
         identity=[sid,anchor,step,node,stage,ordinal]
-        token=_call.set((stage,'call:'+hashlib.sha256(json.dumps(identity,separators=(',',':')).encode()).hexdigest()))
+        metadata=None
+        import re
+        if isinstance(item,str) and re.fullmatch(r'[A-Za-z0-9 _./():-]{1,200}',item):metadata={'item':item,'fields':[]}
+        token=_call.set((stage,'call:'+hashlib.sha256(json.dumps(identity,separators=(',',':')).encode()).hexdigest(),metadata))
     try:yield
     finally:_call.reset(token)
 
@@ -52,6 +55,11 @@ def broker_call_id(stage):
     value=_call.get()
     if value is None or value[0]!=stage:raise PermissionError('generator durable graph cursor required')
     return value[1]
+
+
+def broker_call_metadata(stage):
+    value=_call.get()
+    return value[2] if value is not None and value[0]==stage else None
 
 
 class GateSuspended(Exception):

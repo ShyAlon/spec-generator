@@ -80,3 +80,19 @@ def test_gate_identity_changes_when_review_artifact_changes():
     a={'decision_id':'srs-review','context':{'artifact_sha256':'a'*64}}
     b={'decision_id':'srs-review','context':{'artifact_sha256':'b'*64}}
     assert gate_key(a)!=gate_key(b)
+
+
+def test_item_metadata_is_optional_and_does_not_rekey_a_provider_call():
+ from spec_generator.child_execution import invocation,broker_call_id,broker_call_metadata,graph_execution
+ from types import SimpleNamespace
+ class Graph:
+  def get_state(self,cfg):return SimpleNamespace(config={'configurable':{'checkpoint_id':'point'}})
+ cfg={'configurable':{'thread_id':'session'}}
+ ids=[]
+ for label in ('ADR-1',None):
+  with graph_execution(Graph(),cfg):
+   with invocation('architecture',label):
+    ids.append(broker_call_id('architecture'))
+    assert broker_call_metadata('architecture')==({'item':label,'fields':[]} if label else None)
+ assert ids[0]==ids[1]
+ assert broker_call_metadata('architecture') is None

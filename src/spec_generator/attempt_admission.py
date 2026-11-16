@@ -105,14 +105,14 @@ def admitted_stream(call,*,stage,provider,model,messages,max_output_tokens):
         if cloud:gateway.uncertain(attempt)
 
 
-def checked_model_invoke(chat_model,messages,*,stage,provider,model,max_output_tokens):
+def checked_model_invoke(chat_model,messages,*,stage,provider,model,max_output_tokens,item=None):
     from .wire_binding import wire_model
     if wire_model(chat_model,stage=stage,provider=provider,model=model):
         from .stop_fence import check_execution
         check_execution()
         try:
             from .child_execution import invocation
-            with invocation(stage):response=chat_model.invoke(messages)
+            with invocation(stage,item):response=chat_model.invoke(messages)
         except Exception as exc:
             # OpenAI wraps transport control exceptions as connection errors.
             # Preserve Stop identity rather than presenting a provider outage.
@@ -128,7 +128,7 @@ def checked_model_invoke(chat_model,messages,*,stage,provider,model,max_output_t
         model=model,messages=messages,max_output_tokens=max_output_tokens)
 
 
-def checked_model_stream(chat_model,messages,*,stage,provider,model,max_output_tokens):
+def checked_model_stream(chat_model,messages,*,stage,provider,model,max_output_tokens,item=None):
     from .wire_binding import wire_model
     if not wire_model(chat_model,stage=stage,provider=provider,model=model):
         yield from admitted_stream(lambda:chat_model.stream(messages),stage=stage,provider=provider,
@@ -140,7 +140,7 @@ def checked_model_stream(chat_model,messages,*,stage,provider,model,max_output_t
     # Drain accepted calls while suppressing late chunks. Never stack a messages
     # reservation or mark already-settled raw usage uncertain at scope exit.
     from .child_execution import invocation
-    with invocation(stage):
+    with invocation(stage,item):
         for chunk in chat_model.stream(messages):
             try:check_execution()
             except StopRequested:stopped=True
